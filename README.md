@@ -54,4 +54,30 @@ You can select between three suites, each representing a step in the machine’s
   - Large (2,000+ characters): under a second on modern hardware.
 - INOP modes encrypt differently even with the same message and config (per-message entropy).
 
+## Example code
+
+Select suite:
+ [1] Legacy
+ [2] INOP-38
+ [3] INOP-60
+> 1
+
+Available Rotors: I II III IV V VI VII
+Select 3 rotors in order: ii iii vi
+
+Available Reflectors:  A, B, C
+Select reflector: b
+
+Plugboard pairs (≤10, e.g. AB CD EF):
+Pairs (Enter for none):no pe lt
+3 ring settings 1-26:   10 14 16
+Master key (4 chars):keys
+
+Message to encrypt (blank = quit): Test message for github gremlins.
+
+Encrypted: PYHGLMXC  EUZZMMHI  HHLYJYSI  TTTIFQKM  HMPPCCEG  ATFNTMDP  ILKN
+
+Decrypted: TESTMESSAGEFORGITHUBGREMLINS
+
+
 Thats all from me, if you have suggestions then dont be rude. I will **not** be implementing cython. Happy encryption!
