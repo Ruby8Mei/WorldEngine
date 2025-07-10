@@ -1,6 +1,6 @@
 # INOP Cipher Machine
 
-Welcome to **INOP** — a rotor-based encryption suite inspired by the Enigma machine, but vastly evolved. This project is a tribute to cryptographic history and a playground of personal design. It features three distinct modes, custom rotors, full plugboard configuration, and an extended alphabet engine capable of handling everything from short messages to 2,000+ character memory dumps.
+Welcome to **INOP** — a rotor-based encryption machine inspired by the Enigma. This project is a tribute to cryptographic history and a playground of personal design. It features three distinct modes, custom rotors, full plugboard configuration, and an extended alphabet engine capable of handling everything from short messages to 2,000+ character memory dumps.
 
 ---
 
@@ -54,4 +54,4 @@ You can select between three suites, each representing a step in the machine’s
   - Large (2,000+ characters): under a second on modern hardware.
 - INOP modes encrypt differently even with the same message and config (per-message entropy).
 
-Thats all from me, if you have suggestions then dont be rude. Happy encryption!
+Thats all from me, if you have suggestions then dont be rude. I will **not** be implementing cython. Happy encryption!
