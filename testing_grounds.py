@@ -21,17 +21,17 @@ from keyboard_and_plugboard import Keyboard, Plugboard
 ALPHABETS = {
     "26": registry.ALPHA26,
     "38": registry.ALPHA38,
-    "76": registry.ALPHA76,
+    "68": registry.ALPHA68,
 }
 
 
 def suite_to_code(val: str) -> str:
-    """Normalise suite field to canonical numeric code ('26', '38', '76')."""
+    """Normalise suite field to canonical numeric code ('26', '38', '68')."""
     up = val.upper()
-    if up in ("26", "38", "76"):
+    if up in ("26", "38", "68"):
         return up
-    if "76" in up:
-        return "76"
+    if "68" in up:
+        return "68"
     if "38" in up:
         return "38"
     if "26" in up or "LEGACY" in up:

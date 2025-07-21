@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Iterable
 
 import registry
-from registry import ALPHA26, ALPHA38, ALPHA76
+from registry import ALPHA26, ALPHA38, ALPHA68
 from copy import deepcopy
 
 # ── optional Rich eye‑candy ────────────────────────────────────────────
@@ -80,21 +80,21 @@ SUITES: Dict[str, Suite] = {
         reflector_start="A", reflector_span=3,
     ),
     "38": Suite(
-        code="38", name="INOP‑38", alphabet=ALPHA38,
+        code="38", name="INOP-38", alphabet=ALPHA38,
         rotor_prefix="R", rotor_count_for_settings=5,
         max_pairs=15, max_notches=3,
         reflector_start="D", reflector_span=5,
     ),
-    "76": Suite(
-        code="76", name="INOP‑76", alphabet=ALPHA76,
+    "68": Suite(
+        code="68", name="INOP-68", alphabet=ALPHA68,
         rotor_prefix="S", rotor_count_for_settings=10,
-        max_pairs=32, max_notches=6,
+        max_pairs=30, max_notches=5,
         reflector_start="J", reflector_span=10,
     ),
 }
 
 # ―― active suite pointer
-CURRENT: Suite = SUITES["76"]
+CURRENT: Suite = SUITES["68"]
 
 # ―― helper that returns wheels only for the active suite
 
@@ -165,7 +165,7 @@ def _fail(msg: str) -> None:
         print("❌", msg)
 
 # ── suite chooser -------------------------------------------------------
-def _choose_suite(default: str = "76") -> Suite:
+def _choose_suite(default: str = "68") -> Suite:
     if _RICH:
         t = Table(title="Select Suite", header_style="bold magenta")
         t.add_column("Code")
@@ -247,7 +247,7 @@ def _get_rings(suite: Suite, rotors: List[str]) -> List[int]:
     hi = len(suite.alphabet)
     need = len(rotors)
     while True:
-        nums = _ask(f"{need} ring settings 1–{hi}").split()
+        nums = _ask(f"{need} ring settings 1-{hi}").split()
         if len(nums) != need:
             _fail(f"Need {need} numbers.")
             continue
@@ -274,7 +274,7 @@ def _get_notches(suite: Suite, rotors: List[str]) -> Dict[str, str]:
 
         # --- interactive branch for blank wheels ---
         while True:
-            raw = _ask(f"Notches for {r} (0–{max_n})")
+            raw = _ask(f"Notches for {r} (0-{max_n})")
             if len(raw) <= max_n and set(raw) <= alpha:
                 out[r] = raw
                 break

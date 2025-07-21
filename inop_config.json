@@ -2,30 +2,30 @@
   "suite": "Legacy",
   "rev": 1,
   "rotors": [
-    "IV",
-    "VII",
-    "I"
+    "III",
+    "VI",
+    "IV"
   ],
   "reflector": "B",
   "ring_set": [
-    25,
-    1,
-    11
+    14,
+    8,
+    14
   ],
   "notch_map": {},
   "plugs": [
-    "DU",
-    "YJ",
-    "HI",
-    "EX",
-    "ZS",
-    "KB",
-    "CL",
-    "WR",
-    "QN",
-    "MT"
+    "HS",
+    "RP",
+    "EA",
+    "ND",
+    "WX",
+    "JC",
+    "GO",
+    "FV",
+    "IQ",
+    "BZ"
   ],
-  "master_key": "SEGR",
+  "master_key": "BDJP",
   "alphabet_size": 26,
   "alphabet_hash": "d6ec6898de87"
 }
