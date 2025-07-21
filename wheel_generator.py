@@ -6,12 +6,12 @@ from random import Random, SystemRandom
 from typing import List, Tuple, Dict
 
 # single source of truth
-from registry import ALPHA38, ALPHA76
+from registry import ALPHA38, ALPHA68
 
 # ── runtime alphabet map ───────────────────────────────────────────────
 ALPHABETS: Dict[str, str] = {
     "38": ALPHA38,
-    "76": ALPHA76,
+    "68": ALPHA68,
 }
 
 # ── integrity helpers ──────────────────────────────────────────────────
@@ -21,11 +21,11 @@ def _validate(alpha: str, expect: int):
     if len(set(alpha)) != len(alpha):
         raise ValueError("Duplicate symbols in alphabet.")
     if len(alpha) % 2:
-        raise ValueError("Alphabet must be even‑length (reflector pairing).")
+        raise ValueError("Alphabet must be even-length (reflector pairing).")
     if any(ord(c) < 32 or c.isspace() for c in alpha):
         raise ValueError("Whitespace/control char in alphabet.")
 
-for a, n in [(ALPHA38, 38), (ALPHA76, 76)]:
+for a, n in [(ALPHA38, 38), (ALPHA68, 68)]:
     _validate(a, n)
 
 def alpha_hash(alpha: str) -> str:
@@ -56,18 +56,18 @@ def make_reflector(alpha: str, rng) -> str:
         raise ValueError("Reflector involution check failed.")
     return w
 
-# ── naming (non‑negotiable spec) ───────────────────────────────────────
+# ── naming (non-negotiable spec) ───────────────────────────────────────
 def rotor_label(alpha_len: int, i: int) -> str:
     if alpha_len == 38:
         return f"R{i}"
-    if alpha_len == 76:
+    if alpha_len == 68:
         return f"S{i}"
     raise ValueError("Unsupported alphabet length for rotor naming.")
 
 def reflector_label(alpha_len: int, i: int) -> str:
     if alpha_len == 38:
         return chr(ord("D") + i)          # D..H
-    if alpha_len == 76:
+    if alpha_len == 68:
         return chr(ord("J") + i)          # J..R  (skip I)
     raise ValueError("Unsupported alphabet length for reflector naming.")
 
@@ -79,7 +79,7 @@ def emit_python(rotors: List[Tuple[str, str]],
                 a_hash: str,
                 seed: int | None) -> str:
     lines: List[str] = []
-    lines.append("# Auto‑generated rotor/reflector set")
+    lines.append("# Auto-generated rotor/reflector set")
     lines.append(f"# Alphabet: {alpha_const} len={len(alphabet)} hash={a_hash}")
     lines.append(f"# Seed: {seed if seed is not None else 'random'}")
     lines.append("")
@@ -99,9 +99,9 @@ def interactive() -> Tuple[str, int, int, int | None]:
         from rich.prompt import Prompt
         from rich.panel import Panel
     except ImportError:
-        alpha_code = input("Alphabet (38/76) [38]: ").strip() or "38"
+        alpha_code = input("Alphabet (38/68) [38]: ").strip() or "38"
         if alpha_code not in ALPHABETS:
-            print("Only 38 or 76 supported.")
+            print("Only 38 or 68 supported.")
             sys.exit(1)
         n_rot = int(input("Rotors [10]: ") or 10)
         n_ref = int(input("Reflectors [5]: ") or 5)
@@ -114,13 +114,13 @@ def interactive() -> Tuple[str, int, int, int | None]:
     table.add_column("Code", style="bold")
     table.add_column("Suite")
     table.add_column("Alphabet length", justify="right")
-    table.add_row("38", "INOP‑38", "38")
-    table.add_row("76", "INOP‑76", "76")
+    table.add_row("38", "INOP-38", "38")
+    table.add_row("68", "INOP-68", "68")
     console.print(table)
 
-    alpha_code = Prompt.ask("Alphabet (38/76)", default="38")
+    alpha_code = Prompt.ask("Alphabet (38/68)", default="38")
     if alpha_code not in ALPHABETS:
-        console.print("[red]Choose 38 or 76.[/red]")
+        console.print("[red]Choose 38 or 68.[/red]")
         sys.exit(1)
 
     n_rot = int(Prompt.ask("How many rotors", default="10"))
@@ -152,7 +152,7 @@ def main():
     reflectors = [(reflector_label(a_len, i), make_reflector(alphabet, rng_ref))
                 for i in range(n_ref)]
 
-    alpha_const = "ALPHA38" if a_len == 38 else "ALPHA76"
+    alpha_const = "ALPHA38" if a_len == 38 else "ALPHA68"
     out_text = emit_python(rotors, reflectors, alpha_const, alphabet, a_hash, seed)
 
     outfile = f"wheels_{alpha_code}.py"

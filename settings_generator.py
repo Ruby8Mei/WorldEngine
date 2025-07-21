@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Dict, List
 
 # single source of truth
-from registry import ALPHA26, ALPHA38, ALPHA76
+from registry import ALPHA26, ALPHA38, ALPHA68
 
 # ── validation helpers ────────────────────────────────────────────────
+
 def _validate(alpha: str, expected: int):
     if len(alpha) != expected:
         raise ValueError(f"Alphabet length {len(alpha)} != {expected}")
@@ -18,16 +19,18 @@ def _validate(alpha: str, expected: int):
     if any(ord(c) < 32 or c.isspace() for c in alpha):
         raise ValueError("Whitespace/control char in alphabet.")
 
-for a, n in [(ALPHA26, 26), (ALPHA38, 38), (ALPHA76, 76)]:
+for a, n in [(ALPHA26, 26), (ALPHA38, 38), (ALPHA68, 68)]:
     _validate(a, n)
+
 
 def alpha_hash(alpha: str) -> str:
     return hashlib.sha256(alpha.encode()).hexdigest()[:12]
 
+
 ALPHA_HASHES = {
     26: alpha_hash(ALPHA26),
     38: alpha_hash(ALPHA38),
-    76: alpha_hash(ALPHA76),
+    68: alpha_hash(ALPHA68),
 }
 
 # ── suite definitions ─────────────────────────────────────────────────
@@ -53,8 +56,8 @@ SUITES: Dict[str, Dict] = {
         "rev": 1,
     },
     "3": {
-        "name": "INOP-76",
-        "alphabet": ALPHA76,
+        "name": "INOP-68",
+        "alphabet": ALPHA68,
         "rotors": [f"S{i}" for i in range(1, 21)],
         "reflectors": list("JKLMNOPQR"),  # J..R  (skip I)
         "n_rot": 10,
@@ -74,11 +77,13 @@ from rich.box import SIMPLE
 console = Console()
 
 # ── helpers ───────────────────────────────────────────────────────────
+
 def _choose_pairs(alpha: str, k: int) -> List[str]:
     k = min(k, len(alpha) // 2)
     pool = list(alpha)
     RNG.shuffle(pool)
     return [pool[i] + pool[i + 1] for i in range(0, 2 * k, 2)]
+
 
 def _choose_notches(rotors, alpha, max_n: int):
     if max_n == 0:
@@ -88,6 +93,7 @@ def _choose_notches(rotors, alpha, max_n: int):
         count = RNG.randint(0, max_n)
         out[r] = "".join(sorted(RNG.sample(alpha, count)))
     return out
+
 
 def _pick_suite():
     table = Table(title="INOP Settings Generator", box=SIMPLE, header_style="bold cyan")
@@ -114,6 +120,7 @@ def _pick_suite():
             return SUITES[choice]
         console.print("[red]Invalid choice.[/red]")
 
+
 def _generate(cfg: Dict):
     alpha = cfg["alphabet"]
     rotors = RNG.sample(cfg["rotors"], cfg["n_rot"])
@@ -135,6 +142,7 @@ def _generate(cfg: Dict):
         "alphabet_hash": alpha_hash(alpha),
     }
 
+
 def _print_summary(cfg: Dict, path: Path):
     body = Table.grid(padding=(0, 1))
     body.add_row("Suite:", cfg["suite"])
@@ -150,12 +158,14 @@ def _print_summary(cfg: Dict, path: Path):
     console.print(Panel(body, title="Generation Complete", border_style="green"))
 
 # ── main entry ─────────────────────────────────────────────────────────
+
 def main():
     suite_cfg = _pick_suite()
     data = _generate(suite_cfg)
     out_path = Path("inop_config.json")
     out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     _print_summary(data, out_path)
+
 
 if __name__ == "__main__":
     try:

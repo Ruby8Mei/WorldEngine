@@ -36,9 +36,9 @@ class Config:
     double_pass: bool    = True
     do_padding: bool     = True
     step_reflector: bool = True
-    block: int           = 5
-    base_noise: int      = 12
-    marker_len: int      = 6
+    block: int           = 16
+    base_noise: int      = 64
+    marker_len: int      = 16
 
 # ── MachineContext helper ----------------------------------------------
 class MachineContext:
