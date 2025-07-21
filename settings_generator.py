@@ -1,23 +1,38 @@
 # settings_generator.py
 from __future__ import annotations
 
-import argparse
-import json
-import secrets
-import string
-import sys
-from itertools import islice, pairwise
+import json, hashlib
+from random import SystemRandom
 from pathlib import Path
-from random import Random, SystemRandom
 from typing import Dict, List
 
-# ── alphabets ─────────────────────────────────────────────────────
-ALPHA26 = string.ascii_uppercase
-ALPHA38 = ALPHA26 + "0123456789#/"
-ALPHA60 = ALPHA38 + "+-*=()[]{}<>!?@&^%$£€_"
+# single source of truth
+from registry import ALPHA26, ALPHA38, ALPHA76
 
+# ── validation helpers ────────────────────────────────────────────────
+def _validate(alpha: str, expected: int):
+    if len(alpha) != expected:
+        raise ValueError(f"Alphabet length {len(alpha)} != {expected}")
+    if len(set(alpha)) != len(alpha):
+        raise ValueError("Duplicate symbols in alphabet.")
+    if any(ord(c) < 32 or c.isspace() for c in alpha):
+        raise ValueError("Whitespace/control char in alphabet.")
+
+for a, n in [(ALPHA26, 26), (ALPHA38, 38), (ALPHA76, 76)]:
+    _validate(a, n)
+
+def alpha_hash(alpha: str) -> str:
+    return hashlib.sha256(alpha.encode()).hexdigest()[:12]
+
+ALPHA_HASHES = {
+    26: alpha_hash(ALPHA26),
+    38: alpha_hash(ALPHA38),
+    76: alpha_hash(ALPHA76),
+}
+
+# ── suite definitions ─────────────────────────────────────────────────
 SUITES: Dict[str, Dict] = {
-    "1": {  # Legacy
+    "1": {
         "name": "Legacy",
         "alphabet": ALPHA26,
         "rotors": ["I", "II", "III", "IV", "V", "VI", "VII"],
@@ -25,8 +40,9 @@ SUITES: Dict[str, Dict] = {
         "n_rot": 3,
         "max_pairs": 10,
         "max_notches": 0,
+        "rev": 1,
     },
-    "2": {  # INOP-38
+    "2": {
         "name": "INOP-38",
         "alphabet": ALPHA38,
         "rotors": [f"R{i}" for i in range(1, 11)],
@@ -34,99 +50,115 @@ SUITES: Dict[str, Dict] = {
         "n_rot": 5,
         "max_pairs": 15,
         "max_notches": 3,
+        "rev": 1,
     },
-    "3": {  # INOP-60
-        "name": "INOP-60",
-        "alphabet": ALPHA60,
+    "3": {
+        "name": "INOP-76",
+        "alphabet": ALPHA76,
         "rotors": [f"S{i}" for i in range(1, 21)],
-        "reflectors": list("AIJKLMNOPQR"),
+        "reflectors": list("JKLMNOPQR"),  # J..R  (skip I)
         "n_rot": 10,
-        "max_pairs": 25,
-        "max_notches": 5,
+        "max_pairs": 32,
+        "max_notches": 6,
+        "rev": 3,
     },
 }
 
-# ── helpers ───────────────────────────────────────────────────────
+# ── RNG & Rich UI ──────────────────────────────────────────────────────
+RNG = SystemRandom()
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.box import SIMPLE
 
+console = Console()
 
-def build_rng(seed: int | None) -> Random | SystemRandom:
-    """Deterministic RNG when *seed* given; CSPRNG otherwise."""
-    return Random(seed) if seed is not None else SystemRandom()
-
-
-def choose_pairs(alpha: str, k: int, rng: Random | SystemRandom) -> List[str]:
-    """Return *k* disjoint plug pairs."""
-    max_possible = len(alpha) // 2
-    k = min(k, max_possible)
+# ── helpers ───────────────────────────────────────────────────────────
+def _choose_pairs(alpha: str, k: int) -> List[str]:
+    k = min(k, len(alpha) // 2)
     pool = list(alpha)
-    rng.shuffle(pool)
-    return [a + b for a, b in zip(pool[::2], pool[1::2])][:k]
+    RNG.shuffle(pool)
+    return [pool[i] + pool[i + 1] for i in range(0, 2 * k, 2)]
 
-
-def choose_notches(rotors: List[str], alpha: str, max_n: int, rng) -> Dict[str, str]:
+def _choose_notches(rotors, alpha, max_n: int):
     if max_n == 0:
         return {}
+    out = {}
+    for r in rotors:
+        count = RNG.randint(0, max_n)
+        out[r] = "".join(sorted(RNG.sample(alpha, count)))
+    return out
+
+def _pick_suite():
+    table = Table(title="INOP Settings Generator", box=SIMPLE, header_style="bold cyan")
+    table.add_column("Key", style="bold")
+    table.add_column("Name", style="magenta")
+    table.add_column("Rotors", justify="right")
+    table.add_column("Alphabet", justify="right")
+    table.add_column("MaxPairs", justify="right")
+    table.add_column("MaxNotch", justify="right")
+    for k, cfg in SUITES.items():
+        table.add_row(
+            k,
+            cfg["name"],
+            str(cfg["n_rot"]),
+            str(len(cfg["alphabet"])),
+            str(cfg["max_pairs"]),
+            str(cfg["max_notches"]),
+        )
+    console.print(table)
+    console.print("[dim]Press ENTER for default [3].[/dim]")
+    while True:
+        choice = console.input("> ").strip() or "3"
+        if choice in SUITES:
+            return SUITES[choice]
+        console.print("[red]Invalid choice.[/red]")
+
+def _generate(cfg: Dict):
+    alpha = cfg["alphabet"]
+    rotors = RNG.sample(cfg["rotors"], cfg["n_rot"])
+    reflector = RNG.choice(cfg["reflectors"])
+    ring_set = [RNG.randint(1, len(alpha)) for _ in rotors]
+    plugs = _choose_pairs(alpha, cfg["max_pairs"])
+    notch_map = _choose_notches(rotors, alpha, cfg["max_notches"])
+    master_key = "".join(RNG.choice(alpha) for _ in range(len(rotors) + 1))
     return {
-        r: "".join(rng.sample(alpha, rng.randint(0, max_n))) for r in rotors
-    }
-
-
-def ask_suite() -> Dict:
-    print("Select suite:")
-    for key, cfg in SUITES.items():
-        print(f" [{key}] {cfg['name']}")
-    return SUITES.get(input("> ").strip())
-
-
-def parse_cli() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Generate INOP daily config")
-    p.add_argument("--seed", type=int, help="Deterministic seed (omit for random)")
-    p.add_argument(
-        "--outfile",
-        type=Path,
-        default=Path("inop_config.json"),
-        help="Destination JSON file (default: inop_config.json)",
-    )
-    return p.parse_args()
-
-
-# ── main ─────────────────────────────────────────────────────────
-
-
-def main() -> None:
-    args = parse_cli()
-    suite_cfg = ask_suite()
-    if not suite_cfg:
-        sys.exit("Aborted.")
-
-    rng = build_rng(args.seed)
-    α = suite_cfg["alphabet"]
-
-    rotors = rng.sample(suite_cfg["rotors"], suite_cfg["n_rot"])
-    reflector = rng.choice(suite_cfg["reflectors"])
-    ring_set = [rng.randint(1, len(α)) for _ in rotors]
-    plugs = choose_pairs(α, suite_cfg["max_pairs"], rng)
-    notch_map = choose_notches(rotors, α, suite_cfg["max_notches"], rng)
-    master_key = "".join(rng.choices(α, k=len(rotors) + 1))
-
-    cfg = {
-        "suite": suite_cfg["name"],
+        "suite": cfg["name"],
+        "rev": cfg["rev"],
         "rotors": rotors,
         "reflector": reflector,
         "ring_set": ring_set,
         "notch_map": notch_map,
         "plugs": plugs,
         "master_key": master_key,
+        "alphabet_size": len(alpha),
+        "alphabet_hash": alpha_hash(alpha),
     }
 
-    args.outfile.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    print(f"✅  Wrote {args.outfile}\n"
-        f"   suite       : {cfg['suite']}\n"
-        f"   rotors      : {rotors}\n"
-        f"   reflector   : {reflector}\n"
-        f"   master key  : {master_key}\n"
-        f"   plug pairs  : {len(plugs)}")
+def _print_summary(cfg: Dict, path: Path):
+    body = Table.grid(padding=(0, 1))
+    body.add_row("Suite:", cfg["suite"])
+    body.add_row("Revision:", str(cfg["rev"]))
+    body.add_row("Rotors:", " ".join(cfg["rotors"]))
+    body.add_row("Reflector:", cfg["reflector"])
+    body.add_row("Ring set:", " ".join(f"{r:02d}" for r in cfg["ring_set"]))
+    body.add_row("Master key:", cfg["master_key"])
+    body.add_row("Plug pairs:", str(len(cfg["plugs"])))
+    body.add_row("First plugs:", " ".join(cfg["plugs"][:8]) if cfg["plugs"] else "(none)")
+    body.add_row("Alphabet hash:", cfg["alphabet_hash"])
+    body.add_row("File:", str(path))
+    console.print(Panel(body, title="Generation Complete", border_style="green"))
 
+# ── main entry ─────────────────────────────────────────────────────────
+def main():
+    suite_cfg = _pick_suite()
+    data = _generate(suite_cfg)
+    out_path = Path("inop_config.json")
+    out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _print_summary(data, out_path)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        console.print("\n[red]Interrupted.[/red]")

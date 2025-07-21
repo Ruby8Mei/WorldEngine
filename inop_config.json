@@ -1,28 +1,31 @@
 {
   "suite": "Legacy",
+  "rev": 1,
   "rotors": [
-    "V",
-    "VI",
-    "III"
+    "IV",
+    "VII",
+    "I"
   ],
   "reflector": "B",
   "ring_set": [
-    6,
-    6,
-    4
+    25,
+    1,
+    11
   ],
   "notch_map": {},
   "plugs": [
-    "HK",
-    "YW",
-    "VR",
-    "NT",
-    "SP",
-    "IL",
-    "CE",
-    "QO",
-    "ZU",
-    "MF"
+    "DU",
+    "YJ",
+    "HI",
+    "EX",
+    "ZS",
+    "KB",
+    "CL",
+    "WR",
+    "QN",
+    "MT"
   ],
-  "master_key": "LULY"
+  "master_key": "SEGR",
+  "alphabet_size": 26,
+  "alphabet_hash": "d6ec6898de87"
 }

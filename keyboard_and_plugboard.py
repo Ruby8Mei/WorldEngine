@@ -2,49 +2,56 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from debug import Debug
+from typing import Dict, List, Tuple, Optional
 
-debug = Debug()
-debug.disable("plugboard")
+# ── optional Debug helper ───────────────────────────────────────────────
+try:
+    from debug import Debug                     # your existing helper
+    debug = Debug()
+    debug.disable("plugboard")
+except ImportError:                             # graceful fallback
+    class _NoDebug:
+        def disable(self, *_): ...
+        def log(self, *_): ...
+    debug = _NoDebug()                          # type: ignore
 
-
-# ── Keyboard ──────────────────────────────────────────────────────
+# ── Keyboard ────────────────────────────────────────────────────────────
 class Keyboard:
+    __slots__ = ("alphabet", "alpha_to_index")
+
     def __init__(self, alphabet: str) -> None:
         self.alphabet: str = alphabet
-        self.alpha_to_index: dict[str, int] = {
-            ch: i for i, ch in enumerate(alphabet)
-        }
+        # direct dict → O(1) lookup
+        self.alpha_to_index: Dict[str, int] = {ch: i for i, ch in enumerate(alphabet)}
 
     # letter → integer signal
     def forward(self, letter: str) -> int:
         try:
             return self.alpha_to_index[letter]
-        except KeyError:
-            raise ValueError(
-                f"Invalid character {letter!r} for current alphabet."
-            )
+        except KeyError as exc:
+            raise ValueError(f"Invalid character {letter!r} for current alphabet.") from exc
 
     # integer signal → letter
     def backward(self, signal: int) -> str:
-        if not (0 <= signal < len(self.alphabet)):
-            hi = len(self.alphabet) - 1
+        hi = len(self.alphabet) - 1
+        if not 0 <= signal <= hi:
             raise ValueError(f"Signal {signal} out of range 0–{hi}")
         return self.alphabet[signal]
 
-
-# ── Plugboard ─────────────────────────────────────────────────────
+# ── Plugboard ───────────────────────────────────────────────────────────
 class Plugboard:
+    __slots__ = ("alphabet", "mapping", "_index_map")
+
     def __init__(
         self,
-        pairs: Sequence[str | tuple[str, str]],
-        alphabet: str,
+        pairs: Optional[Sequence[str | Tuple[str, str]]] = None,
+        alphabet: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     ) -> None:
         self.alphabet: str = alphabet
-        self.mapping: dict[str, str] = {ch: ch for ch in alphabet}
+        self.mapping: Dict[str, str] = {ch: ch for ch in alphabet}
         used: set[str] = set()
 
-        for raw in pairs:
+        for raw in pairs or ():               # allow None/empty
             # normalise to (a, b)
             if isinstance(raw, str):
                 if len(raw) != 2:
@@ -62,21 +69,27 @@ class Plugboard:
                 bad = a if a not in alphabet else b
                 raise ValueError(f"Symbol {bad!r} not in alphabet")
 
-            # passed validation → commit swap
+            # commit swap
             self.mapping[a], self.mapping[b] = b, a
             used.update((a, b))
 
-    # one private helper does the job for both directions
-    def _map(self, signal: int) -> int:
-        letter = self.alphabet[signal]
-        mapped = self.mapping[letter]
-        debug.log("plugboard", f"{signal}->{letter}->{mapped}")
-        return self.alphabet.index(mapped)
+        # pre‑compute index mapping for O(1) forward/back
+        self._index_map: List[int] = [alphabet.index(self.mapping[ch]) for ch in alphabet]
 
-    forward = _map        # alias: signal in
-    backward = _map       # alias: signal out
+    # signal in → signal out  (same both directions)
+    def _map(self, signal: int) -> int:                      # noqa: D401
+        mapped = self._index_map[signal]
+        if debug:
+            debug.log("plugboard", f"{signal}->{self.alphabet[signal]}->{self.alphabet[mapped]}")
+        return mapped
 
-    # nicety for debugging
+    forward = _map        # alias
+    backward = _map       # alias
+
+    # nice repr for debugging
     def __repr__(self) -> str:
         swaps = [f"{a}{b}" for a, b in self.mapping.items() if a < b]
-        return f"<Plugboard {' '.join(swaps)}>"
+        return f"<Plugboard {' '.join(sorted(swaps))}>"     # deterministic order
+
+# explicit re‑exports
+__all__ = ["Keyboard", "Plugboard"]
