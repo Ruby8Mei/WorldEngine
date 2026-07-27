@@ -31,7 +31,16 @@ std::string ask(const std::string& prompt, const std::string& def) {
     size_t a = line.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return def;
     size_t b = line.find_last_not_of(" \t\r\n");
-    return line.substr(a, b - a + 1);
+    std::string trimmed = line.substr(a, b - a + 1);
+
+    // Leading ':' disambiguates from a legitimate bare "q" answer elsewhere.
+    std::string low = trimmed;
+    for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (low == ":q" || low == ":quit" || low == ":exit") {
+        std::cout << "  closed.\n";
+        std::exit(0);
+    }
+    return trimmed;
 }
 
 int ask_int(const std::string& prompt, int def, int lo, int hi) {

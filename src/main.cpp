@@ -74,7 +74,18 @@ std::string ask(const std::string& prompt) {
     size_t a = line.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return "";
     size_t b = line.find_last_not_of(" \t\r\n");
-    return line.substr(a, b - a + 1);
+    std::string trimmed = line.substr(a, b - a + 1);
+
+    // The leading ':' is what makes this unambiguous — a bare "q" or "quit"
+    // is a legitimate answer at several prompts (notch symbols, master key
+    // symbols, plugboard pairs), since both alphabets contain Q.
+    std::string low = trimmed;
+    for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (low == ":q" || low == ":quit" || low == ":exit") {
+        std::cout << DIM << "  closed.\n" << RST;
+        std::exit(0);
+    }
+    return trimmed;
 }
 
 std::vector<std::string> split(const std::string& s) {
@@ -492,6 +503,7 @@ int main(int argc, char** argv) {
     }
 
     banner();
+    std::cout << DIM << "  :q quits at any point" << RST << "\n";
 
     try {
         entropy_self_check();
