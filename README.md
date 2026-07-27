@@ -1,3 +1,111 @@
+# INOP — rotor cipher machine
+
+A C++ rewrite of the INOP cipher machine. Terminal only, no dependencies
+beyond a C++11 compiler.
+
+## The design rule
+
+`src/inop.hpp` and `src/inop.cpp` may only ever contain a rotor machine:
+wired permutations, a fixed-point-free reflector, a plugboard, ring
+settings, notches. No hash functions, no block ciphers, no modern
+primitives. Every part of it has a mechanical analogue that could have
+existed in 1940.
+
+Everything else is operator procedure and is deliberately unconstrained.
+Padding, cover traffic, markers, key generation and the double pass live in
+`pipeline.cpp` and `rng.cpp`, where they are free to change without ever
+touching the cipher.
+
+That split is also why the core is worth writing in C++ and the rest is not
+especially: the core is frozen by the rule above, so it will never need
+rewriting.
+
+## Suites
+
+| Suite    | Alphabet | Rotors | Wheels available            | Reflectors | Blocks |
+|----------|----------|--------|-----------------------------|------------|--------|
+| Legacy   | 26       | 3      | I–VII, historic notches     | A B C      | 5      |
+| INOP-38  | 38       | 5      | R1–R10, notches per message | D E F G H  | 16     |
+
+**Legacy is locked.** It is a 1939 machine, not a suite with options: no
+padding, no double pass, no reflector motion, and output in 5-letter groups
+the way it went out over the wire. The INOP-exclusive features simply are not
+offered when it is selected. Choosing Legacy means choosing the machine as it
+was on the day Poland was invaded.
+
+The 38-symbol alphabet is `A–Z`, `0–9`, `#` and `/`. `#` carries the space,
+so spaces survive a round trip; `/` is a literal slash.
+
+Legacy reproduces the Wehrmacht Enigma exactly, including the double-step
+anomaly. The self-test checks it against the known vector: rotors I II III,
+reflector B, rings 01, key AAA, twelve presses of `A` gives `BDZGOWCXLTKS`.
+
+## Build
+
+```sh
+make            # or: cmake -B build && cmake --build build
+make test       # correctness and throughput checks
+./inop          # interactive session
+```
+
+On Windows either MSVC or MinGW works; `rand_s` supplies entropy there and
+`/dev/urandom` does on everything else. Nothing links against an extra
+library.
+
+## Session commands
+
+| Command | Effect |
+|---------|--------|
+| *(text)* | encipher, and show the round trip as a check |
+| `:d` | decipher a ciphertext (asks for the marker) |
+| `:s` | write the current settings to `inop.settings` |
+| `:q` | quit |
+
+Settings files are plain text, one directive per line, so they can be
+written by hand or generated.
+
+## Why the double pass matters
+
+Enigma's fatal weakness was not its rotor mathematics. Because the reflector
+is an involution with no fixed points, a letter could never encipher to
+itself — which let Bletchley slide a crib along a ciphertext and discard
+every alignment where a letter sat above itself. Most candidates died on
+that test alone.
+
+The double pass enciphers, reverses the string, and enciphers again from a
+rewound state. Ciphertext position *i* then depends on plaintext position
+*L−1−i*, so the per-position guarantee disappears and crib-dragging finds
+nothing. The whole-message map stays self-inverse, so decipherment is
+unchanged.
+
+The self-test measures this directly: single pass gives zero self-mappings
+across a 4000-symbol run, double pass gives roughly the ~1/38 you would
+expect by chance.
+
+This is strong against 1940s cryptanalysis, which is the target. It is not
+a modern cipher and does not claim to be.
+
+## Layout
+
+```
+src/inop.hpp      cipher core, declarations   <- the constrained half
+src/inop.cpp      table baking, stepping, signal path
+src/registry.hpp  suite definitions
+src/registry.cpp  rotor and reflector wirings
+src/rng.hpp/.cpp  OS entropy, unbiased sampling
+src/pipeline.*    padding, markers, double pass
+src/main.cpp      terminal interface
+```
+
+## Performance note
+
+Rotor wiring is baked at construction into per-offset lookup tables, so a
+traversal is one indexed read rather than two modulo operations. A rotor
+caches a pointer to its current table row and updates it only when it
+actually steps. This changes no behaviour — output is identical to the
+Python implementation symbol for symbol — it only removes arithmetic that
+was being redone for every character.
+
 # INOP Cipher Machine
 
 Welcome to **INOP** — a rotor-based encryption machine inspired by the Enigma. This project is a tribute to cryptographic history and a playground of personal design. It features three distinct modes, custom rotors, full plugboard configuration, and an extended alphabet engine capable of handling everything from short messages to 2,000+ character memory dumps.

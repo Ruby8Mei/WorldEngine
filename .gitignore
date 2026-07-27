@@ -1,0 +1,26 @@
+# ── build output ────────────────────────────────────────────────────────
+*.o
+*.obj
+*.exe
+*.out
+inop
+build/
+probe
+probe.exe
+
+# ── KEY MATERIAL — never commit these ───────────────────────────────────
+# Wheel files and key sheets are the secret. Committing them to a public
+# repo is the exact failure the whole design is meant to avoid: it hands an
+# analyst the machine's wiring and the day's settings in one place.
+inop_wheels.txt
+inop_keysheet.txt
+inop.settings
+*.settings
+*.keysheet
+
+# ── editor / OS noise ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
