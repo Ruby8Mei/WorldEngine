@@ -141,7 +141,16 @@ bool load_settings(Settings& s, const std::string& path) {
         else if (key == "key")       is >> out.master_key;
         else if (key == "rotors")    while (is >> tok) out.rotors.push_back(upper(tok));
         else if (key == "plugs")     while (is >> tok) out.plugs.push_back(upper(tok));
-        else if (key == "rings")     while (is >> tok) out.rings.push_back(std::stoi(tok));
+        else if (key == "rings") {
+            while (is >> tok) {
+                try {
+                    out.rings.push_back(std::stoi(tok));
+                } catch (const std::exception&) {
+                    fail("bad 'rings' value '" + tok + "' in " + path);
+                    return false;
+                }
+            }
+        }
         else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : upper(tok));
     }
     s = out;
@@ -454,7 +463,26 @@ int self_test() {
         check(ok, ok ? "entropy source is alive and uniform" : why);
     }
 
-    // 7. Throughput.
+    // 7. wiring_is_rotation must rank by the declared alphabet, not ASCII —
+    //    ASCII sorts digits/#// before letters, ALPHA38 puts them after.
+    {
+        auto shift_by_one = [](const std::string& alpha) {
+            std::string w;
+            w.reserve(alpha.size());
+            for (size_t i = 1; i <= alpha.size(); ++i) w += alpha[i % alpha.size()];
+            return w;
+        };
+        check(wiring_is_rotation(shift_by_one(ALPHA38), ALPHA38),
+              "shift-by-1 wiring of ALPHA38 is caught as a rotation");
+        check(wiring_is_rotation(shift_by_one(ALPHA26), ALPHA26),
+              "shift-by-1 wiring of ALPHA26 is caught as a rotation");
+        // R1's factory wiring, copied from registry.cpp — must NOT be
+        // flagged as a rotation.
+        const std::string r1 = "BXML2UOKH3#46705CYG19ETFPRID8SWQAVNZJ/";
+        check(!wiring_is_rotation(r1, ALPHA38), "built-in R1 wiring is accepted, not a rotation");
+    }
+
+    // 8. Throughput.
     {
         Alphabet a(ALPHA38);
         std::vector<Rotor> rs;

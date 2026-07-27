@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "registry.hpp"
 #include "rng.hpp"
 
 namespace inop {
@@ -66,20 +67,14 @@ const Suite& ask_suite() {
 
 // ── generation primitives ───────────────────────────────────────────────
 // A wiring that is a pure rotation of the alphabet is a shift cipher, which
-// is what a dead RNG produces. Reject it rather than ship it.
-static bool is_rotation(const std::string& w, const Alphabet& alpha) {
-    int shift = (alpha.index(w[0]) - 0 + alpha.size()) % alpha.size();
-    for (int i = 1; i < alpha.size(); ++i)
-        if ((alpha.index(w[static_cast<size_t>(i)]) - i + alpha.size()) % alpha.size() != shift)
-            return false;
-    return true;
-}
-
+// is what a dead RNG produces. Reject it rather than ship it. Shares the
+// rotation check with registry.cpp's load-time validator so the two can
+// never diverge again.
 std::string random_rotor_wiring(const Alphabet& alpha) {
     std::vector<char> v(alpha.str().begin(), alpha.str().end());
     secure_shuffle(v);
     std::string w(v.begin(), v.end());
-    if (is_rotation(w, alpha))
+    if (wiring_is_rotation(w, alpha.str()))
         throw std::runtime_error(
             "generated a rotation, not a permutation — the entropy source is broken");
     return w;

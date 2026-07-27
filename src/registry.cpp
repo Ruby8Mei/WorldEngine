@@ -108,27 +108,41 @@ Reflector make_reflector(const std::string& name, const Alphabet& alpha) {
 }
 
 namespace {
-// A wiring that is a fixed shift of the alphabet is a Caesar rotor: it adds
-// nothing, and several in series still compose to one. It is also exactly
-// what a dead random number generator emits, so it is never legitimate.
-bool is_rotation(const std::string& w) {
-    if (w.size() < 2) return true;
-    const int n = static_cast<int>(w.size());
-    std::map<char, int> pos;
-    // position of each symbol within the wiring's own sorted alphabet
-    std::string sorted = w;
-    std::sort(sorted.begin(), sorted.end());
-    for (int i = 0; i < n; ++i) pos[sorted[static_cast<size_t>(i)]] = i;
-    int shift = (pos[w[0]] - 0 + n) % n;
-    for (int i = 1; i < n; ++i)
-        if ((pos[w[static_cast<size_t>(i)]] - i + n) % n != shift) return false;
-    return true;
+
+bool is_permutation(const std::string& wiring, const std::string& alphabet) {
+    if (wiring.size() != alphabet.size()) return false;
+    std::string sw = wiring, sa = alphabet;
+    std::sort(sw.begin(), sw.end());
+    std::sort(sa.begin(), sa.end());
+    return sw == sa;
+}
+
+// The suite whose alphabet this wiring's length matches, or null if none
+// does — a wiring of a length no known suite uses can't be validated at all.
+const Suite* suite_for_length(size_t len) {
+    for (const auto& kv : suites())
+        if (kv.second.alphabet.size() == len) return &kv.second;
+    return nullptr;
 }
 
 void note(std::vector<std::string>* out, const std::string& msg) {
     if (out) out->push_back(msg);
 }
 }  // namespace
+
+// A wiring that is a fixed shift of the alphabet is a Caesar rotor: it adds
+// nothing, and several in series still compose to one. It is also exactly
+// what a dead random number generator emits, so it is never legitimate.
+bool wiring_is_rotation(const std::string& wiring, const std::string& alphabet) {
+    const int n = static_cast<int>(wiring.size());
+    if (n != static_cast<int>(alphabet.size()) || n < 2) return n < 2;
+    std::map<char, int> pos;  // position of each symbol in the DECLARED alphabet
+    for (int i = 0; i < n; ++i) pos[alphabet[static_cast<size_t>(i)]] = i;
+    int shift = (pos[wiring[0]] - 0 + n) % n;
+    for (int i = 1; i < n; ++i)
+        if ((pos[wiring[static_cast<size_t>(i)]] - i + n) % n != shift) return false;
+    return true;
+}
 
 int load_wheel_file(const std::string& path, std::vector<std::string>* problems) {
     std::ifstream f(path);
@@ -156,13 +170,23 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
         by_wiring[it->second.wiring].push_back(it->first);
     for (std::map<std::string, std::vector<std::string> >::const_iterator it = by_wiring.begin();
          it != by_wiring.end(); ++it) {
+        const std::string& wiring = it->first;
         if (it->second.size() > 1) {
             bad = true;
             note(problems, std::to_string(it->second.size()) +
                  " rotors share one wiring (" + it->second.front() + " ... " +
                  it->second.back() + ")");
         }
-        if (is_rotation(it->first)) {
+        const Suite* s = suite_for_length(wiring.size());
+        if (!s) {
+            bad = true;
+            note(problems, "rotor " + it->second.front() + ": wiring length " +
+                 std::to_string(wiring.size()) + " matches no known suite alphabet");
+        } else if (!is_permutation(wiring, s->alphabet)) {
+            bad = true;
+            note(problems, "rotor " + it->second.front() +
+                 ": wiring is not a permutation of the " + s->name + " alphabet");
+        } else if (wiring_is_rotation(wiring, s->alphabet)) {
             bad = true;
             note(problems, "rotor " + it->second.front() +
                  " is a rotation of the alphabet, not a permutation — a shift cipher");
@@ -173,13 +197,25 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
     for (std::map<std::string, std::string>::const_iterator it = refl.begin(); it != refl.end(); ++it)
         refl_by[it->second].push_back(it->first);
     for (std::map<std::string, std::vector<std::string> >::const_iterator it = refl_by.begin();
-         it != refl_by.end(); ++it)
+         it != refl_by.end(); ++it) {
+        const std::string& wiring = it->first;
         if (it->second.size() > 1) {
             bad = true;
             note(problems, std::to_string(it->second.size()) +
                  " reflectors share one wiring (" + it->second.front() + " ... " +
                  it->second.back() + ")");
         }
+        const Suite* s = suite_for_length(wiring.size());
+        if (!s) {
+            bad = true;
+            note(problems, "reflector " + it->second.front() + ": wiring length " +
+                 std::to_string(wiring.size()) + " matches no known suite alphabet");
+        } else if (!is_permutation(wiring, s->alphabet)) {
+            bad = true;
+            note(problems, "reflector " + it->second.front() +
+                 ": wiring is not a permutation of the " + s->name + " alphabet");
+        }
+    }
 
     if (bad) {
         note(problems, "file rejected — regenerate it, and discard anything enciphered with it");

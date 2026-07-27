@@ -25,6 +25,10 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
         char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
         if (c == ' ') {
             if (has_space_sub) out += SPACE_SUB;
+        } else if (c == SPACE_SUB) {
+            // A literal '#' is pruned rather than carried through: decrypt()
+            // maps every SPACE_SUB back to a space, so a literal one would
+            // be indistinguishable from a substituted space either way.
         } else if (alpha.contains(c)) {
             out += c;
         }
@@ -102,12 +106,17 @@ Encrypted Pipeline::encrypt(const std::string& plaintext) {
 }
 
 std::string Pipeline::decrypt(const std::string& ciphertext, const std::string& marker) {
+    // A blank marker must fail loudly, not silently hand back the raw
+    // noise-padded blob as if it were the message.
+    if (cfg_.padding && marker.empty())
+        throw std::runtime_error("a marker is required to decipher a padded message");
+
     std::string s = run_pass(ciphertext);
     if (cfg_.double_pass) {
         std::reverse(s.begin(), s.end());
         s = run_pass(s);
     }
-    if (cfg_.padding && !marker.empty()) s = carve(s, marker);
+    if (cfg_.padding) s = carve(s, marker);
     std::replace(s.begin(), s.end(), SPACE_SUB, ' ');
     return s;
 }
