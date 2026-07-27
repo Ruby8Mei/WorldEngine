@@ -13,7 +13,8 @@ struct Suite {
     std::string code;         // "26" | "38"
     std::string name;         // display name
     std::string alphabet;     // symbol set
-    int rotor_count;          // rotors used per message
+    int min_rotors;           // rotors used per message — inclusive range
+    int max_rotors;           // (Legacy is fixed: min == max == 3)
     int max_plug_pairs;
     int max_notches;
     std::vector<std::string> rotor_names;

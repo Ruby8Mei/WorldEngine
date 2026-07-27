@@ -106,17 +106,23 @@ std::string random_notches(const Alphabet& alpha, int count) {
 }
 
 // ── settings generation ─────────────────────────────────────────────────
-GeneratedSettings random_settings(const Suite& s, int plug_pairs, int notches_per_rotor) {
+GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
+                                   int notches_per_rotor) {
+    if (rotor_count < s.min_rotors || rotor_count > s.max_rotors)
+        throw std::invalid_argument("rotor count " + std::to_string(rotor_count) +
+                                    " outside " + s.name + "'s range " +
+                                    std::to_string(s.min_rotors) + "-" +
+                                    std::to_string(s.max_rotors));
     Alphabet alpha(s.alphabet);
     GeneratedSettings g;
     g.suite_code = s.code;
 
     // rotors: distinct, in a random order
     std::vector<std::string> pool = available_rotors(s);
-    if (static_cast<int>(pool.size()) < s.rotor_count)
+    if (static_cast<int>(pool.size()) < rotor_count)
         throw std::runtime_error("not enough rotors available for this suite — generate a batch first");
     secure_shuffle(pool);
-    g.rotors.assign(pool.begin(), pool.begin() + s.rotor_count);
+    g.rotors.assign(pool.begin(), pool.begin() + rotor_count);
 
     // reflector
     std::vector<std::string> refl = available_reflectors(s);
@@ -124,11 +130,11 @@ GeneratedSettings random_settings(const Suite& s, int plug_pairs, int notches_pe
     g.reflector = refl[secure_below(static_cast<uint32_t>(refl.size()))];
 
     // rings
-    for (int i = 0; i < s.rotor_count; ++i)
+    for (int i = 0; i < rotor_count; ++i)
         g.rings.push_back(static_cast<int>(secure_below(static_cast<uint32_t>(alpha.size()))) + 1);
 
     // notches — legacy wheels carry historic ones, so leave those alone
-    for (int i = 0; i < s.rotor_count; ++i)
+    for (int i = 0; i < rotor_count; ++i)
         g.notches.push_back(s.notches_are_fixed ? std::string()
                                                 : random_notches(alpha, notches_per_rotor));
 
@@ -142,7 +148,7 @@ GeneratedSettings random_settings(const Suite& s, int plug_pairs, int notches_pe
                               v[static_cast<size_t>(i * 2 + 1)]);
     }
 
-    g.master_key = secure_string(s.alphabet, static_cast<size_t>(s.rotor_count) + 1);
+    g.master_key = secure_string(s.alphabet, static_cast<size_t>(rotor_count) + 1);
     return g;
 }
 
@@ -166,7 +172,7 @@ void gen_wheels(bool rotors) {
     Alphabet alpha(s.alphabet);
     const char* what = rotors ? "rotors" : "reflectors";
 
-    int count = ask_int(std::string("how many ") + what, 10, 1, 500);
+    int count = ask_int(std::string("how many ") + what, rotors ? 50 : 10, 1, 500);
     // 'G' for generated, so a batch does not silently shadow a factory wheel
     std::string prefix = ask("name prefix", rotors ? "G" : "GX");
     int start = ask_int("first number", 1, 0, 100000);
@@ -218,11 +224,26 @@ void gen_wheels(bool rotors) {
 
 void gen_settings() {
     const Suite& s = ask_suite();
-    int count = ask_int("how many key sheet entries", 7, 1, 1000);
+    int count = ask_int("how many key sheet entries", 360, 1, 10000);
     int plugs = ask_int("plugboard pairs per entry", s.max_plug_pairs / 2, 0, s.max_plug_pairs);
     int notch_n = s.notches_are_fixed ? 0 : ask_int("notches per rotor", 1, 1, s.max_notches);
     if (!s.notches_are_fixed && notch_n > 1)
         std::cout << "  note: 1 notch per rotor gives the longest period; more shortens it\n";
+
+    // rotor count: fixed suites (Legacy) have nothing to ask; a ranged suite
+    // (INOP-38) lets the operator pin one count or draw a fresh one per entry.
+    bool random_count = false;
+    int fixed_count = s.min_rotors;
+    if (s.min_rotors == s.max_rotors) {
+        fixed_count = s.min_rotors;
+    } else {
+        std::string mode = ask("rotor count: (f)ixed or (r)andom per entry", "f");
+        if (!mode.empty() && (mode[0] == 'r' || mode[0] == 'R')) {
+            random_count = true;
+        } else {
+            fixed_count = ask_int("rotor count", s.min_rotors, s.min_rotors, s.max_rotors);
+        }
+    }
 
     std::string path = ask("write to", "inop_keysheet.txt");
     std::ofstream f(path);
@@ -234,7 +255,11 @@ void gen_settings() {
     std::string first;
     for (int i = 0; i < count; ++i) {
         try {
-            GeneratedSettings g = random_settings(s, plugs, notch_n);
+            int n = random_count
+                        ? s.min_rotors + static_cast<int>(secure_below(
+                              static_cast<uint32_t>(s.max_rotors - s.min_rotors + 1)))
+                        : fixed_count;
+            GeneratedSettings g = random_settings(s, n, plugs, notch_n);
             std::string txt = settings_to_text(g);
             if (i == 0) first = txt;
             f << "\n# --- entry " << (i + 1) << " ---\n" << txt;

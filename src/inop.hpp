@@ -138,8 +138,13 @@ private:
 // ── Machine ─────────────────────────────────────────────────────────────
 class Machine {
 public:
+    // legacy_stepping selects the historic three-rotor double-step quirk vs.
+    // the generic odometer cascade. It is a property of the SUITE the caller
+    // is building for, not of how many rotors happen to be in the machine —
+    // the caller (registry/suite-aware code) decides and states it explicitly.
     Machine(const Alphabet& alpha, std::vector<Rotor> rotors, Reflector reflector,
-            Plugboard plugboard, const std::vector<int>& rings, const std::string& master_key);
+            Plugboard plugboard, const std::vector<int>& rings, const std::string& master_key,
+            bool legacy_stepping);
 
     // master_key is (rotor_count + 1) symbols: one window letter per rotor,
     // plus a final symbol giving the reflector orientation.

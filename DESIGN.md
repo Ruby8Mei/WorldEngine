@@ -47,14 +47,21 @@ one key, and should not use it for anything real.
 
 | Suite | Alphabet | Rotors | Purpose |
 |-------|----------|--------|---------|
-| Legacy | 26 | 3 | Faithful 1939 Enigma. Reference implementation and regression test. |
-| INOP-38 | 38 | 5 | The actual machine. |
+| Legacy | 26 | 3 (fixed) | Faithful 1939 Enigma. Reference implementation and regression test. |
+| INOP-38 | 38 | 5-10 | The actual machine. The operator picks the count once per session, first thing, before rings, notches or the master key are asked for — those all follow from it. |
 
 **Legacy is locked** and must stay locked: no padding, no double pass, no
-reflector motion, 5-letter output groups. It is not a suite with options; it
-is a museum exhibit that also serves as a correctness check against the
-historic vector `BDZGOWCXLTKS` (rotors I II III, reflector B, rings 01, key
-AAA, twelve presses of `A`).
+reflector motion, 5-letter output groups, and its rotor count is fixed at 3 —
+it is not a suite with options. It is a museum exhibit that also serves as a
+correctness check against the historic vector `BDZGOWCXLTKS` (rotors I II
+III, reflector B, rings 01, key `AAA`, twelve presses of `A`).
+
+**Legacy's master key is 3 symbols, not 4**: one window letter per rotor, with
+no orientation symbol. The historic reflector does not rotate — it is fixed
+at position 0, not merely defaulted there. A 4-symbol key from an older sheet
+still loads; the trailing symbol is ignored with a notice rather than
+rejected outright, so old key sheets do not stop working. See
+`verify_legacy_integrity()` in section 6.
 
 Its limitations are the *point*. A Legacy machine silently drops digits from a
 message, which is precisely why INOP-38's alphabet exists.
@@ -164,6 +171,15 @@ cipher.
 - `random_notches()` clamps to a minimum of one.
 - `apply_suite_lock()` enforces the Legacy restrictions and is covered by the
   self-test.
+- `verify_legacy_integrity()` — runs at startup, before the main menu, and
+  again whenever Legacy is actually selected (interactively or via a loaded
+  settings file). Checks the historic Enigma vector (rotors I II III,
+  reflector B, rings 1 1 1, key `AAA`, twelve `A`s → `BDZGOWCXLTKS`), the
+  Legacy suite descriptor itself (26 symbols / 3 rotors / block 5 /
+  `historic_lock` / `notches_are_fixed`), and that `apply_suite_lock()`
+  actually forces double pass, padding and moving reflector off. Any failure
+  names the check and exits non-zero — Legacy silently drifting from the
+  machine it claims to be would be a correctness failure, not a style issue.
 
 **Key material is never committed.** `inop_wheels.txt`, `inop_keysheet.txt`
 and `*.settings` are in `.gitignore`.
@@ -181,15 +197,11 @@ Genuine, unresolved, and welcome:
    state. Fixes: give it its own counter on a modulus coprime to 38 (37 gives
    ×37), or nest it at the end of the odometer. Its *starting* orientation is
    real key material either way.
-3. **Legacy's reflector orientation is still settable** from the last symbol of
-   the master key. A real 1939 Enigma had no such control; the historic vector
-   uses `AAAA`. Strict fidelity would take a 3-symbol Legacy key and force the
-   reflector to `A`.
-4. **Digits in Legacy.** Either the operator learns the historical convention
+3. **Digits in Legacy.** Either the operator learns the historical convention
    (`NULL EINS ZWEI …`) or a per-language lookup table is added to the *prep*
    layer, never to Legacy itself. Note that spelling digits out is what gave
    Bletchley the Eins Catalogue.
-5. **The master key is reused for a whole session.** Every message sent under
+4. **The master key is reused for a whole session.** Every message sent under
    one key is in depth with every other. A per-message indicator protocol is
    the right fix. This is the owner's decision and is deliberately unassigned.
 

@@ -14,6 +14,12 @@ struct Wiring {
     std::string notches;
 };
 
+// The wheels below are DEFAULTS: demo and regression material, baked into the
+// binary so the program has something to run before anyone generates a real
+// batch. They are fixed, public, and shipped in source control — the exact
+// opposite of key material. Real traffic must run on wheels generated fresh
+// per `generator.hpp` (maintenance menu -> rotor/reflector batch) and loaded
+// from inop_wheels.txt, never on these.
 const std::map<std::string, Wiring>& rotor_wirings() {
     static const std::map<std::string, Wiring> w = {
         // Legacy — the historic Wehrmacht Enigma wheels, notches and all.
@@ -40,6 +46,8 @@ const std::map<std::string, Wiring>& rotor_wirings() {
     return w;
 }
 
+// Same warning as rotor_wirings() above: defaults/demo/regression material
+// only, never for real traffic.
 const std::map<std::string, std::string>& reflector_wirings() {
     static const std::map<std::string, std::string> w = {
         {"A", "EJMZALYXVBWFCRQUONTSPIKHGD"},
@@ -59,11 +67,11 @@ const std::map<std::string, std::string>& reflector_wirings() {
 
 const std::map<std::string, Suite>& suites() {
     static const std::map<std::string, Suite> s = {
-        {"26", Suite{"26", "Legacy", ALPHA26, 3, 10, 2,
+        {"26", Suite{"26", "Legacy", ALPHA26, 3, 3, 10, 2,
                      {"I", "II", "III", "IV", "V", "VI", "VII"},
                      {"A", "B", "C"},
                      true, true, 5}},
-        {"38", Suite{"38", "INOP-38", ALPHA38, 5, 15, 3,
+        {"38", Suite{"38", "INOP-38", ALPHA38, 5, 10, 15, 3,
                      {"R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"},
                      {"D", "E", "F", "G", "H"},
                      false, false, 16}},

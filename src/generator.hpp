@@ -38,8 +38,11 @@ struct GeneratedSettings {
     std::string master_key;
 };
 
-// A complete, valid, ready-to-use key sheet entry for the given suite.
-GeneratedSettings random_settings(const Suite& s, int plug_pairs, int notches_per_rotor);
+// A complete, valid, ready-to-use key sheet entry for the given suite, using
+// exactly rotor_count rotors. rotor_count must fall within
+// [s.min_rotors, s.max_rotors].
+GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
+                                   int notches_per_rotor);
 
 // Serialise in the same directive format main.cpp reads.
 std::string settings_to_text(const GeneratedSettings& g);

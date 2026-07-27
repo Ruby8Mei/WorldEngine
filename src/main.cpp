@@ -153,18 +153,59 @@ bool load_settings(Settings& s, const std::string& path) {
         }
         else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : upper(tok));
     }
+
+    // The rotor count is derived from the rotors line, not asserted
+    // separately — so a mismatched rings/notches/key list must be caught
+    // here, clearly, rather than crashing or silently truncating later.
+    const size_t count = out.rotors.size();
+    if (count == 0) { fail("no rotors listed in " + path); return false; }
+    if (!suites().count(out.suite_code)) {
+        fail("unknown suite '" + out.suite_code + "' in " + path);
+        return false;
+    }
+    const Suite& su = suite(out.suite_code);
+    if (static_cast<int>(count) < su.min_rotors || static_cast<int>(count) > su.max_rotors) {
+        fail("rotor count " + std::to_string(count) + " in " + path + " is outside " +
+             su.name + "'s range " + std::to_string(su.min_rotors) + "-" +
+             std::to_string(su.max_rotors));
+        return false;
+    }
+    if (out.rings.size() != count) {
+        fail("rings count (" + std::to_string(out.rings.size()) + ") does not match rotor count (" +
+             std::to_string(count) + ") in " + path);
+        return false;
+    }
+    if (!su.notches_are_fixed && out.notches.size() != count) {
+        fail("notches count (" + std::to_string(out.notches.size()) + ") does not match rotor count (" +
+             std::to_string(count) + ") in " + path);
+        return false;
+    }
+    const size_t need_key = su.historic_lock ? count : count + 1;
+    if (out.master_key.size() != need_key &&
+        !(su.historic_lock && out.master_key.size() == need_key + 1)) {
+        fail("key length (" + std::to_string(out.master_key.size()) + ") does not match rotor count (" +
+             std::to_string(count) + ") in " + path);
+        return false;
+    }
+
     s = out;
     return true;
 }
+
+void verify_legacy_integrity();  // defined below; forward-declared for collect_settings()
 
 // ── interactive setup ───────────────────────────────────────────────────
 Settings collect_settings() {
     Settings s;
     rule("suite");
-    for (const auto& kv : suites())
+    for (const auto& kv : suites()) {
+        std::string rotors_desc = kv.second.min_rotors == kv.second.max_rotors
+            ? std::to_string(kv.second.min_rotors)
+            : std::to_string(kv.second.min_rotors) + "-" + std::to_string(kv.second.max_rotors);
         std::cout << "  " << BOLD << kv.second.code << RST << "  " << kv.second.name
                   << DIM << "  (" << kv.second.alphabet.size() << " symbols, "
-                  << kv.second.rotor_count << " rotors)" << RST << "\n";
+                  << rotors_desc << " rotors)" << RST << "\n";
+    }
     while (true) {
         std::string c = ask("suite [38]");
         if (c.empty()) c = "38";
@@ -172,7 +213,24 @@ Settings collect_settings() {
         fail("unknown suite code");
     }
     const Suite& su = suite(s.suite_code);
+    if (su.code == "26") verify_legacy_integrity();
     Alphabet alpha(su.alphabet);
+
+    rule("rotor count");
+    int rotor_count = su.min_rotors;
+    if (su.min_rotors == su.max_rotors) {
+        std::cout << DIM << "  " << su.name << " always uses " << su.min_rotors << " rotors" << RST << "\n";
+    } else {
+        while (true) {
+            std::string c = ask("how many rotors (" + std::to_string(su.min_rotors) + "-" +
+                                std::to_string(su.max_rotors) + ")");
+            try {
+                int v = std::stoi(c);
+                if (v >= su.min_rotors && v <= su.max_rotors) { rotor_count = v; break; }
+            } catch (...) {}
+            fail("need a number " + std::to_string(su.min_rotors) + "-" + std::to_string(su.max_rotors));
+        }
+    }
 
     rule("rotors");
     std::vector<std::string> pool = available_rotors(su);
@@ -180,10 +238,10 @@ Settings collect_settings() {
     for (auto& n : pool) std::cout << " " << n;
     std::cout << DIM << "   (" << pool.size() << " wheels)" << RST << "\n";
     while (true) {
-        auto picks = split(upper(ask("choose " + std::to_string(su.rotor_count) +
+        auto picks = split(upper(ask("choose " + std::to_string(rotor_count) +
                                      " rotors, left to right")));
-        if (static_cast<int>(picks.size()) != su.rotor_count) {
-            fail("need exactly " + std::to_string(su.rotor_count));
+        if (static_cast<int>(picks.size()) != rotor_count) {
+            fail("need exactly " + std::to_string(rotor_count));
             continue;
         }
         bool ok = true, dup = false;
@@ -231,10 +289,10 @@ Settings collect_settings() {
 
     rule("ring settings");
     while (true) {
-        auto toks = split(ask(std::to_string(su.rotor_count) + " values 1-" +
+        auto toks = split(ask(std::to_string(rotor_count) + " values 1-" +
                               std::to_string(alpha.size())));
-        if (static_cast<int>(toks.size()) != su.rotor_count) {
-            fail("need " + std::to_string(su.rotor_count) + " numbers");
+        if (static_cast<int>(toks.size()) != rotor_count) {
+            fail("need " + std::to_string(rotor_count) + " numbers");
             continue;
         }
         std::vector<int> vals;
@@ -273,14 +331,26 @@ Settings collect_settings() {
     }
 
     rule("master key");
-    const size_t need = s.rotors.size() + 1;
-    std::cout << DIM << "  " << need << " symbols: one window position per rotor, "
-              << "plus the reflector orientation" << RST << "\n";
+    // The historic reflector does not rotate, so a Legacy key carries no
+    // orientation symbol — just one window letter per rotor. A 4-symbol key
+    // from an older sheet is still accepted for compatibility; build_machine()
+    // drops the extra symbol with a notice rather than rejecting it.
+    const size_t need = su.historic_lock ? s.rotors.size() : s.rotors.size() + 1;
+    std::cout << DIM << "  " << need << " symbols: one window position per rotor"
+              << (su.historic_lock ? "" : ", plus the reflector orientation") << RST << "\n";
+    if (su.historic_lock)
+        std::cout << DIM << "  (the historic reflector is fixed and does not rotate; a "
+                  << (need + 1) << "-symbol key from an older sheet still loads, with the "
+                  << "last symbol ignored)" << RST << "\n";
     std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
               << secure_string(su.alphabet, need) << RST << "\n";
     while (true) {
         std::string k = upper(ask("key"));
-        if (k.size() != need) { fail("need exactly " + std::to_string(need) + " symbols"); continue; }
+        if (k.size() != need && !(su.historic_lock && k.size() == need + 1)) {
+            fail("need exactly " + std::to_string(need) + " symbols" +
+                 (su.historic_lock ? " (or " + std::to_string(need + 1) + " for compatibility)" : ""));
+            continue;
+        }
         bool ok = true;
         for (char c : k) if (!alpha.contains(c)) ok = false;
         if (!ok) { fail("symbols must come from the alphabet"); continue; }
@@ -304,8 +374,25 @@ Machine build_machine(const Settings& s) {
         }
         rotors.push_back(std::move(r));
     }
+
+    // The Machine core always wants (rotor count + 1) key symbols — one
+    // window letter per rotor, plus a reflector orientation letter. A
+    // historic-lock suite's reflector is fixed at position 0 and its key
+    // sheet carries no orientation symbol, so that symbol is synthesised
+    // here rather than by relaxing Machine's own contract.
+    std::string key = s.master_key;
+    if (su.historic_lock) {
+        const size_t want = s.rotors.size();
+        if (key.size() == want + 1) {
+            std::cout << DIM << "  note: Legacy reflector is fixed — key symbol '"
+                      << key.back() << "' ignored" << RST << "\n";
+            key = key.substr(0, want);
+        }
+        key += alpha.at(0);  // reflector fixed at position 0
+    }
+
     return Machine(alpha, std::move(rotors), make_reflector(s.reflector, alpha),
-                   Plugboard(s.plugs, alpha), s.rings, s.master_key);
+                   Plugboard(s.plugs, alpha), s.rings, key, su.historic_lock);
 }
 
 // Notches, rings and rotors are read back from the MACHINE rather than from
@@ -342,15 +429,65 @@ void show_settings(const Settings& s, const Machine& m) {
         std::cout << "\n";
     }
 
-    std::cout << "  reflector " << s.reflector
-              << DIM << "  (starts at '" << s.master_key[s.master_key.size() - 1] << "')" << RST
-              << "\n  plugs     ";
+    std::cout << "  reflector " << s.reflector;
+    if (su.historic_lock)
+        std::cout << DIM << "  (fixed — historic reflectors do not rotate)" << RST;
+    else
+        std::cout << DIM << "  (starts at '" << s.master_key[s.master_key.size() - 1] << "')" << RST;
+    std::cout << "\n  plugs     ";
     if (s.plugs.empty()) std::cout << DIM << "(none)" << RST;
     else for (auto& p : s.plugs) std::cout << p << " ";
     std::cout << "\n  key       " << s.master_key << "\n";
     if (su.notches_are_fixed)
         std::cout << DIM << "  notches shown are the historic ones carried by the wheels" << RST << "\n";
     rule();
+}
+
+// ── Legacy integrity guard ──────────────────────────────────────────────
+//
+// The Legacy suite is a museum exhibit and a correctness anchor at the same
+// time: if it silently drifted from the historic machine it claims to be,
+// nothing would notice except a cryptanalyst. Run before the main menu and
+// again whenever Legacy is actually selected, so a regression is caught at
+// the moment it matters rather than only under --self-test.
+void verify_legacy_integrity() {
+    auto abort_check = [](const std::string& what) {
+        std::cout << RED << "  !! legacy integrity check failed: " << what << RST << "\n";
+        std::exit(1);
+    };
+
+    // (a) the historic Enigma vector: rotors I II III, reflector B, rings
+    // 1 1 1, key AAAA, twelve presses of A.
+    {
+        Alphabet a(ALPHA26);
+        std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA",
+                  /*legacy_stepping=*/true);
+        m.set_moving_reflector(false);
+        std::string got = m.encipher("AAAAAAAAAAAA");
+        if (got != "BDZGOWCXLTKS")
+            abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected BDZGOWCXLTKS");
+    }
+
+    // (b) the Legacy suite descriptor itself.
+    {
+        const Suite& su = suite("26");
+        if (su.alphabet.size() != 26) abort_check("Legacy alphabet is not 26 symbols");
+        if (su.min_rotors != 3 || su.max_rotors != 3) abort_check("Legacy rotor count is not fixed at 3");
+        if (su.block != 5) abort_check("Legacy block width is not 5");
+        if (!su.historic_lock) abort_check("Legacy suite is not historic_lock");
+        if (!su.notches_are_fixed) abort_check("Legacy suite notches are not fixed");
+    }
+
+    // (c) apply_suite_lock forces double pass, padding and moving reflector off.
+    {
+        PipelineConfig cfg;
+        cfg.double_pass = cfg.padding = cfg.moving_reflector = true;
+        bool locked = apply_suite_lock(cfg, true, 5);
+        if (!locked || cfg.double_pass || cfg.padding || cfg.moving_reflector)
+            abort_check("apply_suite_lock did not force Legacy's double pass, padding and "
+                        "reflector motion off");
+    }
 }
 
 // ── self-test ───────────────────────────────────────────────────────────
@@ -366,7 +503,7 @@ int self_test() {
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
-        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA");
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA", true);
         m.set_moving_reflector(false);
         std::string got = m.encipher("AAAAAAAAAAAA");
         check(got == "BDZGOWCXLTKS", "historic Enigma I-II-III/B vector -> " + got);
@@ -382,7 +519,7 @@ int self_test() {
             rs.push_back(std::move(r));
         }
         Machine m(a, std::move(rs), make_reflector("E", a),
-                  Plugboard({"AB", "3X", "#/"}, a), {5, 12, 30, 1, 22}, "K3M9QZ");
+                  Plugboard({"AB", "3X", "#/"}, a), {5, 12, 30, 1, 22}, "K3M9QZ", false);
         std::string plain = preprocess("THE QUICK BROWN FOX 0123456789 / END", a);
         m.rewind();
         std::string ct = m.encipher(plain);
@@ -455,6 +592,32 @@ int self_test() {
               "INOP-38 keeps its features, 16-symbol blocks");
     }
 
+    // 5b. Stepping rule follows the SUITE, not rotors_.size(). Two 3-rotor
+    //     machines with identical wirings, notches, reflector, rings and key
+    //     must diverge once one is built as Legacy-style and the other as
+    //     INOP-38-style — nothing about "3 rotors" may pick that for them.
+    {
+        Alphabet a(ALPHA38);
+        auto build = [&](bool legacy_stepping) {
+            std::vector<Rotor> rs;
+            for (auto n : {"R1", "R2", "R3"}) {
+                Rotor r = make_rotor(n, a);
+                r.set_notches("AM", a);
+                rs.push_back(std::move(r));
+            }
+            return Machine(a, std::move(rs), make_reflector("D", a), Plugboard({}, a),
+                           {1, 2, 3}, "ABCD", legacy_stepping);
+        };
+        Machine legacy_style = build(true);
+        Machine inop38_style = build(false);
+        std::string msg(50, 'A');
+        std::string ct_legacy = legacy_style.encipher(msg);
+        std::string ct_inop38 = inop38_style.encipher(msg);
+        check(ct_legacy != ct_inop38,
+              "identical 3-rotor wirings/settings diverge between Legacy-style and "
+              "INOP-38-style stepping — the rule is chosen by the caller, not inferred");
+    }
+
     // 6. The entropy source must be provably alive.
     {
         bool ok = true;
@@ -488,7 +651,7 @@ int self_test() {
         std::vector<Rotor> rs;
         for (auto n : {"R1", "R2", "R3", "R4", "R5"}) rs.push_back(make_rotor(n, a));
         for (auto& r : rs) r.set_notches("AM", a);
-        Machine m(a, std::move(rs), make_reflector("D", a), Plugboard({}, a), {1, 2, 3, 4, 5}, "ABCDEF");
+        Machine m(a, std::move(rs), make_reflector("D", a), Plugboard({}, a), {1, 2, 3, 4, 5}, "ABCDEF", false);
         std::string text(200000, 'A');
         auto t0 = std::chrono::steady_clock::now();
         volatile size_t sink = m.encipher(text).size();
@@ -548,9 +711,15 @@ int main(int argc, char** argv) {
         int extra = load_wheel_file("inop_wheels.txt", &problems);
         if (extra > 0)
             std::cout << DIM << "  loaded " << extra << " wheels from inop_wheels.txt" << RST << "\n";
+        else
+            std::cout << DIM << "  no generated wheels loaded — running on the built-in demo/"
+                      << "regression wheels only; generate a batch before sending real traffic"
+                      << RST << "\n";
         for (size_t i = 0; i < problems.size(); ++i)
             std::cout << RED << "  !! inop_wheels.txt: " << problems[i] << RST << "\n";
     }
+
+    verify_legacy_integrity();
 
     // ── mode choice ───────────────────────────────────────────────────
     while (true) {
@@ -580,6 +749,7 @@ int main(int argc, char** argv) {
         }
     }
     if (!loaded) settings = collect_settings();
+    else if (settings.suite_code == "26") verify_legacy_integrity();
 
     Machine machine = [&] {
         while (true) {

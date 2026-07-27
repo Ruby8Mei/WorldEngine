@@ -137,7 +137,8 @@ Plugboard::Plugboard(const std::vector<std::string>& pairs, const Alphabet& alph
 
 // ── Machine ─────────────────────────────────────────────────────────────
 Machine::Machine(const Alphabet& alpha, std::vector<Rotor> rotors, Reflector reflector,
-                 Plugboard plugboard, const std::vector<int>& rings, const std::string& master_key)
+                 Plugboard plugboard, const std::vector<int>& rings, const std::string& master_key,
+                 bool legacy_stepping)
     : alpha_(alpha),
       rotors_(std::move(rotors)),
       reflector_(std::move(reflector)),
@@ -149,9 +150,11 @@ Machine::Machine(const Alphabet& alpha, std::vector<Rotor> rotors, Reflector ref
     if (master_key.size() != rotors_.size() + 1)
         throw std::invalid_argument("master key must be " + std::to_string(rotors_.size() + 1) +
                                     " symbols (one per rotor, plus one for the reflector)");
+    if (legacy_stepping && rotors_.size() != 3)
+        throw std::invalid_argument("legacy double-step stepping requires exactly 3 rotors");
 
     for (size_t i = 0; i < rotors_.size(); ++i) rotors_[i].set_ring(rings[i]);
-    legacy_double_step_ = (rotors_.size() == 3);
+    legacy_double_step_ = legacy_stepping;
     set_key(master_key);
 }
 
