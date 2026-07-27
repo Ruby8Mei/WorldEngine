@@ -24,3 +24,6 @@ inop.settings
 *.swp
 .DS_Store
 Thumbs.db
+
+# ── local backup mirrors ────────────────────────────────────────────────
+/WorldEngine-backup.git/

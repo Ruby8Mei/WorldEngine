@@ -24,5 +24,9 @@ else()
   target_compile_options(inop PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+if(WIN32)
+  target_link_libraries(inop PRIVATE bcrypt)
+endif()
+
 enable_testing()
 add_test(NAME self_test COMMAND inop --self-test --no-color)
