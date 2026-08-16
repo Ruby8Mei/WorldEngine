@@ -130,9 +130,6 @@ std::vector<std::string> edge_cases() {
     return {
         "",
         "a",
-        "lotuses to antraxia",
-        "hello lotuses to antraxia",
-        "lotuses to antraxia hello",
         "0123456789",
         "a1b2c3d4e5f6g7h8",
         std::string(3000, 'z'),
@@ -261,7 +258,6 @@ int main(int argc, char** argv) {
 
                     try {
                         std::string folded = fold_diacritics(mark_literal_digits(raw), lang);
-                        if (!ends_with_signoff(folded, alpha)) folded += " " + SIGNOFF_PHRASE;
 
                         auto t0 = std::chrono::steady_clock::now();
                         Encrypted e = pipe.encrypt(folded);

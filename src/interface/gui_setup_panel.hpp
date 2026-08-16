@@ -1,5 +1,5 @@
-// gui_settings_panel.hpp — the settings-panel screen: state, live
-// validation, layout, and the Save/Load Settings flows.
+// gui_setup_panel.hpp — the setup screen: state, live
+// validation, layout, and the Save/Load Setup flows.
 //
 // This is the only GUI file that talks to registry.hpp/pipeline.hpp/
 // settings.hpp/languages.hpp/rng.hpp/generator.hpp — gui_render.hpp/
@@ -126,12 +126,17 @@ struct PanelUiState {
     float file_panel_scroll = 0.0f;
 };
 
-class SettingsPanel {
+class SetupPanel {
 public:
-    SettingsPanel();
+    SetupPanel();
 
     // width/height are the current framebuffer size in pixels.
     void frame(const GuiInput& in, int width, int height);
+
+    // True the frame the INOP wordmark was clicked — caller switches to
+    // whatever screen it leads to. Does not reset itself; the caller reads
+    // it once per frame right after frame() returns.
+    bool wordmark_clicked() const { return wordmark_clicked_; }
 
 private:
     void draw_header(const GuiInput& in, float width);
@@ -181,6 +186,7 @@ private:
     PanelState state_;
     PanelUiState ui_;
     FieldValidity validity_;
+    bool wordmark_clicked_ = false;
 };
 
 }  // namespace gui

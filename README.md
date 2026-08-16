@@ -92,7 +92,7 @@ Built as C++23, zero dependencies beyond the compiler. On Windows,
 `BCryptGenRandom` supplies entropy and needs `-lbcrypt`; everything else
 uses `/dev/urandom`. Nothing else is linked in a CLI-only build.
 
-### Optional GUI settings panel
+### Optional GUI
 
 `cmake -B build -DINOP_WITH_GUI=ON` (see `CMakePresets.json`s `gui` preset
 for a ready-made vcpkg + MinGW + `x64-mingw-static` invocation) additionally
@@ -102,14 +102,14 @@ Settings file format. It is reached from a menu option in the same
 terminal session, not a separate executable, and a CLI-only build (the
 default) never links any of it. This is a deliberate, bounded exception to
 the zero-dependency rule above, not a reversal of it — see DESIGN.md
-section 11.
+section 10.
 
 ### First session
 
 ```
 1  run INOP
 2  maintenance   (generate wheels or key sheets)
-3  GUI settings panel   (experimental, opt-in)
+3  GUI                  (experimental, opt-in)
 4  quit
 ```
 
@@ -155,11 +155,6 @@ covered in full in DESIGN.md rather than here:
   back into normal text automatically, driven by a 3-letter language tag
   appended unencrypted to the end of the transmitted ciphertext.
   Capitalization is not restored; output stays lowercase.
-- **Sign-off phrase.** Every INOP-38 message is checked for a fixed trailing
-  phrase before it goes out, single or inside a batch, and the operator is
-  asked to append it if it is missing. Legacy is exempt entirely — it is a
-  faithful 1939 machine and does not get INOP-38 procedure layered on top
-  of it.
 - **Batch processing** (`:b`) reads a set of pasted or file-based messages
   and enciphers each one under a rotor configuration pulled from
   `inop_keysheet.txt`, either one indexed entry for every message or
@@ -221,8 +216,9 @@ src/interface/         every user-facing entry point
   gui.hpp/gui_stub.cpp     GUI entry point + CLI-only fallback
   gui_render.*             OpenGL drawing + text (GUI builds only)
   gui_widgets.*            small immediate-mode widget set (GUI builds only)
-  gui_settings_panel.*     the settings-panel screen (GUI builds only)
-  gui_config_store.*       Save/Load Settings JSON (GUI builds only)
+  gui_setup_panel.*        the machine setup screen (GUI builds only)
+  gui_main_menu.*          the main menu screen (GUI builds only)
+  gui_config_store.*       Save/Load Setup JSON (GUI builds only)
   gui_file_tile_panel.*    reusable file-tile browser overlay (GUI builds only)
 
 src/benchmark-debug/  combinatorial benchmark harness (offline only,

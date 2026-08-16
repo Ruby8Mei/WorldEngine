@@ -28,7 +28,7 @@ struct Section {
     std::vector<TileEntry> entries;
 };
 
-// Load shows all three sections (Developer settings always present, even
+// Load shows all three sections (Developer setup always present, even
 // empty, so its header/spacing is stable regardless of content). Overwrite
 // shows exactly one section — whichever suite is currently active — so an
 // Enigma session can never overwrite an INOP-38 save or vice versa, and
@@ -37,14 +37,14 @@ std::vector<Section> build_sections(TilePanelMode mode, const std::string& curre
     std::vector<Section> sections;
 
     if (mode == TilePanelMode::Load) {
-        Section dev{"Developer settings", {}};
+        Section dev{"Developer setup", {}};
         for (const auto& p : developer_presets()) dev.entries.push_back(TileEntry{p.name, "", &p.state});
         sections.push_back(std::move(dev));
     }
 
     auto configs = list_configs();
-    Section enigma{"Enigma settings", {}};
-    Section inop{"INOP settings", {}};
+    Section enigma{"Enigma setup", {}};
+    Section inop{"INOP setup", {}};
     for (const auto& c : configs) {
         TileEntry e{c.filename, c.path, nullptr};
         // suite_code == "26" is Enigma; "38" or unreadable/unparseable

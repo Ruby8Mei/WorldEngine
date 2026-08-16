@@ -309,18 +309,7 @@ Cantonese is a diacritic tone scheme devised for this project specifically
 systems) — six tones over the five plain vowels, reusing the same
 mark-shape digits Mandarin already uses for its own four tones.
 
-## 10. The sign-off phrase
-
-Before an INOP-38 message goes out, single or inside a batch, INOP checks
-whether the preprocessed text **ends with** a fixed phrase. Appearing
-somewhere in the middle does not count; it has to be trailing content. If
-it is missing, the operator is asked whether to append it, per message,
-even inside a batch. This is a check on the plaintext before encryption,
-unrelated to the ciphertext-side language tag described above. **Legacy is
-exempt entirely** — it is a faithful 1939 machine and does not get INOP-38
-procedure layered on top of it.
-
-## 11. Non-goals
+## 10. Non-goals
 
 INOP will never:
 

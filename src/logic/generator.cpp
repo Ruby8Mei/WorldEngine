@@ -124,7 +124,7 @@ std::string random_notches(const Alphabet& alpha, int count) {
 // each — not one shared count applied to every rotor — while still pulling
 // every symbol from one shuffled pool so no two rotors can ever land on
 // the same notch symbol. Used by callers that want each rotor to look like
-// an independent pick (the GUI's single-click "Generate Settings") rather
+// an independent pick (the GUI's single-click "Generate Setup") rather
 // than random_settings()'s one-fixed-count-for-everyone contract (what the
 // CLI's interactive prompts ask for).
 std::vector<std::string> random_variable_notches(const Alphabet& alpha, int rotor_count,

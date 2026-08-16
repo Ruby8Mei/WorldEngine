@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <map>
 #include <stdexcept>
 
 #include "rng.hpp"
@@ -51,28 +50,6 @@ std::string mark_literal_digits(const std::string& text) {
         prev = c;
     }
     return out;
-}
-
-const std::string SIGNOFF_PHRASE = "lotuses to antraxia";
-
-namespace {
-// SIGNOFF_PHRASE is fixed and only the alphabet varies (at most a couple of
-// distinct suites in one run), yet this gets re-preprocessed from scratch
-// on every ends_with_signoff() call — once per message, so a large batch
-// repeats identical work. Cached per alphabet instead.
-const std::string& preprocessed_signoff(const Alphabet& alpha) {
-    static std::map<std::string, std::string> cache;
-    auto it = cache.find(alpha.str());
-    if (it == cache.end()) it = cache.emplace(alpha.str(), preprocess(SIGNOFF_PHRASE, alpha)).first;
-    return it->second;
-}
-}  // namespace
-
-bool ends_with_signoff(const std::string& text, const Alphabet& alpha) {
-    std::string pre = preprocess(text, alpha);
-    const std::string& phrase = preprocessed_signoff(alpha);
-    if (phrase.size() > pre.size()) return false;
-    return pre.compare(pre.size() - phrase.size(), phrase.size(), phrase) == 0;
 }
 
 std::string group(const std::string& text, int block) {

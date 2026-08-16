@@ -133,16 +133,6 @@ std::string ask_language(const std::string& def) {
     }
 }
 
-// If the (folded, preprocessed) text doesn't end with the sign-off phrase,
-// offer to append it. Applies to every INOP-38 message, single or batched;
-// Legacy is exempt entirely (the caller only invokes this for INOP-38).
-std::string apply_signoff(const std::string& text, const Alphabet& alpha) {
-    if (ends_with_signoff(text, alpha)) return text;
-    if (ask_toggle("  message doesn't end with the sign-off phrase — append it?", true))
-        return text + " " + SIGNOFF_PHRASE;
-    return text;
-}
-
 // ── settings ────────────────────────────────────────────────────────────
 void verify_legacy_integrity();  // defined below; forward-declared for collect_settings()
 
@@ -687,17 +677,7 @@ int self_test() {
               "digit collision: apostrophe dropped, no space inserted");
     }
 
-    // 11. Sign-off phrase: only satisfied by trailing content, not by
-    //     appearing earlier in the message.
-    {
-        Alphabet a(ALPHA38);
-        check(ends_with_signoff("hello lotuses to antraxia", a), "sign-off phrase at the end");
-        check(!ends_with_signoff("lotuses to antraxia and then more", a),
-              "sign-off phrase earlier in the message does not satisfy the check");
-        check(!ends_with_signoff("hello world", a), "sign-off phrase absent");
-    }
-
-    // 12. Exhaustive per-language diacritic round trip: every (letter,
+    // 11. Exhaustive per-language diacritic round trip: every (letter,
     //     digit) pair each language's resubstitute() table supports, not
     //     just the characters that happened to show up in a worked example
     //     sentence. Catches table gaps a natural-language sentence might
@@ -937,7 +917,7 @@ void run_batch_mode(const PipelineConfig& cfg) {
 
     size_t n = sequential ? std::min(messages.size(), static_cast<size_t>(entries)) : messages.size();
     std::string last_lang = "eng";
-    size_t processed = 0, signoff_added = 0;
+    size_t processed = 0;
 
     // Fixed-index mode uses the exact same config for every message in the
     // batch, so the keysheet entry, Machine, and Pipeline are all built
@@ -966,21 +946,17 @@ void run_batch_mode(const PipelineConfig& cfg) {
         Settings s;
         std::optional<Machine> seq_machine;
         std::optional<Pipeline> seq_pipe;
-        Machine* m_ptr;
         Pipeline* pipe_ptr;
         if (sequential) {
             std::string err;
             if (!load_keysheet_entry_from_stream(sequential_stream, idx, s, &err)) { fail(err); continue; }
             seq_machine.emplace(build_machine(s));
             seq_pipe.emplace(*seq_machine, cfg);
-            m_ptr = &*seq_machine;
             pipe_ptr = &*seq_pipe;
         } else {
             s = fixed_settings;
-            m_ptr = &*fixed_machine;
             pipe_ptr = &*fixed_pipe;
         }
-        Machine& m = *m_ptr;
         Pipeline& pipe = *pipe_ptr;
         const Suite& su = suite(s.suite_code);
 
@@ -991,9 +967,7 @@ void run_batch_mode(const PipelineConfig& cfg) {
         if (!su.historic_lock) {
             lang = ask_language(last_lang);
             last_lang = lang;
-            std::string folded = fold_diacritics(mark_literal_digits(messages[i]), lang);
-            to_send = apply_signoff(folded, m.alphabet());
-            if (to_send != folded) ++signoff_added;
+            to_send = fold_diacritics(mark_literal_digits(messages[i]), lang);
         }
 
         try {
@@ -1012,10 +986,8 @@ void run_batch_mode(const PipelineConfig& cfg) {
     }
 
     rule();
-    std::cout << GREEN << "  batch complete: " << processed << "/" << n << " message(s) processed" << RST;
-    if (signoff_added > 0)
-        std::cout << DIM << "  (" << signoff_added << " sign-off phrase(s) appended)" << RST;
-    std::cout << "\n";
+    std::cout << GREEN << "  batch complete: " << processed << "/" << n << " message(s) processed" << RST
+              << "\n";
 }
 
 void banner() {
@@ -1076,7 +1048,7 @@ int main(int argc, char** argv) {
     while (true) {
         std::cout << "\n  1  run INOP\n"
                   << "  2  maintenance  " << DIM << "(generate wheels or key sheets)" << RST << "\n"
-                  << "  3  GUI settings panel  " << DIM << "(experimental, opt-in)" << RST << "\n"
+                  << "  3  GUI  " << DIM << "(experimental, opt-in)" << RST << "\n"
                   << "  4  quit\n";
         std::string c = ask("choice [1]");
         if (c.empty() || c == "1") break;
@@ -1223,7 +1195,6 @@ int main(int argc, char** argv) {
             lang = ask_language(last_lang);
             last_lang = lang;
             to_send = fold_diacritics(mark_literal_digits(line), lang);
-            to_send = apply_signoff(to_send, active_alpha);
         }
 
         try {

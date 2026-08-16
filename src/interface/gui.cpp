@@ -1,5 +1,5 @@
 // gui.cpp — GLFW window/context creation and the main loop for the
-// settings-panel GUI. Compiled only when INOP_WITH_GUI is ON.
+// optional GUI. Compiled only when INOP_WITH_GUI is ON.
 #include "gui.hpp"
 
 #include <iostream>
@@ -29,8 +29,9 @@
 // what makes WGL hand back the driver's default compatibility context.
 #include <GLFW/glfw3.h>
 
+#include "gui_main_menu.hpp"
 #include "gui_render.hpp"
-#include "gui_settings_panel.hpp"
+#include "gui_setup_panel.hpp"
 #include "gui_widgets.hpp"
 
 namespace inop {
@@ -64,7 +65,7 @@ void run_gui_settings() {
         return;
     }
 
-    GLFWwindow* window = glfwCreateWindow(1400, 950, "INOP settings", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1400, 950, "INOP", nullptr, nullptr);
     if (!window) {
         std::cerr << "gui: glfwCreateWindow failed\n";
         glfwTerminate();
@@ -91,7 +92,15 @@ void run_gui_settings() {
     glfwGetFramebufferSize(window, &fb_w, &fb_h);
     gui::set_viewport(fb_w, fb_h);
 
-    gui::SettingsPanel panel;
+    gui::SetupPanel panel;
+    gui::MainMenu main_menu;
+    // Owned here, not by either screen — a screen only knows how to signal
+    // "the operator picked me" (open_inop_requested()/wordmark_clicked()/
+    // exit_requested()), not what that means for what gets shown next. See
+    // gui_setup_panel.hpp's header comment for why the screens themselves
+    // stay this narrow. The GUI opens on MainMenu, not Setup directly.
+    enum class Screen { MainMenu, Setup };
+    Screen screen = Screen::MainMenu;
     bool mouse_down_prev = false;
 
     while (!glfwWindowShouldClose(window)) {
@@ -108,7 +117,15 @@ void run_gui_settings() {
         mouse_down_prev = mouse_down_cur;
 
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
-        panel.frame(g_input, fb_w, fb_h);
+
+        if (screen == Screen::Setup) {
+            panel.frame(g_input, fb_w, fb_h);
+            if (panel.wordmark_clicked()) screen = Screen::MainMenu;
+        } else {
+            main_menu.frame(g_input, fb_w, fb_h);
+            if (main_menu.open_inop_requested()) screen = Screen::Setup;
+            if (main_menu.exit_requested()) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
 
         if (g_input.key_escape) glfwSetWindowShouldClose(window, GLFW_TRUE);
 

@@ -1,21 +1,21 @@
 // gui_file_tile_panel.hpp — reusable embedded overlay: a scrollable grid
-// of plain square tiles, grouped into named sections (Developer settings /
-// Enigma settings / INOP settings).
+// of plain square tiles, grouped into named sections (Developer setup /
+// Enigma setup / INOP setup).
 //
-// Shared by "Load Settings" and "Save Settings -> Overwrite existing" so
+// Shared by "Load Setup" and "Save Setup -> Overwrite existing" so
 // the grid/scroll/section logic exists exactly once. No art/styling on the
 // tiles yet (per spec) beyond a functional filename/preset-name label.
 #pragma once
 
 #include <string>
 
-#include "gui_settings_panel.hpp"
+#include "gui_setup_panel.hpp"
 #include "gui_widgets.hpp"
 
 namespace inop {
 namespace gui {
 
-// Load shows all three sections (Developer settings is load-only, never an
+// Load shows all three sections (Developer setup is load-only, never an
 // overwrite/delete target). Overwrite shows exactly one section — whichever
 // suite is currently active — so an Enigma session can never overwrite an
 // INOP-38 save or vice versa.

@@ -30,7 +30,7 @@ set(INOP_SRC_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark-debug
 )
 
-# The GUI settings panel (GLFW + raw OpenGL + stb_truetype) is optional and
+# The optional GUI (GLFW + raw OpenGL + stb_truetype) is
 # opt-in — the terminal build has zero mandatory dependencies beyond a
 # compiler either way. Off by default; enable with -DINOP_WITH_GUI=ON and a
 # vcpkg toolchain file (see CMakePresets.json's "gui" preset).
@@ -68,7 +68,8 @@ if(INOP_WITH_GUI)
     src/interface/gui_widgets.cpp
     src/interface/gui_config_store.cpp
     src/interface/gui_file_tile_panel.cpp
-    src/interface/gui_settings_panel.cpp
+    src/interface/gui_setup_panel.cpp
+    src/interface/gui_main_menu.cpp
   )
 else()
   set(INOP_GUI_SOURCES src/interface/gui_stub.cpp)

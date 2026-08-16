@@ -20,7 +20,7 @@ namespace gui {
 
 namespace {
 
-const std::string kDir = "machine_settings";
+const std::string kDir = "setup";
 
 void ensure_dir() {
 #if defined(_WIN32)

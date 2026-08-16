@@ -1,4 +1,4 @@
-#include "gui_settings_panel.hpp"
+#include "gui_setup_panel.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -248,11 +248,11 @@ bool master_key_valid(const PanelState& state, const FieldValidity& validity) {
 
 // ── panel ───────────────────────────────────────────────────────────────
 
-SettingsPanel::SettingsPanel() {
+SetupPanel::SetupPanel() {
     for (int i = 0; i < kMaxRotors; ++i) rotor_pick_idx_[i] = -1;
 }
 
-void SettingsPanel::sync_indices_from_state() {
+void SetupPanel::sync_indices_from_state() {
     const Suite& su = suite(state_.suite_code);
 
     suite_codes_ = {"38", "26"};
@@ -277,7 +277,7 @@ void SettingsPanel::sync_indices_from_state() {
     reflector_idx_ = index_of(reflector_options_, state_.reflector_name);
 }
 
-void SettingsPanel::sync_state_from_indices() {
+void SetupPanel::sync_state_from_indices() {
     if (suite_idx_ >= 0 && suite_idx_ < static_cast<int>(suite_codes_.size())) {
         const std::string& new_suite = suite_codes_[static_cast<size_t>(suite_idx_)];
         if (new_suite != state_.suite_code) {
@@ -303,8 +303,9 @@ void SettingsPanel::sync_state_from_indices() {
         state_.reflector_name.clear();
 }
 
-void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
+void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
     begin_widget_frame();
+    wordmark_clicked_ = false;
 
     sync_indices_from_state();
     validity_ = derive_validity(state_);
@@ -368,14 +369,14 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     end_widget_frame(real_in);
 }
 
-void SettingsPanel::draw_header(const GuiInput& in, float width) {
+void SetupPanel::draw_header(const GuiInput& in, float width) {
     const float pad = 6.0f;
     // Sized to the actual rendered logo (plus a little breathing room)
     // instead of a fixed box the text only half-filled.
     float word_tw = text_width(Font::Wordmark, "INOP");
     float word_th = text_line_height(Font::Wordmark);
     Rect wordmark_r{16, pad, word_tw + 24.0f, word_th + 12.0f};
-    if (wordmark_button(wordmark_r, in)) std::cout << "[gui] INOP wordmark clicked (no-op)\n";
+    if (wordmark_button(wordmark_r, in)) wordmark_clicked_ = true;
 
     bool next_enabled = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
     float btn_w = 150, btn_h = 30, gap = 6;
@@ -383,13 +384,13 @@ void SettingsPanel::draw_header(const GuiInput& in, float width) {
     if (button(next_r, "Next", in, next_enabled, next_enabled)) log_next_clicked(state_);
 
     Rect generate_r{width - btn_w - 16, pad + (btn_h + gap), btn_w, btn_h};
-    if (button(generate_r, "Generate Settings", in, true)) on_generate_clicked();
+    if (button(generate_r, "Generate Setup", in, true)) on_generate_clicked();
 
     Rect save_r{width - btn_w - 16, pad + 2 * (btn_h + gap), btn_w, btn_h};
-    if (button(save_r, "Save Settings", in, next_enabled)) on_save_clicked();
+    if (button(save_r, "Save Setup", in, next_enabled)) on_save_clicked();
 
     Rect load_r{width - btn_w - 16, pad + 3 * (btn_h + gap), btn_w, btn_h};
-    if (button(load_r, "Load Settings", in, true)) {
+    if (button(load_r, "Load Setup", in, true)) {
         ui_.show_load_panel = true;
         ui_.file_panel_scroll = 0;
     }
@@ -417,7 +418,7 @@ void SettingsPanel::draw_header(const GuiInput& in, float width) {
     }
 }
 
-void SettingsPanel::draw_top_row(const GuiInput& in, float width, float y, float h) {
+void SetupPanel::draw_top_row(const GuiInput& in, float width, float y, float h) {
     const Suite& su = suite(state_.suite_code);
     const float margin = 16;
     float col_w = (width - 4 * margin) / 3.0f;
@@ -455,7 +456,7 @@ void SettingsPanel::draw_top_row(const GuiInput& in, float width, float y, float
     }
 }
 
-void SettingsPanel::draw_master_key(const GuiInput& in, Rect area) {
+void SetupPanel::draw_master_key(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     bool unlocked = validity_.all_mandatory_ok;
     label(Rect{area.x, area.y, area.w, 18}, "master key", !unlocked);
@@ -480,7 +481,7 @@ void SettingsPanel::draw_master_key(const GuiInput& in, Rect area) {
     label(Rect{area.x, area.y + 54, area.w, 16}, hint, true);
 }
 
-void SettingsPanel::draw_bottom_row(const GuiInput& in, float width, float y, float h) {
+void SetupPanel::draw_bottom_row(const GuiInput& in, float width, float y, float h) {
     const Suite& su = suite(state_.suite_code);
     const float margin = 16;
     float left_w = width * 0.58f - margin * 1.5f;
@@ -522,7 +523,7 @@ void SettingsPanel::draw_bottom_row(const GuiInput& in, float width, float y, fl
     draw_plugboard_grid(in, right);
 }
 
-void SettingsPanel::draw_rotor_count_buttons(const GuiInput& in, Rect area) {
+void SetupPanel::draw_rotor_count_buttons(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     int lo = su.min_rotors, hi = su.max_rotors;
     int count = hi - lo + 1;
@@ -537,7 +538,7 @@ void SettingsPanel::draw_rotor_count_buttons(const GuiInput& in, Rect area) {
     }
 }
 
-void SettingsPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
+void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     const float header_h = 20.0f;
 
@@ -602,7 +603,7 @@ void SettingsPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
     }
 }
 
-void SettingsPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
+void SetupPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     float grid_y = area.y + 24;
     const int cols = 3, rows = 5;
@@ -650,7 +651,7 @@ void SettingsPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
     }
 }
 
-void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
+void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
     GuiInput under_in = in;
     if (ui_.show_corruption_popup || ui_.show_delete_confirm) {
         under_in.mouse_pressed = false;
@@ -660,7 +661,7 @@ void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
     }
 
     if (ui_.show_load_panel) {
-        FileTilePanelResult r = file_tile_panel_frame(under_in, "Load Settings", w, h,
+        FileTilePanelResult r = file_tile_panel_frame(under_in, "Load Setup", w, h,
                                                        ui_.file_panel_scroll, TilePanelMode::Load,
                                                        state_.suite_code);
         if (r.preset_picked) {
@@ -675,7 +676,7 @@ void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
             on_load_tile_picked(r.path);
     } else if (ui_.show_overwrite_panel) {
         FileTilePanelResult r =
-            file_tile_panel_frame(under_in, "Overwrite Settings", w, h, ui_.file_panel_scroll,
+            file_tile_panel_frame(under_in, "Overwrite Setup", w, h, ui_.file_panel_scroll,
                                    TilePanelMode::Overwrite, state_.suite_code);
         if (r.delete_requested)
             on_delete_tile_requested(r.delete_path);
@@ -688,7 +689,7 @@ void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         Rect box{w / 2 - 160, h / 2 - 70, 320, 140};
         draw_rect(box.x, box.y, box.w, box.h, palette::panel());
         draw_rect_outline(box.x, box.y, box.w, box.h, palette::accent(), 2.0f);
-        label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "Save Settings");
+        label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "Save Setup");
         Rect overwrite_btn{box.x + 20, box.y + 46, box.w - 40, 32};
         Rect create_btn{box.x + 20, box.y + 86, box.w - 40, 32};
         if (button(overwrite_btn, "Overwrite existing", under_in, true)) {
@@ -724,14 +725,14 @@ void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         Rect box{w / 2 - 200, h / 2 - 90, 400, 180};
         draw_rect(box.x, box.y, box.w, box.h, palette::panel());
         draw_rect_outline(box.x, box.y, box.w, box.h, palette::accent(), 2.0f);
-        label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "new settings file name");
+        label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "new setup file name");
         float ext_w = text_width(Font::Body, ".json") + 16.0f;
         Rect field_r{box.x + 16, box.y + 44, box.w - 32 - ext_w - 4, 32};
         text_field(field_r, ui_.create_name_text, under_in,
                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ", 64, true,
                    !ui_.create_name_error.empty());
         // .json is fixed, not editable — the only way this could ever be
-        // anything but a settings JSON is if the extension were typeable.
+        // anything but a setup JSON is if the extension were typeable.
         Rect ext_r{field_r.x + field_r.w + 4, field_r.y, ext_w, 32};
         draw_rect(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::disabled_bg());
         draw_rect_outline(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::border());
@@ -770,7 +771,7 @@ void SettingsPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
     }
 }
 
-void SettingsPanel::on_generate_clicked() {
+void SetupPanel::on_generate_clicked() {
     const Suite& su = suite(state_.suite_code);
     try {
         // Randomized within the suite's own bounds rather than always the
@@ -795,7 +796,7 @@ void SettingsPanel::on_generate_clicked() {
             if (i >= state_.rotor_count) {
                 // Blank rows beyond the new count so leftover key material
                 // from a previous (larger) generation can't linger — Load
-                // Settings never has this problem since it starts from a
+                // Setup never has this problem since it starts from a
                 // fresh, empty PanelState every time; Generate mutates the
                 // existing one in place and has to clear this explicitly.
                 state_.rotor_rows[i] = RotorRow{};
@@ -835,9 +836,9 @@ void SettingsPanel::on_generate_clicked() {
     }
 }
 
-void SettingsPanel::on_save_clicked() { ui_.show_save_chooser = true; }
+void SetupPanel::on_save_clicked() { ui_.show_save_chooser = true; }
 
-void SettingsPanel::on_load_tile_picked(const std::string& path) {
+void SetupPanel::on_load_tile_picked(const std::string& path) {
     PanelState loaded;
     std::string err;
     if (load_config(path, loaded, &err)) {
@@ -854,7 +855,7 @@ void SettingsPanel::on_load_tile_picked(const std::string& path) {
     }
 }
 
-void SettingsPanel::on_overwrite_tile_picked(const std::string& path) {
+void SetupPanel::on_overwrite_tile_picked(const std::string& path) {
     std::string filename = path;
     size_t slash = filename.find_last_of("\\/");
     if (slash != std::string::npos) filename = filename.substr(slash + 1);
@@ -864,7 +865,7 @@ void SettingsPanel::on_overwrite_tile_picked(const std::string& path) {
     ui_.show_overwrite_panel = false;
 }
 
-void SettingsPanel::on_create_confirmed() {
+void SetupPanel::on_create_confirmed() {
     std::string name = ui_.create_name_text;
     size_t a = name.find_first_not_of(' ');
     size_t b = name.find_last_not_of(' ');
@@ -889,12 +890,12 @@ void SettingsPanel::on_create_confirmed() {
     ui_.create_name_error.clear();
 }
 
-void SettingsPanel::on_delete_tile_requested(const std::string& path) {
+void SetupPanel::on_delete_tile_requested(const std::string& path) {
     ui_.delete_confirm_path = path;
     ui_.show_delete_confirm = true;
 }
 
-void SettingsPanel::on_delete_confirmed() {
+void SetupPanel::on_delete_confirmed() {
     std::string err;
     if (!delete_config(ui_.delete_confirm_path, &err)) std::cout << "[gui] delete failed: " << err << "\n";
     ui_.show_delete_confirm = false;

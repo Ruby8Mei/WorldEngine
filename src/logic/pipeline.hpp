@@ -50,12 +50,6 @@ std::string mark_literal_digits(const std::string& text);
 // Group into fixed-width blocks for transmission, as an operator would.
 std::string group(const std::string& text, int block);
 
-// The sign-off phrase, matched against the lowercase-preprocessed text —
-// must be trailing content, not just present anywhere. INOP-38 only; the
-// caller is responsible for exempting Legacy.
-extern const std::string SIGNOFF_PHRASE;
-bool ends_with_signoff(const std::string& text, const Alphabet& alpha);
-
 class Pipeline {
 public:
     Pipeline(Machine& machine, PipelineConfig cfg);
