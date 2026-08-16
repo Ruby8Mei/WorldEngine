@@ -66,6 +66,14 @@ const std::vector<FoldEntry>& single_fold_table() {
         // umlaut / diaeresis -> 6
         {"ä", "a6"}, {"Ä", "a6"}, {"ë", "e6"}, {"Ë", "e6"}, {"ï", "i6"}, {"Ï", "i6"},
         {"ö", "o6"}, {"Ö", "o6"}, {"ü", "u6"}, {"Ü", "u6"}, {"ÿ", "y6"}, {"Ÿ", "y6"},
+        // Pinyin ü + tone mark: ü already carries the umlaut (6); a tone on
+        // top of it chains a second digit rather than picking a new base
+        // letter, since it's the same base vowel with two stacked marks.
+        // Exclusive to Chinese — no other supported language stacks two
+        // diacritics on one letter, so resubstitute() only chains this for
+        // language == "zh".
+        {"ǖ", "u61"}, {"Ǖ", "u61"}, {"ǘ", "u62"}, {"Ǘ", "u62"},
+        {"ǚ", "u63"}, {"Ǚ", "u63"}, {"ǜ", "u64"}, {"Ǜ", "u64"},
         // tilde -> 7
         {"ã", "a7"}, {"Ã", "a7"}, {"ñ", "n7"}, {"Ñ", "n7"}, {"õ", "o7"}, {"Õ", "o7"},
         // genuine distinct letters, unique to one language -> 8
@@ -135,9 +143,11 @@ const std::map<std::string, DecodeTable>& decode_tables() {
 
         {"ca", make({{{'a',4},"à"}, {{'e',4},"è"}, {{'o',4},"ò"},
                       {{'e',2},"é"}, {{'i',2},"í"}, {{'o',2},"ó"}, {{'u',2},"ú"},
+                      {{'i',6},"ï"}, {{'u',6},"ü"},
                       {{'l',8},"l\xC2\xB7l"}})},
 
-        {"nl", make({{{'e',6},"ë"}, {{'i',6},"ï"}, {{'o',6},"ö"}, {{'e',2},"é"}})},
+        {"nl", make({{{'e',6},"ë"}, {{'i',6},"ï"}, {{'o',6},"ö"}, {{'u',6},"ü"},
+                      {{'e',2},"é"}})},
 
         {"pt", make({{{'a',7},"ã"}, {{'o',7},"õ"},
                       {{'a',2},"á"}, {{'e',2},"é"}, {{'i',2},"í"}, {{'o',2},"ó"}, {{'u',2},"ú"},
@@ -220,6 +230,19 @@ std::string resubstitute(const std::string& text, const std::string& language) {
     while (i < n) {
         char c = text[i];
         bool is_letter = c >= 'a' && c <= 'z';
+
+        // Pinyin ü + tone: two chained digits (umlaut 6, then tone 1-4) on
+        // one letter — see the matching encode entries in fold_diacritics.
+        // Checked before the single-digit case below, or the plain "u6"
+        // lookup would consume ü first and strand the tone digit.
+        if (language == "zh" && is_letter && c == 'u' && i + 2 < n && text[i + 1] == '6' &&
+            text[i + 2] >= '1' && text[i + 2] <= '4') {
+            static const char* chain[] = {"\xC7\x96", "\xC7\x98", "\xC7\x9A", "\xC7\x9C"};  // ǖ ǘ ǚ ǜ
+            out += chain[text[i + 2] - '1'];
+            i += 3;
+            continue;
+        }
+
         if (is_letter && i + 1 < n && std::isdigit(static_cast<unsigned char>(text[i + 1]))) {
             int d = text[i + 1] - '0';
             auto it = table.find({c, d});

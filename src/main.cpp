@@ -53,6 +53,12 @@ void enable_vt() {
     if (h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode))
         SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     SetConsoleOutputCP(CP_UTF8);
+    // SetConsoleOutputCP alone only affects what the console WRITES. Typed
+    // or pasted accented characters are decoded on the way IN using the
+    // console's separate input codepage, which defaults to the system
+    // legacy codepage, not UTF-8 — without this, é/è/â/... arrive already
+    // mangled or dropped before fold_diacritics ever sees them.
+    SetConsoleCP(CP_UTF8);
 #endif
 }
 
@@ -641,6 +647,113 @@ int self_test() {
         check(!ends_with_signoff("lotuses to antraxia and then more", a),
               "sign-off phrase earlier in the message does not satisfy the check");
         check(!ends_with_signoff("hello world", a), "sign-off phrase absent");
+    }
+
+    // 12. Exhaustive per-language diacritic round trip: every (letter,
+    //     digit) pair each language's resubstitute() table supports, not
+    //     just the characters that happened to show up in a worked example
+    //     sentence. Catches table gaps a natural-language sentence might
+    //     never exercise (this is exactly what caught src/languages.cpp
+    //     missing Catalan i6/u6 and Dutch u6 during a manual audit).
+    {
+        struct DiacRow { const char* lang; char base; int digit; const char* ch; };
+        static const DiacRow rows[] = {
+            {"la",'a',1,"ā"},{"la",'e',1,"ē"},{"la",'i',1,"ī"},{"la",'o',1,"ō"},{"la",'u',1,"ū"},
+
+            {"en",'a',2,"á"},{"en",'e',2,"é"},{"en",'i',2,"í"},{"en",'o',2,"ó"},{"en",'u',2,"ú"},
+            {"en",'a',4,"à"},{"en",'e',4,"è"},
+            {"en",'a',5,"â"},{"en",'e',5,"ê"},{"en",'i',5,"î"},{"en",'o',5,"ô"},{"en",'u',5,"û"},
+            {"en",'a',6,"ä"},{"en",'e',6,"ë"},{"en",'i',6,"ï"},{"en",'o',6,"ö"},{"en",'u',6,"ü"},
+            {"en",'n',7,"ñ"},
+
+            {"es",'a',2,"á"},{"es",'e',2,"é"},{"es",'i',2,"í"},{"es",'o',2,"ó"},{"es",'u',2,"ú"},
+            {"es",'n',7,"ñ"},{"es",'u',6,"ü"},
+
+            {"ca",'a',4,"à"},{"ca",'e',4,"è"},{"ca",'o',4,"ò"},
+            {"ca",'e',2,"é"},{"ca",'i',2,"í"},{"ca",'o',2,"ó"},{"ca",'u',2,"ú"},
+            {"ca",'i',6,"ï"},{"ca",'u',6,"ü"},
+
+            {"nl",'e',6,"ë"},{"nl",'i',6,"ï"},{"nl",'o',6,"ö"},{"nl",'u',6,"ü"},{"nl",'e',2,"é"},
+
+            {"pt",'a',7,"ã"},{"pt",'o',7,"õ"},
+            {"pt",'a',2,"á"},{"pt",'e',2,"é"},{"pt",'i',2,"í"},{"pt",'o',2,"ó"},{"pt",'u',2,"ú"},
+            {"pt",'a',5,"â"},{"pt",'e',5,"ê"},{"pt",'o',5,"ô"},{"pt",'a',4,"à"},
+
+            {"fr",'e',2,"é"},
+            {"fr",'a',4,"à"},{"fr",'e',4,"è"},{"fr",'u',4,"ù"},
+            {"fr",'a',5,"â"},{"fr",'e',5,"ê"},{"fr",'i',5,"î"},{"fr",'o',5,"ô"},{"fr",'u',5,"û"},
+            {"fr",'e',6,"ë"},{"fr",'i',6,"ï"},{"fr",'u',6,"ü"},{"fr",'y',6,"ÿ"},
+
+            {"it",'a',4,"à"},{"it",'e',4,"è"},{"it",'i',4,"ì"},{"it",'o',4,"ò"},{"it",'u',4,"ù"},
+            {"it",'e',2,"é"},
+
+            {"de",'a',6,"ä"},{"de",'o',6,"ö"},{"de",'u',6,"ü"},{"de",'s',8,"ß"},
+
+            {"tl",'n',7,"ñ"},
+            {"tl",'a',2,"á"},{"tl",'e',2,"é"},{"tl",'i',2,"í"},{"tl",'o',2,"ó"},{"tl",'u',2,"ú"},
+
+            {"zh",'a',1,"ā"},{"zh",'e',1,"ē"},{"zh",'i',1,"ī"},{"zh",'o',1,"ō"},{"zh",'u',1,"ū"},
+            {"zh",'a',2,"á"},{"zh",'e',2,"é"},{"zh",'i',2,"í"},{"zh",'o',2,"ó"},{"zh",'u',2,"ú"},
+            {"zh",'a',3,"ǎ"},{"zh",'e',3,"ě"},{"zh",'i',3,"ǐ"},{"zh",'o',3,"ǒ"},{"zh",'u',3,"ǔ"},
+            {"zh",'a',4,"à"},{"zh",'e',4,"è"},{"zh",'i',4,"ì"},{"zh",'o',4,"ò"},{"zh",'u',4,"ù"},
+            {"zh",'u',6,"ü"},
+
+            {"cs",'a',2,"á"},{"cs",'e',2,"é"},{"cs",'i',2,"í"},{"cs",'o',2,"ó"},{"cs",'u',2,"ú"},
+            {"cs",'y',2,"ý"},
+            {"cs",'e',3,"ě"},{"cs",'s',3,"š"},{"cs",'c',3,"č"},{"cs",'r',3,"ř"},{"cs",'z',3,"ž"},
+            {"cs",'d',3,"ď"},{"cs",'t',3,"ť"},{"cs",'n',3,"ň"},
+
+            {"sk",'a',2,"á"},{"sk",'e',2,"é"},{"sk",'i',2,"í"},{"sk",'o',2,"ó"},{"sk",'u',2,"ú"},
+            {"sk",'y',2,"ý"},{"sk",'a',6,"ä"},{"sk",'o',5,"ô"},
+            {"sk",'l',3,"ľ"},{"sk",'n',3,"ň"},{"sk",'s',3,"š"},{"sk",'c',3,"č"},{"sk",'z',3,"ž"},
+            {"sk",'t',3,"ť"},{"sk",'d',3,"ď"},
+
+            {"tr",'g',3,"ğ"},{"tr",'o',6,"ö"},{"tr",'u',6,"ü"},{"tr",'i',8,"ı"},
+
+            {"ro",'a',5,"â"},{"ro",'i',5,"î"},{"ro",'a',3,"ă"},
+
+            {"sl",'s',3,"š"},{"sl",'c',3,"č"},{"sl",'z',3,"ž"},
+
+            {"mi",'a',1,"ā"},{"mi",'e',1,"ē"},{"mi",'i',1,"ī"},{"mi",'o',1,"ō"},{"mi",'u',1,"ū"},
+        };
+        int rows_checked = 0, rows_failed = 0;
+        for (const auto& r : rows) {
+            std::string encoded = std::string(1, r.base) + std::to_string(r.digit);
+            std::string human = resubstitute(encoded, r.lang);
+            bool decode_ok = human == r.ch;
+            std::string back = fold_diacritics(human, r.lang);
+            bool encode_ok = back == encoded;
+            ++rows_checked;
+            if (!decode_ok || !encode_ok) {
+                ++rows_failed;
+                check(false, std::string(r.lang) + " " + encoded + " <-> " + r.ch +
+                                 (decode_ok ? "" : " (decode mismatch: got " + human + ")") +
+                                 (encode_ok ? "" : " (re-encode mismatch: got " + back + ")"));
+            }
+        }
+        check(rows_failed == 0, "exhaustive per-language diacritic round trip: " +
+                                     std::to_string(rows_checked) + " (letter,digit) pairs across "
+                                     "19 languages");
+
+        // Pinyin ü + tone: the one case where two diacritic digits chain on
+        // a single letter. Verified against the exact examples from the
+        // audit that requested this feature.
+        auto check_chain = [&](const std::string& word, const std::string& expected_folded) {
+            std::string folded = fold_diacritics(word, "zh");
+            check(folded == expected_folded,
+                  "pinyin u-tone chain " + word + " -> " + folded);
+            std::string back = fold_diacritics(resubstitute(folded, "zh"), "zh");
+            check(back == folded, "pinyin u-tone chain round trip " + word);
+        };
+        check_chain(u8"lǜ", "lu64");
+        check_chain(u8"nǚ", "nu63");
+        check_chain(u8"lǖ", "lu61");
+        check_chain(u8"lǘ", "lu62");
+        // No non-Chinese language should ever produce a two-digit chain —
+        // ü alone (no tone) must stay a plain single-digit "u6" everywhere
+        // else.
+        check(fold_diacritics(u8"über", "de") == "u6ber",
+              "German u with diaeresis does not chain (no tone system)");
     }
 
     rule();
