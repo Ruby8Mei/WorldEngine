@@ -1,0 +1,7 @@
+De onzekerheidsrelatie van Heisenberg, of het onzekerheidsprincipe van Heisenberg, door Werner Heisenberg in 1927 gepubliceerd, is een van de belangrijkste resultaten van de kwantummechanica.
+
+De relatie drukt uit dat er zogenaamde incommensurabele paren van grootheden bestaan, waarvoor geldt dat niet van beide grootheden de waarden tegelijkertijd exact vastgelegd kunnen worden of met een willekeurige mate van nauwkeurigheid bepaald kunnen worden.
+
+Elke theorie die een kwantummechanisch systeem beschrijft moet deze relatie tussen een of meer paren geconjugeerde observabelen bevatten.
+
+In golffuncties die oplossingen zijn van Schrödingers golfvergelijking hebben de daaruit af te leiden plaats en impuls geen scherp gedefinieerde waarden, maar zijn zij stochastische variabelen met kansverdelingen die impliciet in de golfvergelijking besloten liggen.

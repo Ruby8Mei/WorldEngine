@@ -31,11 +31,25 @@ struct Encrypted {
 // anything was actually locked.
 bool apply_suite_lock(PipelineConfig& cfg, bool historic_lock, int block);
 
-// Uppercase, map spaces to '#', drop anything the alphabet cannot carry.
+// Lowercase, map spaces to '#', drop anything the alphabet cannot carry.
 std::string preprocess(const std::string& text, const Alphabet& alpha);
+
+// Insert '/' between a letter and an immediately-following literal digit in
+// RAW operator input — "Room A2" -> "Room A/2" — so it survives folding and
+// preprocessing distinguishable from a digit the diacritic-numeral scheme
+// introduces (which never gets a separator). Must run before any diacritic
+// folding, on the raw text, or it can't tell literal digits from folded
+// ones anymore.
+std::string mark_literal_digits(const std::string& text);
 
 // Group into fixed-width blocks for transmission, as an operator would.
 std::string group(const std::string& text, int block);
+
+// The sign-off phrase, matched against the lowercase-preprocessed text —
+// must be trailing content, not just present anywhere. INOP-38 only; the
+// caller is responsible for exempting Legacy.
+extern const std::string SIGNOFF_PHRASE;
+bool ends_with_signoff(const std::string& text, const Alphabet& alpha);
 
 class Pipeline {
 public:

@@ -23,25 +23,25 @@ struct Wiring {
 const std::map<std::string, Wiring>& rotor_wirings() {
     static const std::map<std::string, Wiring> w = {
         // Legacy — the historic Wehrmacht Enigma wheels, notches and all.
-        {"I",    {"EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q"}},
-        {"II",   {"AJDKSIRUXBLHWTMCQGZNPYFVOE", "E"}},
-        {"III",  {"BDFHJLCPRTXVZNYEIWGAKMUSQO", "V"}},
-        {"IV",   {"ESOVPZJAYQUIRHXLNFTGKDCMWB", "J"}},
-        {"V",    {"VZBRGITYUPSDNHLXAWMJQOFECK", "Z"}},
-        {"VI",   {"JPGVOUMFYQBENHZRDKASXLICTW", "ZM"}},
-        {"VII",  {"NZJHGRCXMYSWBOUFAIVLPEKQDT", "ZM"}},
+        {"I",    {"ekmflgdqvzntowyhxuspaibrcj", "q"}},
+        {"II",   {"ajdksiruxblhwtmcqgznpyfvoe", "e"}},
+        {"III",  {"bdfhjlcprtxvznyeiwgakmusqo", "v"}},
+        {"IV",   {"esovpzjayquirhxlnftgkdcmwb", "j"}},
+        {"V",    {"vzbrgityupsdnhlxawmjqofeck", "z"}},
+        {"VI",   {"jpgvoumfyqbenhzrdkasxlictw", "zm"}},
+        {"VII",  {"nzjhgrcxmyswboufaivlpekqdt", "zm"}},
 
         // INOP-38 — 38 symbols, notches chosen per message.
-        {"R1",   {"BXML2UOKH3#46705CYG19ETFPRID8SWQAVNZJ/", ""}},
-        {"R2",   {"1Q27#CPZL3RHV6MKTJUXFBE5O9N0AS4DI/YWG8", ""}},
-        {"R3",   {"ZO5RNUBY/K0SMTPAJWCX23EDL8FG9VH4176I#Q", ""}},
-        {"R4",   {"6V10Z/8FHED9S73AMRT#KQGJCPLUOY5XIN2BW4", ""}},
-        {"R5",   {"MUIC7Y09E/WZ4OHS3T6Q82PV#B5XNFD1AJRLGK", ""}},
-        {"R6",   {"U85N9QOGZ6BC4XLS70Y/VWIHF#1MPADK23EJRT", ""}},
-        {"R7",   {"5IASENWMJDQK1H38O2#P6T4RZBYX0U9VLCGF7/", ""}},
-        {"R8",   {"Q6OLVEN1J8FWH3/7CY#KXAG4I2STBUZD05MP9R", ""}},
-        {"R9",   {"TF/VKHQM1LRPX74WDC0BEAS89NY52IJU6GZ#O3", ""}},
-        {"R10",  {"BOQEW5NCLHZTR748S2F90UP6#MYVGX/DK1I3AJ", ""}},
+        {"R1",   {"bxml2uokh3#46705cyg19etfprid8swqavnzj/", ""}},
+        {"R2",   {"1q27#cpzl3rhv6mktjuxfbe5o9n0as4di/ywg8", ""}},
+        {"R3",   {"zo5rnuby/k0smtpajwcx23edl8fg9vh4176i#q", ""}},
+        {"R4",   {"6v10z/8fhed9s73amrt#kqgjcpluoy5xin2bw4", ""}},
+        {"R5",   {"muic7y09e/wz4ohs3t6q82pv#b5xnfd1ajrlgk", ""}},
+        {"R6",   {"u85n9qogz6bc4xls70y/vwihf#1mpadk23ejrt", ""}},
+        {"R7",   {"5iasenwmjdqk1h38o2#p6t4rzbyx0u9vlcgf7/", ""}},
+        {"R8",   {"q6olven1j8fwh3/7cy#kxag4i2stbuzd05mp9r", ""}},
+        {"R9",   {"tf/vkhqm1lrpx74wdc0beas89ny52iju6gz#o3", ""}},
+        {"R10",  {"boqew5nclhztr748s2f90up6#myvgx/dk1i3aj", ""}},
     };
     return w;
 }
@@ -50,15 +50,15 @@ const std::map<std::string, Wiring>& rotor_wirings() {
 // only, never for real traffic.
 const std::map<std::string, std::string>& reflector_wirings() {
     static const std::map<std::string, std::string> w = {
-        {"A", "EJMZALYXVBWFCRQUONTSPIKHGD"},
-        {"B", "YRUHQSLDPXNGOKMIEBFZCWVJAT"},
-        {"C", "FVPJIAOYEDRZXWGCTKUQSBNMHL"},
+        {"A", "ejmzalyxvbwfcrquontspikhgd"},
+        {"B", "yruhqsldpxngokmiebfzcwvjat"},
+        {"C", "fvpjiaoyedrzxwgctkuqsbnmhl"},
 
-        {"D", "QZN6I4W9EY2V7CUTA8/POLG#JB10K5F3DMRHXS"},
-        {"E", "RCBYWIPTFU#97X/G1A3HJ5END26QZS8V0M4LKO"},
-        {"F", "V62P9W1#4S3MLYQDO8J7XAFUN0ZGCKI/BTREH5"},
-        {"G", "#YRLN3ZPUXTD9E4H6C5KI07JBGV21FOSQW/MA8"},
-        {"H", "SG#L0/B8X4PDT3WK51AMVUOI62ERZNJQY9H7CF"},
+        {"D", "qzn6i4w9ey2v7cuta8/polg#jb10k5f3dmrhxs"},
+        {"E", "rcbywiptfu#97x/g1a3hj5end26qzs8v0m4lko"},
+        {"F", "v62p9w1#4s3mlyqdo8j7xafun0zgcki/btreh5"},
+        {"G", "#yrln3zpuxtd9e4h6c5ki07jbgv21fosqw/ma8"},
+        {"H", "sg#l0/b8x4pdt3wk51amvuoi62erznjqy9h7cf"},
     };
     return w;
 }

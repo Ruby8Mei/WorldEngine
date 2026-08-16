@@ -16,8 +16,8 @@ namespace inop {
 // ── alphabets ───────────────────────────────────────────────────────────
 // constexpr at namespace scope is implicitly const, which gives internal
 // linkage — so these are header-safe without C++17 inline variables.
-constexpr const char* ALPHA26 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-constexpr const char* ALPHA38 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#/";
+constexpr const char* ALPHA26 = "abcdefghijklmnopqrstuvwxyz";
+constexpr const char* ALPHA38 = "abcdefghijklmnopqrstuvwxyz0123456789#/";
 
 // '#' is the space substitute; '/' is the literal slash.
 constexpr char SPACE_SUB = '#';

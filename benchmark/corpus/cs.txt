@@ -1,0 +1,3 @@
+Heisenbergův princip neurčitosti (též relace neurčitosti) je matematická vlastnost dvou kanonicky konjugovaných veličin. Nejznámějšími veličinami tohoto typu jsou poloha a hybnost elementární částice v kvantové fyzice.
+
+Heisenbergův princip říká, že čím přesněji určíme jednu z konjugovaných vlastností, tím méně přesně můžeme určit tu druhou – bez ohledu na to, jak dobré přístroje máme. To také znamená, že představa z klasické fyziky, že můžeme předpovědět chování systému, pokud známe jeho počáteční stav, je v praxi nepoužitelná: počáteční stav systému nikdy nemůžeme zjistit dostatečně přesně (protože nelze dostatečně přesně zjistit oba tyto konjugované parametry).

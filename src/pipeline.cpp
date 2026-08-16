@@ -22,7 +22,7 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
     std::string out;
     out.reserve(text.size());
     for (char raw : text) {
-        char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
+        char c = static_cast<char>(std::tolower(static_cast<unsigned char>(raw)));
         if (c == ' ') {
             if (has_space_sub) out += SPACE_SUB;
         } else if (c == SPACE_SUB) {
@@ -35,6 +35,30 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
         // anything else is silently dropped — the machine has no key for it
     }
     return out;
+}
+
+std::string mark_literal_digits(const std::string& text) {
+    std::string out;
+    out.reserve(text.size() + 8);
+    unsigned char prev = 0;
+    for (unsigned char c : text) {
+        bool is_digit = c >= '0' && c <= '9';
+        bool prev_is_letter = (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') ||
+                               prev >= 0x80;  // any byte of a multi-byte UTF-8 letter
+        if (is_digit && prev_is_letter) out += '/';
+        out += static_cast<char>(c);
+        prev = c;
+    }
+    return out;
+}
+
+const std::string SIGNOFF_PHRASE = "lotuses to antraxia";
+
+bool ends_with_signoff(const std::string& text, const Alphabet& alpha) {
+    std::string pre = preprocess(text, alpha);
+    std::string phrase = preprocess(SIGNOFF_PHRASE, alpha);
+    if (phrase.size() > pre.size()) return false;
+    return pre.compare(pre.size() - phrase.size(), phrase.size(), phrase) == 0;
 }
 
 std::string group(const std::string& text, int block) {

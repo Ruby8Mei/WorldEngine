@@ -1,0 +1,3 @@
+En mécanique quantique, le principe d'incertitude (plus justement appelé principe d'indétermination, aussi connu sous le nom de principe d'incertitude de Heisenberg) désigne toute inégalité mathématique affirmant qu'il existe une limite fondamentale à la précision avec laquelle on peut connaître simultanément deux propriétés physiques d'une même particule ; ces deux variables dites complémentaires peuvent être sa position (x) et sa quantité de mouvement (p).
+
+Plus précisément, il établit que le produit de l'incertitude sur ces deux valeurs est toujours supérieur ou égal à une certaine constante : Δx Δp ≥ ℏ/2. Cette limite s'applique principalement aux objets microscopiques et devient négligeable pour les objets macroscopiques.

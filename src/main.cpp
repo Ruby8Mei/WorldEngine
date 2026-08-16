@@ -9,11 +9,14 @@
 #include <string>
 #include <vector>
 
+#include "batch.hpp"
 #include "generator.hpp"
 #include "inop.hpp"
+#include "languages.hpp"
 #include "pipeline.hpp"
 #include "registry.hpp"
 #include "rng.hpp"
+#include "settings.hpp"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -66,6 +69,15 @@ std::string upper(std::string s) {
     return s;
 }
 
+// The cipher alphabet is lowercase (ALPHA26/ALPHA38 in inop.hpp), so any
+// value that gets fed into it — plugboard pairs, notch symbols, the master
+// key, ciphertext, markers — needs this, not upper(). Rotor/reflector/suite
+// NAMES are identifiers, not alphabet symbols, and stay upper().
+std::string lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
 std::string ask(const std::string& prompt) {
     std::cout << CYAN << prompt << RST << " ";
     std::string line;
@@ -102,96 +114,28 @@ bool ask_toggle(const std::string& prompt, bool def) {
     return a == "ON" || a == "Y" || a == "YES" || a == "1";
 }
 
+// Language tag for the numeral-suffix diacritic scheme — INOP-38 only.
+// Asked once per message, defaulting to whatever was chosen last time.
+std::string ask_language(const std::string& def) {
+    while (true) {
+        std::string c = lower(ask("language [" + def + "]"));
+        if (c.empty()) return def;
+        if (is_supported_language(c)) return c;
+        fail("unknown language code — see the list in the README");
+    }
+}
+
+// If the (folded, preprocessed) text doesn't end with the sign-off phrase,
+// offer to append it. Applies to every INOP-38 message, single or batched;
+// Legacy is exempt entirely (the caller only invokes this for INOP-38).
+std::string apply_signoff(const std::string& text, const Alphabet& alpha) {
+    if (ends_with_signoff(text, alpha)) return text;
+    if (ask_toggle("  message doesn't end with the sign-off phrase — append it?", true))
+        return text + " " + SIGNOFF_PHRASE;
+    return text;
+}
+
 // ── settings ────────────────────────────────────────────────────────────
-struct Settings {
-    std::string suite_code = "38";
-    std::vector<std::string> rotors;
-    std::string reflector;
-    std::vector<int> rings;
-    std::vector<std::string> notches;  // parallel to rotors
-    std::vector<std::string> plugs;
-    std::string master_key;
-};
-
-void save_settings(const Settings& s, const std::string& path) {
-    std::ofstream f(path);
-    if (!f) { fail("cannot write " + path); return; }
-    f << "suite " << s.suite_code << "\n";
-    f << "rotors";     for (auto& r : s.rotors)   f << " " << r; f << "\n";
-    f << "reflector "  << s.reflector << "\n";
-    f << "rings";      for (int r : s.rings)      f << " " << r; f << "\n";
-    f << "notches";    for (auto& n : s.notches)  f << " " << (n.empty() ? "-" : n); f << "\n";
-    f << "plugs";      for (auto& p : s.plugs)    f << " " << p; f << "\n";
-    f << "key " << s.master_key << "\n";
-    std::cout << GREEN << "  settings written to " << path << RST << "\n";
-}
-
-bool load_settings(Settings& s, const std::string& path) {
-    std::ifstream f(path);
-    if (!f) return false;
-    Settings out;
-    std::string line;
-    while (std::getline(f, line)) {
-        std::istringstream is(line);
-        std::string key;
-        if (!(is >> key)) continue;
-        std::string tok;
-        if (key == "suite")          is >> out.suite_code;
-        else if (key == "reflector") is >> out.reflector;
-        else if (key == "key")       is >> out.master_key;
-        else if (key == "rotors")    while (is >> tok) out.rotors.push_back(upper(tok));
-        else if (key == "plugs")     while (is >> tok) out.plugs.push_back(upper(tok));
-        else if (key == "rings") {
-            while (is >> tok) {
-                try {
-                    out.rings.push_back(std::stoi(tok));
-                } catch (const std::exception&) {
-                    fail("bad 'rings' value '" + tok + "' in " + path);
-                    return false;
-                }
-            }
-        }
-        else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : upper(tok));
-    }
-
-    // The rotor count is derived from the rotors line, not asserted
-    // separately — so a mismatched rings/notches/key list must be caught
-    // here, clearly, rather than crashing or silently truncating later.
-    const size_t count = out.rotors.size();
-    if (count == 0) { fail("no rotors listed in " + path); return false; }
-    if (!suites().count(out.suite_code)) {
-        fail("unknown suite '" + out.suite_code + "' in " + path);
-        return false;
-    }
-    const Suite& su = suite(out.suite_code);
-    if (static_cast<int>(count) < su.min_rotors || static_cast<int>(count) > su.max_rotors) {
-        fail("rotor count " + std::to_string(count) + " in " + path + " is outside " +
-             su.name + "'s range " + std::to_string(su.min_rotors) + "-" +
-             std::to_string(su.max_rotors));
-        return false;
-    }
-    if (out.rings.size() != count) {
-        fail("rings count (" + std::to_string(out.rings.size()) + ") does not match rotor count (" +
-             std::to_string(count) + ") in " + path);
-        return false;
-    }
-    if (!su.notches_are_fixed && out.notches.size() != count) {
-        fail("notches count (" + std::to_string(out.notches.size()) + ") does not match rotor count (" +
-             std::to_string(count) + ") in " + path);
-        return false;
-    }
-    const size_t need_key = su.historic_lock ? count : count + 1;
-    if (out.master_key.size() != need_key &&
-        !(su.historic_lock && out.master_key.size() == need_key + 1)) {
-        fail("key length (" + std::to_string(out.master_key.size()) + ") does not match rotor count (" +
-             std::to_string(count) + ") in " + path);
-        return false;
-    }
-
-    s = out;
-    return true;
-}
-
 void verify_legacy_integrity();  // defined below; forward-declared for collect_settings()
 
 // ── interactive setup ───────────────────────────────────────────────────
@@ -274,7 +218,7 @@ Settings collect_settings() {
     std::cout << DIM << "  up to " << su.max_plug_pairs
               << " pairs, e.g. AB CD 3X — blank for none" << RST << "\n";
     while (true) {
-        auto pairs = split(upper(ask("pairs")));
+        auto pairs = split(lower(ask("pairs")));
         if (pairs.empty()) { s.plugs.clear(); break; }
         if (static_cast<int>(pairs.size()) > su.max_plug_pairs) {
             fail("too many pairs (max " + std::to_string(su.max_plug_pairs) + ")");
@@ -316,8 +260,14 @@ Settings collect_settings() {
     } else {
         for (size_t i = 0; i < s.rotors.size(); ++i) {
             while (true) {
-                std::string n = upper(ask("notches for " + s.rotors[i] + " (0-" +
-                                          std::to_string(su.max_notches) + " symbols)"));
+                std::string raw = ask("notches for " + s.rotors[i] + " (1-" +
+                                      std::to_string(su.max_notches) + " symbols)");
+                if (raw.empty() || raw == "-") {
+                    fail("at least one notch is required — a notch-less rotor never advances "
+                         "the next rotor, which collapses the machine's period");
+                    continue;
+                }
+                std::string n = lower(raw);
                 if (static_cast<int>(n.size()) > su.max_notches) {
                     fail("at most " + std::to_string(su.max_notches)); continue;
                 }
@@ -345,7 +295,7 @@ Settings collect_settings() {
     std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
               << secure_string(su.alphabet, need) << RST << "\n";
     while (true) {
-        std::string k = upper(ask("key"));
+        std::string k = lower(ask("key"));
         if (k.size() != need && !(su.historic_lock && k.size() == need + 1)) {
             fail("need exactly " + std::to_string(need) + " symbols" +
                  (su.historic_lock ? " (or " + std::to_string(need + 1) + " for compatibility)" : ""));
@@ -358,41 +308,6 @@ Settings collect_settings() {
         break;
     }
     return s;
-}
-
-Machine build_machine(const Settings& s) {
-    const Suite& su = suite(s.suite_code);
-    Alphabet alpha(su.alphabet);
-
-    std::vector<Rotor> rotors;
-    rotors.reserve(s.rotors.size());
-    for (size_t i = 0; i < s.rotors.size(); ++i) {
-        Rotor r = make_rotor(s.rotors[i], alpha);
-        if (!su.notches_are_fixed) {
-            std::string n = i < s.notches.size() ? s.notches[i] : std::string();
-            r.set_notches(n, alpha);
-        }
-        rotors.push_back(std::move(r));
-    }
-
-    // The Machine core always wants (rotor count + 1) key symbols — one
-    // window letter per rotor, plus a reflector orientation letter. A
-    // historic-lock suite's reflector is fixed at position 0 and its key
-    // sheet carries no orientation symbol, so that symbol is synthesised
-    // here rather than by relaxing Machine's own contract.
-    std::string key = s.master_key;
-    if (su.historic_lock) {
-        const size_t want = s.rotors.size();
-        if (key.size() == want + 1) {
-            std::cout << DIM << "  note: Legacy reflector is fixed — key symbol '"
-                      << key.back() << "' ignored" << RST << "\n";
-            key = key.substr(0, want);
-        }
-        key += alpha.at(0);  // reflector fixed at position 0
-    }
-
-    return Machine(alpha, std::move(rotors), make_reflector(s.reflector, alpha),
-                   Plugboard(s.plugs, alpha), s.rings, key, su.historic_lock);
 }
 
 // Notches, rings and rotors are read back from the MACHINE rather than from
@@ -461,12 +376,12 @@ void verify_legacy_integrity() {
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
-        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA",
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "aaaa",
                   /*legacy_stepping=*/true);
         m.set_moving_reflector(false);
-        std::string got = m.encipher("AAAAAAAAAAAA");
-        if (got != "BDZGOWCXLTKS")
-            abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected BDZGOWCXLTKS");
+        std::string got = m.encipher("aaaaaaaaaaaa");
+        if (got != "bdzgowcxltks")
+            abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected bdzgowcxltks");
     }
 
     // (b) the Legacy suite descriptor itself.
@@ -503,10 +418,10 @@ int self_test() {
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
-        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA", true);
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "aaaa", true);
         m.set_moving_reflector(false);
-        std::string got = m.encipher("AAAAAAAAAAAA");
-        check(got == "BDZGOWCXLTKS", "historic Enigma I-II-III/B vector -> " + got);
+        std::string got = m.encipher("aaaaaaaaaaaa");
+        check(got == "bdzgowcxltks", "historic Enigma I-II-III/B vector -> " + got);
     }
 
     // 2. The machine is its own inverse when rewound.
@@ -515,11 +430,11 @@ int self_test() {
         std::vector<Rotor> rs;
         for (auto n : {"R1", "R4", "R7", "R2", "R9"}) {
             Rotor r = make_rotor(n, a);
-            r.set_notches("Q7#", a);
+            r.set_notches("q7#", a);
             rs.push_back(std::move(r));
         }
         Machine m(a, std::move(rs), make_reflector("E", a),
-                  Plugboard({"AB", "3X", "#/"}, a), {5, 12, 30, 1, 22}, "K3M9QZ", false);
+                  Plugboard({"ab", "3x", "#/"}, a), {5, 12, 30, 1, 22}, "k3m9qz", false);
         std::string plain = preprocess("THE QUICK BROWN FOX 0123456789 / END", a);
         m.rewind();
         std::string ct = m.encipher(plain);
@@ -536,16 +451,16 @@ int self_test() {
         s.rotors = {"R3", "R1", "R8", "R5", "R10"};
         s.reflector = "G";
         s.rings = {7, 19, 2, 33, 11};
-        s.notches = {"A", "5", "#", "Z", "/"};
-        s.plugs = {"QW", "12"};
-        s.master_key = "H4T#0P";
+        s.notches = {"a", "5", "#", "z", "/"};
+        s.plugs = {"qw", "12"};
+        s.master_key = "h4t#0p";
         Machine m = build_machine(s);
         Pipeline p(m, PipelineConfig{});
 
         std::string msg = "ATTACK AT DAWN / HOLD THE LINE 0800";
         Encrypted e = p.encrypt(msg);
         std::string back = p.decrypt(e.ciphertext, e.marker);
-        check(back == "ATTACK AT DAWN / HOLD THE LINE 0800", "pipeline round trip -> " + back);
+        check(back == "attack at dawn / hold the line 0800", "pipeline round trip -> " + back);
         check(e.ciphertext.size() % 16 == 0, "ciphertext is block aligned");
     }
 
@@ -556,8 +471,8 @@ int self_test() {
         s.rotors = {"R1", "R2", "R3", "R4", "R5"};
         s.reflector = "D";
         s.rings = {1, 1, 1, 1, 1};
-        s.notches = {"A", "B", "C", "D", "E"};
-        s.master_key = "AAAAAA";
+        s.notches = {"a", "b", "c", "d", "e"};
+        s.master_key = "aaaaaa";
 
         auto self_hits = [&](bool double_pass) {
             Machine m = build_machine(s);
@@ -565,7 +480,7 @@ int self_test() {
             c.double_pass = double_pass;
             c.padding = false;
             Pipeline p(m, c);
-            std::string plain(4000, 'A');
+            std::string plain(4000, 'a');
             std::string ct = p.encrypt(plain).ciphertext;
             int hits = 0;
             for (size_t i = 0; i < plain.size(); ++i) if (ct[i] == plain[i]) ++hits;
@@ -602,15 +517,15 @@ int self_test() {
             std::vector<Rotor> rs;
             for (auto n : {"R1", "R2", "R3"}) {
                 Rotor r = make_rotor(n, a);
-                r.set_notches("AM", a);
+                r.set_notches("am", a);
                 rs.push_back(std::move(r));
             }
             return Machine(a, std::move(rs), make_reflector("D", a), Plugboard({}, a),
-                           {1, 2, 3}, "ABCD", legacy_stepping);
+                           {1, 2, 3}, "abcd", legacy_stepping);
         };
         Machine legacy_style = build(true);
         Machine inop38_style = build(false);
-        std::string msg(50, 'A');
+        std::string msg(50, 'a');
         std::string ct_legacy = legacy_style.encipher(msg);
         std::string ct_inop38 = inop38_style.encipher(msg);
         check(ct_legacy != ct_inop38,
@@ -641,7 +556,7 @@ int self_test() {
               "shift-by-1 wiring of ALPHA26 is caught as a rotation");
         // R1's factory wiring, copied from registry.cpp — must NOT be
         // flagged as a rotation.
-        const std::string r1 = "BXML2UOKH3#46705CYG19ETFPRID8SWQAVNZJ/";
+        const std::string r1 = "bxml2uokh3#46705cyg19etfprid8swqavnzj/";
         check(!wiring_is_rotation(r1, ALPHA38), "built-in R1 wiring is accepted, not a rotation");
     }
 
@@ -650,9 +565,9 @@ int self_test() {
         Alphabet a(ALPHA38);
         std::vector<Rotor> rs;
         for (auto n : {"R1", "R2", "R3", "R4", "R5"}) rs.push_back(make_rotor(n, a));
-        for (auto& r : rs) r.set_notches("AM", a);
-        Machine m(a, std::move(rs), make_reflector("D", a), Plugboard({}, a), {1, 2, 3, 4, 5}, "ABCDEF", false);
-        std::string text(200000, 'A');
+        for (auto& r : rs) r.set_notches("am", a);
+        Machine m(a, std::move(rs), make_reflector("D", a), Plugboard({}, a), {1, 2, 3, 4, 5}, "abcdef", false);
+        std::string text(200000, 'a');
         auto t0 = std::chrono::steady_clock::now();
         volatile size_t sink = m.encipher(text).size();
         (void)sink;
@@ -661,10 +576,184 @@ int self_test() {
                   << static_cast<long>(text.size() / ms / 1000.0) << "M symbols/s\n";
     }
 
+    // 9. Numeral-suffix diacritic scheme: every worked example from the
+    //    README, fold_diacritics() must match exactly, and folding what
+    //    resubstitute() hands back must reproduce the same encoded form
+    //    (encode/decode are inverses on these fixtures).
+    {
+        struct Row { const char* lang; const char* plain; const char* encoded; };
+        static const Row rows[] = {
+            {"la", u8"Vēnī, vīdī, vīcī", "ve1ni1 vi1di1 vi1ci1"},
+            {"en", u8"The naïve café owner smiled.", "the nai6ve cafe2 owner smiled"},
+            {"es", u8"El niño comió piña en España.", "el nin7o comio2 pin7a en espan7a"},
+            {"ca", u8"El paral·lel és clar.", "el paral8el e2s clar"},
+            {"nl", u8"De coördinatie was ideeën waard.",
+             "de coo6rdinatie was ideee6n waard"},
+            {"pt", u8"O irmão comeu pão com maçã.", "o irma7o comeu pa7o com maca7"},
+            {"fr", u8"Le café est très cher.", "le cafe2 est tre4s cher"},
+            {"it", u8"Perché è così città?", "perche2 e4 cosi4 citta4"},
+            {"de", u8"Möchten Sie ein großes Käsebrötchen?",
+             "mo6chten sie ein gros8es ka6sebro6tchen"},
+            {"id", u8"Selamat pagi, apa kabar?", "selamat pagi apa kabar"},
+            {"ms", u8"Selamat pagi, apa khabar?", "selamat pagi apa khabar"},
+            {"tl", u8"Pinuntahan namin ang Peñafrancia.",
+             "pinuntahan namin ang pen7afrancia"},
+            {"zh", u8"Wǒ hěn xǐhuān zhège dìfāng.", "wo3 he3n xi3hua1n zhe4ge di4fa1ng"},
+            {"cs", u8"Děkuji, můj přítel má nový dům.",
+             "de3kuji muj pr3i2tel ma2 novy2 dum"},
+            {"sk", u8"Môj priateľ má nový dom v meste.",
+             "mo5j priatel3 ma2 novy2 dom v meste"},
+            {"tr", u8"Güzel bir gün, değil mi? Işık çok parlak.",
+             "gu6zel bir gu6n deg3il mi i8si8k cok parlak"},
+            {"ro", u8"Câinele meu aleargă în grădină.",
+             "ca5inele meu alearga3 i5n gra3dina3"},
+            {"sl", u8"Šla sem v Ljubljano videti čudovito reko.",
+             "s3la sem v ljubljano videti c3udovito reko"},
+            {"mi", u8"Kei te pai te rā, e hoa mā.", "kei te pai te ra1 e hoa ma1"},
+        };
+        for (const auto& r : rows) {
+            std::string got = fold_diacritics(r.plain, r.lang);
+            check(got == r.encoded, std::string("fold[") + r.lang + "] -> " + got);
+            std::string roundtrip = fold_diacritics(resubstitute(r.encoded, r.lang), r.lang);
+            check(roundtrip == r.encoded,
+                  std::string("resubstitute/fold round trip[") + r.lang + "] -> " + roundtrip);
+        }
+    }
+
+    // 10. Digit-collision fix: a literal digit right after a letter gets a
+    //     separating '/'; a diacritic-introduced digit never does.
+    {
+        auto encode = [](const std::string& raw, const std::string& lang) {
+            return fold_diacritics(mark_literal_digits(raw), lang);
+        };
+        check(encode("Room A2", "en") == "room a/2", "digit collision: Room A2");
+        check(encode(u8"Château Latour 1964", "fr") == "cha5teau latour 1964",
+              "digit collision: Chateau Latour 1964 (no false slash on a bare number)");
+        check(encode(u8"Côte d'Ivoire", "fr") == "co5te divoire",
+              "digit collision: apostrophe dropped, no space inserted");
+    }
+
+    // 11. Sign-off phrase: only satisfied by trailing content, not by
+    //     appearing earlier in the message.
+    {
+        Alphabet a(ALPHA38);
+        check(ends_with_signoff("hello lotuses to antraxia", a), "sign-off phrase at the end");
+        check(!ends_with_signoff("lotuses to antraxia and then more", a),
+              "sign-off phrase earlier in the message does not satisfy the check");
+        check(!ends_with_signoff("hello world", a), "sign-off phrase absent");
+    }
+
     rule();
     if (failures == 0) std::cout << GREEN << "all checks passed" << RST << "\n";
     else std::cout << RED << failures << " check(s) failed" << RST << "\n";
     return failures == 0 ? 0 : 1;
+}
+
+// ── batch processing ────────────────────────────────────────────────────
+//
+// Every message gets its own Machine — either the same indexed keysheet
+// entry reused for all of them, or the next entry in file order for each
+// one. `cfg` (double pass / padding / moving reflector) is the operator
+// procedure choice made at session start and is reused across the batch;
+// only the rotor/reflector/rings/notches/key vary per message.
+void run_batch_mode(const PipelineConfig& cfg) {
+    rule("batch");
+    std::string src = ask("input: (p)aste or (f)ile [p]");
+    std::string raw;
+    if (!src.empty() && (src[0] == 'f' || src[0] == 'F')) {
+        std::string path = ask("file path");
+        std::string err;
+        if (!read_batch_file(path, raw, &err)) { fail(err); return; }
+    } else {
+        std::cout << DIM << "  paste messages, a blank line between each; a line with :end finishes"
+                  << RST << "\n";
+        std::string line, all;
+        while (std::getline(std::cin, line)) {
+            std::string t = line;
+            size_t a = t.find_first_not_of(" \t\r\n");
+            t = a == std::string::npos ? "" : t.substr(a, t.find_last_not_of(" \t\r\n") - a + 1);
+            if (t == ":end") break;
+            all += line;
+            all += "\n";
+        }
+        raw = all;
+    }
+
+    auto messages = split_batch_messages(raw);
+    if (messages.empty()) { fail("no messages found"); return; }
+    std::cout << DIM << "  " << messages.size() << " message(s)" << RST << "\n";
+
+    std::string keysheet = ask("keysheet file [inop_keysheet.txt]");
+    if (keysheet.empty()) keysheet = "inop_keysheet.txt";
+    int entries = count_keysheet_entries(keysheet);
+    if (entries == 0) { fail("no entries found in " + keysheet); return; }
+    std::cout << DIM << "  " << entries << " config(s) available in " << keysheet << RST << "\n";
+
+    std::string mode = ask("config: (a) one index for every message, or (s)equential through the file [a]");
+    bool sequential = !mode.empty() && (mode[0] == 's' || mode[0] == 'S');
+
+    int fixed_index = 1;
+    if (!sequential) {
+        while (true) {
+            std::string s = ask("index (1-" + std::to_string(entries) + ")");
+            try {
+                int v = std::stoi(s);
+                if (v >= 1 && v <= entries) { fixed_index = v; break; }
+            } catch (...) {}
+            fail("need a number 1-" + std::to_string(entries));
+        }
+    } else if (static_cast<int>(messages.size()) > entries) {
+        std::cout << DIM << "  only " << entries << " config(s) available — the remaining "
+                  << (messages.size() - static_cast<size_t>(entries))
+                  << " message(s) will not be processed" << RST << "\n";
+    }
+
+    size_t n = sequential ? std::min(messages.size(), static_cast<size_t>(entries)) : messages.size();
+    std::string last_lang = "en";
+    size_t processed = 0, signoff_added = 0;
+
+    for (size_t i = 0; i < n; ++i) {
+        int idx = sequential ? static_cast<int>(i) + 1 : fixed_index;
+        Settings s;
+        std::string err;
+        if (!load_keysheet_entry(keysheet, idx, s, &err)) { fail(err); continue; }
+
+        Machine m = build_machine(s);
+        Pipeline pipe(m, cfg);
+        const Suite& su = suite(s.suite_code);
+
+        std::cout << "\n" << BOLD << "  [" << (i + 1) << "/" << n << "] config #" << idx << RST << "\n";
+
+        std::string to_send = messages[i];
+        std::string lang;
+        if (!su.historic_lock) {
+            lang = ask_language(last_lang);
+            last_lang = lang;
+            std::string folded = fold_diacritics(mark_literal_digits(messages[i]), lang);
+            to_send = apply_signoff(folded, m.alphabet());
+            if (to_send != folded) ++signoff_added;
+        }
+
+        try {
+            Encrypted e = pipe.encrypt(to_send);
+            std::string grouped = group(e.ciphertext, su.block);
+            if (!lang.empty()) grouped += "  " + lang;
+            std::cout << YELL << "  cipher " << RST << grouped << "\n";
+            if (!e.marker.empty())
+                std::cout << DIM << "  marker " << RST << e.marker << RST << "\n";
+            std::string back = pipe.decrypt(e.ciphertext, e.marker);
+            std::cout << GREEN << "  check  " << RST << back << "\n";
+            if (!lang.empty())
+                std::cout << GREEN << "  human  " << RST << resubstitute(back, lang) << "\n";
+            ++processed;
+        } catch (const std::exception& ex) { fail(ex.what()); }
+    }
+
+    rule();
+    std::cout << GREEN << "  batch complete: " << processed << "/" << n << " message(s) processed" << RST;
+    if (signoff_added > 0)
+        std::cout << DIM << "  (" << signoff_added << " sign-off phrase(s) appended)" << RST;
+    std::cout << "\n";
 }
 
 void banner() {
@@ -745,7 +834,11 @@ int main(int argc, char** argv) {
         std::ifstream probe(cfg_path);
         if (probe) {
             std::string a = upper(ask("load settings from '" + cfg_path + "'? [Y/n]"));
-            if (a.empty() || a == "Y" || a == "YES") loaded = load_settings(settings, cfg_path);
+            if (a.empty() || a == "Y" || a == "YES") {
+                std::string err;
+                loaded = load_settings(settings, cfg_path, &err);
+                if (!loaded) fail(err);
+            }
         }
     }
     if (!loaded) settings = collect_settings();
@@ -753,8 +846,12 @@ int main(int argc, char** argv) {
 
     Machine machine = [&] {
         while (true) {
-            try { return build_machine(settings); }
-            catch (const std::exception& e) {
+            try {
+                std::string note;
+                Machine m = build_machine(settings, &note);
+                if (!note.empty()) std::cout << DIM << "  note: " << note << RST << "\n";
+                return m;
+            } catch (const std::exception& e) {
                 fail(e.what());
                 std::cout << DIM << "  re-entering settings" << RST << "\n";
                 settings = collect_settings();
@@ -786,8 +883,11 @@ int main(int argc, char** argv) {
     Pipeline pipe(machine, cfg);
 
     rule();
-    std::cout << DIM << "  commands: :q quit   :s save   :d decrypt   :i settings   :? help" << RST
-              << "\n\n";
+    std::cout << DIM << "  commands: :q quit   :s save   :d decrypt   :b batch   :i settings   :? help"
+              << RST << "\n\n";
+
+    const Alphabet& active_alpha = machine.alphabet();
+    std::string last_lang = "en";
 
     while (true) {
         std::string line = ask("message >");
@@ -801,8 +901,15 @@ int main(int argc, char** argv) {
             for (char& ch : cmd) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             if (cmd == ":q" || cmd == ":quit" || cmd == ":exit") break;
             if (cmd == ":i" || cmd == ":info") { show_settings(settings, machine); continue; }
-            if (cmd == ":s" || cmd == ":save") { save_settings(settings, cfg_path); continue; }
+            if (cmd == ":s" || cmd == ":save") {
+                if (save_settings(settings, cfg_path))
+                    std::cout << GREEN << "  settings written to " << cfg_path << RST << "\n";
+                else
+                    fail("cannot write " + cfg_path);
+                continue;
+            }
             if (cmd == ":d" || cmd == ":decrypt") line = ":d";
+            else if (cmd == ":b" || cmd == ":batch") { run_batch_mode(cfg); continue; }
             else if (cmd == ":?" || cmd == ":h" || cmd == ":help") line = ":?";
             else {
                 fail("unknown command " + line);
@@ -815,6 +922,7 @@ int main(int argc, char** argv) {
         if (line == ":?" ) {
             std::cout << DIM << "  type a message to encipher, or:\n"
                       << "    :d   decipher a ciphertext (you will be asked for the marker)\n"
+                      << "    :b   batch process pasted or file-based messages\n"
                       << "    :i   show the active settings again\n"
                       << "    :s   save current settings\n"
                       << "    :q   quit\n"
@@ -822,25 +930,52 @@ int main(int argc, char** argv) {
             continue;
         }
         if (line == ":d") {
-            std::string ct = upper(ask("  ciphertext"));
+            std::string raw = ask("  ciphertext");
+            auto toks = split(raw);
+            std::string lang;
+            if (!active.historic_lock && !toks.empty() && toks.back().size() == 2 &&
+                is_supported_language(lower(toks.back()))) {
+                lang = lower(toks.back());
+                toks.pop_back();
+            }
             std::string clean;
-            for (char c : ct) if (!std::isspace(static_cast<unsigned char>(c))) clean += c;
+            for (auto& t : toks) for (char c : lower(t)) clean += c;
             std::string marker;
-            if (cfg.padding) marker = upper(ask("  marker"));
+            if (cfg.padding) marker = lower(ask("  marker"));
             try {
-                std::cout << GREEN << "  plain  " << RST << pipe.decrypt(clean, marker) << "\n\n";
+                std::string plain = pipe.decrypt(clean, marker);
+                std::cout << GREEN << "  plain  " << RST << plain << "\n";
+                if (!lang.empty())
+                    std::cout << GREEN << "  human  " << RST << resubstitute(plain, lang)
+                              << DIM << "  (" << lang << ")" << RST << "\n";
+                std::cout << "\n";
             } catch (const std::exception& e) { fail(e.what()); }
             continue;
         }
 
+        std::string to_send = line;
+        std::string lang;
+        if (!active.historic_lock) {
+            lang = ask_language(last_lang);
+            last_lang = lang;
+            to_send = fold_diacritics(mark_literal_digits(line), lang);
+            to_send = apply_signoff(to_send, active_alpha);
+        }
+
         try {
-            Encrypted e = pipe.encrypt(line);
-            std::cout << YELL << "  cipher " << RST << group(e.ciphertext, cfg.block) << "\n";
+            Encrypted e = pipe.encrypt(to_send);
+            std::string grouped = group(e.ciphertext, cfg.block);
+            if (!lang.empty()) grouped += "  " + lang;
+            std::cout << YELL << "  cipher " << RST << grouped << "\n";
             if (!e.marker.empty())
                 std::cout << DIM << "  marker " << RST << e.marker
                           << DIM << "   (needed to decipher)" << RST << "\n";
-            std::cout << GREEN << "  check  " << RST << pipe.decrypt(e.ciphertext, e.marker)
-                      << "\n\n";
+            std::string back = pipe.decrypt(e.ciphertext, e.marker);
+            std::cout << GREEN << "  check  " << RST << back << "\n";
+            if (!lang.empty())
+                std::cout << GREEN << "  human  " << RST << resubstitute(back, lang) << "\n\n";
+            else
+                std::cout << "\n";
         } catch (const std::exception& e) { fail(e.what()); }
     }
 

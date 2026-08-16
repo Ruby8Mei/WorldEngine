@@ -15,18 +15,34 @@ add_executable(inop
   src/pipeline.cpp
   src/rng.cpp
   src/generator.cpp
+  src/languages.cpp
+  src/settings.cpp
+  src/batch.cpp
   src/main.cpp
 )
 
-if(MSVC)
-  target_compile_options(inop PRIVATE /W4 /utf-8)
-else()
-  target_compile_options(inop PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_executable(inop_benchmark
+  src/inop.cpp
+  src/registry.cpp
+  src/pipeline.cpp
+  src/rng.cpp
+  src/generator.cpp
+  src/languages.cpp
+  src/settings.cpp
+  src/benchmark_main.cpp
+)
 
-if(WIN32)
-  target_link_libraries(inop PRIVATE bcrypt)
-endif()
+foreach(tgt inop inop_benchmark)
+  if(MSVC)
+    target_compile_options(${tgt} PRIVATE /W4 /utf-8)
+  else()
+    target_compile_options(${tgt} PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+
+  if(WIN32)
+    target_link_libraries(${tgt} PRIVATE bcrypt)
+  endif()
+endforeach()
 
 enable_testing()
 add_test(NAME self_test COMMAND inop --self-test --no-color)
