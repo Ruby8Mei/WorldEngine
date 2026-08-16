@@ -325,7 +325,7 @@ int main(int argc, char** argv) {
         GeneratedSettings g = random_settings(su, su.min_rotors, su.max_plug_pairs / 2, 1);
         Machine machine = machine_from_generated(g);
         Pipeline pipe(machine, cfg);
-        std::string folded = fold_diacritics(mark_literal_digits(text), "en");
+        std::string folded = fold_diacritics(mark_literal_digits(text), "eng");
 
         auto t0 = std::chrono::steady_clock::now();
         Encrypted e = pipe.encrypt(folded);

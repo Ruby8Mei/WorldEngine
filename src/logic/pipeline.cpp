@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <stdexcept>
 
 #include "rng.hpp"
@@ -22,7 +23,7 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
     std::string out;
     out.reserve(text.size());
     for (char raw : text) {
-        char c = static_cast<char>(std::tolower(static_cast<unsigned char>(raw)));
+        char c = alpha.fold_case(raw);
         if (c == ' ') {
             if (has_space_sub) out += SPACE_SUB;
         } else if (c == SPACE_SUB) {
@@ -54,9 +55,22 @@ std::string mark_literal_digits(const std::string& text) {
 
 const std::string SIGNOFF_PHRASE = "lotuses to antraxia";
 
+namespace {
+// SIGNOFF_PHRASE is fixed and only the alphabet varies (at most a couple of
+// distinct suites in one run), yet this gets re-preprocessed from scratch
+// on every ends_with_signoff() call — once per message, so a large batch
+// repeats identical work. Cached per alphabet instead.
+const std::string& preprocessed_signoff(const Alphabet& alpha) {
+    static std::map<std::string, std::string> cache;
+    auto it = cache.find(alpha.str());
+    if (it == cache.end()) it = cache.emplace(alpha.str(), preprocess(SIGNOFF_PHRASE, alpha)).first;
+    return it->second;
+}
+}  // namespace
+
 bool ends_with_signoff(const std::string& text, const Alphabet& alpha) {
     std::string pre = preprocess(text, alpha);
-    std::string phrase = preprocess(SIGNOFF_PHRASE, alpha);
+    const std::string& phrase = preprocessed_signoff(alpha);
     if (phrase.size() > pre.size()) return false;
     return pre.compare(pre.size() - phrase.size(), phrase.size(), phrase) == 0;
 }
@@ -107,11 +121,22 @@ std::string Pipeline::run_pass(const std::string& text) {
     return machine_.encipher(text);
 }
 
+// encrypt()/decrypt() both run a pass, and — if double_pass is on — reverse
+// and run a second one. Was written out identically in both places.
+std::string Pipeline::run_double_pass(const std::string& text) {
+    std::string s = run_pass(text);
+    if (cfg_.double_pass) {
+        std::reverse(s.begin(), s.end());
+        s = run_pass(s);
+    }
+    return s;
+}
+
 Encrypted Pipeline::encrypt(const std::string& plaintext) {
     const std::string& alpha = machine_.alphabet().str();
     Encrypted result;
 
-    std::string body = plaintext;
+    std::string body;
     if (cfg_.padding) {
         result.marker = secure_string(alpha, static_cast<size_t>(cfg_.marker_len));
         body = pad(result.marker + preprocess(plaintext, machine_.alphabet()) + result.marker,
@@ -120,12 +145,7 @@ Encrypted Pipeline::encrypt(const std::string& plaintext) {
         body = preprocess(plaintext, machine_.alphabet());
     }
 
-    std::string s = run_pass(body);
-    if (cfg_.double_pass) {
-        std::reverse(s.begin(), s.end());
-        s = run_pass(s);
-    }
-    result.ciphertext = s;
+    result.ciphertext = run_double_pass(body);
     return result;
 }
 
@@ -135,11 +155,7 @@ std::string Pipeline::decrypt(const std::string& ciphertext, const std::string& 
     if (cfg_.padding && marker.empty())
         throw std::runtime_error("a marker is required to decipher a padded message");
 
-    std::string s = run_pass(ciphertext);
-    if (cfg_.double_pass) {
-        std::reverse(s.begin(), s.end());
-        s = run_pass(s);
-    }
+    std::string s = run_double_pass(ciphertext);
     if (cfg_.padding) s = carve(s, marker);
     std::replace(s.begin(), s.end(), SPACE_SUB, ' ');
     return s;

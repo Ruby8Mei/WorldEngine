@@ -17,6 +17,25 @@ std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
+
+// Shared by load_settings()/load_keysheet_entry_from_stream(): parse one
+// block from `in`, default an error if parsing found nothing at all,
+// validate it, and append `context` to whatever error either step
+// produced. Both callers used to hand-roll this exact sequence themselves.
+bool parse_and_validate(std::istream& in, Settings& out, const std::string& incomplete_msg,
+                         const std::string& context, std::string* error) {
+    Settings s;
+    if (!parse_settings_block(in, s, error)) {
+        if (error && error->empty()) *error = incomplete_msg;
+        return false;
+    }
+    if (!validate_settings(s, error)) {
+        if (error) *error += context;
+        return false;
+    }
+    out = s;
+    return true;
+}
 }  // namespace
 
 bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
@@ -31,9 +50,26 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
         std::string tok;
         if (key == "suite")          is >> out.suite_code;
         else if (key == "reflector") is >> out.reflector;
-        else if (key == "key")       { is >> out.master_key; out.master_key = lower(out.master_key); return true; }
+        else if (key == "key") {
+            is >> out.master_key;
+            // Fold every alphabet-bound field toward this record's own
+            // suite's case (Legacy uppercase, INOP-38 lowercase) now that
+            // "suite" is guaranteed already read — both save_settings() and
+            // settings_to_text() always write it first, and this "key" line
+            // is always last (parsing stops here either way).
+            if (suites().count(out.suite_code)) {
+                Alphabet fold_alpha(suite(out.suite_code).alphabet);
+                out.master_key = fold_alpha.fold_case(out.master_key);
+                for (auto& p : out.plugs) p = fold_alpha.fold_case(p);
+                for (auto& n : out.notches)
+                    if (!n.empty()) n = fold_alpha.fold_case(n);
+            } else {
+                out.master_key = lower(out.master_key);
+            }
+            return true;
+        }
         else if (key == "rotors")    { while (is >> tok) out.rotors.push_back(upper(tok)); saw_rotors = true; }
-        else if (key == "plugs")     while (is >> tok) out.plugs.push_back(lower(tok));
+        else if (key == "plugs")     while (is >> tok) out.plugs.push_back(tok);
         else if (key == "rings") {
             while (is >> tok) {
                 try {
@@ -44,7 +80,7 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
                 }
             }
         }
-        else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : lower(tok));
+        else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : tok);
     }
     if (!saw_rotors && out.master_key.empty()) return false;  // nothing read at all
     return true;  // EOF reached mid-record — validate_settings will catch anything missing
@@ -76,17 +112,7 @@ bool validate_settings(const Settings& s, std::string* error) {
 bool load_settings(Settings& s, const std::string& path, std::string* error) {
     std::ifstream f(path);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
-    Settings out;
-    if (!parse_settings_block(f, out, error)) {
-        if (error && error->empty()) *error = "no settings found in " + path;
-        return false;
-    }
-    if (!validate_settings(out, error)) {
-        if (error) *error += " in " + path;
-        return false;
-    }
-    s = out;
-    return true;
+    return parse_and_validate(f, s, "no settings found in " + path, " in " + path, error);
 }
 
 bool save_settings(const Settings& s, const std::string& path) {
@@ -147,27 +173,27 @@ int count_keysheet_entries(const std::string& path) {
     return n;
 }
 
-bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error) {
-    std::ifstream f(path);
-    if (!f) { if (error) *error = "cannot open " + path; return false; }
+bool load_keysheet_entry_from_stream(std::istream& in, int index, Settings& out, std::string* error) {
     const std::string marker = "# --- entry " + std::to_string(index) + " ---";
     std::string line;
     bool found = false;
-    while (std::getline(f, line)) {
+    while (std::getline(in, line)) {
         if (line == marker) { found = true; break; }
     }
-    if (!found) { if (error) *error = "no entry " + std::to_string(index) + " in " + path; return false; }
+    if (!found) { if (error) *error = "no entry " + std::to_string(index); return false; }
 
-    Settings s;
-    if (!parse_settings_block(f, s, error)) {
-        if (error && error->empty()) *error = "entry " + std::to_string(index) + " in " + path + " is incomplete";
+    return parse_and_validate(in, out, "entry " + std::to_string(index) + " is incomplete",
+                               " (entry " + std::to_string(index) + ")", error);
+}
+
+bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error) {
+    std::ifstream f(path);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    std::string err;
+    if (!load_keysheet_entry_from_stream(f, index, out, &err)) {
+        if (error) *error = err + " in " + path;
         return false;
     }
-    if (!validate_settings(s, error)) {
-        if (error) *error += " (entry " + std::to_string(index) + " in " + path + ")";
-        return false;
-    }
-    out = s;
     return true;
 }
 

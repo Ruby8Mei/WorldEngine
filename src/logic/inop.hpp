@@ -16,7 +16,7 @@ namespace inop {
 // ── alphabets ───────────────────────────────────────────────────────────
 // constexpr at namespace scope is implicitly const, which gives internal
 // linkage — so these are header-safe without C++17 inline variables.
-constexpr const char* ALPHA26 = "abcdefghijklmnopqrstuvwxyz";
+constexpr const char* ALPHA26 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 constexpr const char* ALPHA38 = "abcdefghijklmnopqrstuvwxyz0123456789#/";
 
 // '#' is the space substitute; '/' is the literal slash.
@@ -40,10 +40,23 @@ public:
     // no-throw variant for hot paths where membership is already known
     int index_unchecked(char c) const { return idx_[static_cast<uint8_t>(c)]; }
 
+    // True if this alphabet's letters are uppercase (detected once, from
+    // the declared symbol string, at construction) — Legacy's alphabet is
+    // uppercase, INOP-38's is lowercase.
+    bool uses_uppercase() const { return uppercase_; }
+
+    // Folds c (or every character of s) toward whichever case this
+    // alphabet actually uses, instead of a caller hardcoding tolower/
+    // toupper and silently breaking if a suite's alphabet case ever
+    // differs from what that caller assumed.
+    char fold_case(char c) const;
+    std::string fold_case(const std::string& s) const;
+
 private:
     std::string symbols_;
     int size_;
     std::vector<int16_t> idx_;  // 256 entries, -1 == absent
+    bool uppercase_;
 };
 
 // ── Rotor ───────────────────────────────────────────────────────────────
@@ -156,6 +169,9 @@ public:
 
     // Encipher a whole message from the current state. Because the machine
     // is its own inverse position-by-position, this is also decipherment.
+    // Precondition: every character of text must already be a member of
+    // this machines alphabet — unchecked here, since text reaching this
+    // point has already gone through preprocess().
     std::string encipher(const std::string& text) const;
 
     const std::vector<Rotor>& rotors() const { return rotors_; }
@@ -167,6 +183,9 @@ private:
     void step_rotors() const;
 
     Alphabet alpha_;
+    // mutable despite encipher() being const: rotor/reflector position is
+    // session state that advances on every keypress, not machine identity —
+    // accepted tradeoff, see DESIGN.md section 8.
     mutable std::vector<Rotor> rotors_;
     mutable Reflector reflector_;
     Plugboard plugboard_;

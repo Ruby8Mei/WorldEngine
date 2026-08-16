@@ -1,0 +1,5 @@
+{
+  "name": "inop",
+  "version-string": "2.1.0",
+  "dependencies": ["glfw3", "stb", "nlohmann-json"]
+}

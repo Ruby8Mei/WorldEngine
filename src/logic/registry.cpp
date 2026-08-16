@@ -23,13 +23,16 @@ struct Wiring {
 const std::map<std::string, Wiring>& rotor_wirings() {
     static const std::map<std::string, Wiring> w = {
         // Legacy — the historic Wehrmacht Enigma wheels, notches and all.
-        {"I",    {"ekmflgdqvzntowyhxuspaibrcj", "q"}},
-        {"II",   {"ajdksiruxblhwtmcqgznpyfvoe", "e"}},
-        {"III",  {"bdfhjlcprtxvznyeiwgakmusqo", "v"}},
-        {"IV",   {"esovpzjayquirhxlnftgkdcmwb", "j"}},
-        {"V",    {"vzbrgityupsdnhlxawmjqofeck", "z"}},
-        {"VI",   {"jpgvoumfyqbenhzrdkasxlictw", "zm"}},
-        {"VII",  {"nzjhgrcxmyswboufaivlpekqdt", "zm"}},
+        // Uppercase to match the convention the original wiring tables and
+        // traffic were always published in — INOP-38 is the one with the
+        // lowercase/numeral-suffix scheme, and it doesn't apply here.
+        {"I",    {"EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q"}},
+        {"II",   {"AJDKSIRUXBLHWTMCQGZNPYFVOE", "E"}},
+        {"III",  {"BDFHJLCPRTXVZNYEIWGAKMUSQO", "V"}},
+        {"IV",   {"ESOVPZJAYQUIRHXLNFTGKDCMWB", "J"}},
+        {"V",    {"VZBRGITYUPSDNHLXAWMJQOFECK", "Z"}},
+        {"VI",   {"JPGVOUMFYQBENHZRDKASXLICTW", "ZM"}},
+        {"VII",  {"NZJHGRCXMYSWBOUFAIVLPEKQDT", "ZM"}},
 
         // INOP-38 — 38 symbols, notches chosen per message.
         {"R1",   {"bxml2uokh3#46705cyg19etfprid8swqavnzj/", ""}},
@@ -50,9 +53,9 @@ const std::map<std::string, Wiring>& rotor_wirings() {
 // only, never for real traffic.
 const std::map<std::string, std::string>& reflector_wirings() {
     static const std::map<std::string, std::string> w = {
-        {"A", "ejmzalyxvbwfcrquontspikhgd"},
-        {"B", "yruhqsldpxngokmiebfzcwvjat"},
-        {"C", "fvpjiaoyedrzxwgctkuqsbnmhl"},
+        {"A", "EJMZALYXVBWFCRQUONTSPIKHGD"},
+        {"B", "YRUHQSLDPXNGOKMIEBFZCWVJAT"},
+        {"C", "FVPJIAOYEDRZXWGCTKUQSBNMHL"},
 
         {"D", "qzn6i4w9ey2v7cuta8/polg#jb10k5f3dmrhxs"},
         {"E", "rcbywiptfu#97x/g1a3hj5end26qzs8v0m4lko"},
@@ -95,6 +98,16 @@ std::map<std::string, Wiring>& loaded_rotors() {
 std::map<std::string, std::string>& loaded_reflectors() {
     static std::map<std::string, std::string> m;
     return m;
+}
+
+// Bumped every time load_wheel_file() actually commits new wheels — lets
+// collect() cache its result instead of rebuilding+re-sorting on every
+// call, since the GUI's per-frame validation path calls available_rotors()/
+// available_reflectors() several times a frame for a pool that only ever
+// actually changes on a suite switch or a wheel-file reload.
+int& wheel_generation() {
+    static int g = 0;
+    return g;
 }
 }  // namespace
 
@@ -144,11 +157,10 @@ void note(std::vector<std::string>* out, const std::string& msg) {
 bool wiring_is_rotation(const std::string& wiring, const std::string& alphabet) {
     const int n = static_cast<int>(wiring.size());
     if (n != static_cast<int>(alphabet.size()) || n < 2) return n < 2;
-    std::map<char, int> pos;  // position of each symbol in the DECLARED alphabet
-    for (int i = 0; i < n; ++i) pos[alphabet[static_cast<size_t>(i)]] = i;
-    int shift = (pos[wiring[0]] - 0 + n) % n;
+    Alphabet alpha(alphabet);  // O(1) indexed lookup instead of rebuilding a std::map every call
+    int shift = (alpha.index(wiring[0]) - 0 + n) % n;
     for (int i = 1; i < n; ++i)
-        if ((pos[wiring[static_cast<size_t>(i)]] - i + n) % n != shift) return false;
+        if ((alpha.index(wiring[static_cast<size_t>(i)]) - i + n) % n != shift) return false;
     return true;
 }
 
@@ -234,11 +246,15 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
         loaded_rotors()[it->first] = it->second;
     for (std::map<std::string, std::string>::const_iterator it = refl.begin(); it != refl.end(); ++it)
         loaded_reflectors()[it->first] = it->second;
+    ++wheel_generation();
     return static_cast<int>(rot.size() + refl.size());
 }
 
 namespace {
-// Natural-ish ordering: R2 before R10, and Roman numerals in sequence.
+// Natural-ish ordering for names with a numeric suffix: R2 before R10.
+// Names without one (the Roman-numeral Legacy wheels) fall through to
+// plain string comparison below, which happens to sort I-VII correctly by
+// coincidence, not because Roman numerals are handled specially.
 bool name_less(const std::string& a, const std::string& b) {
     size_t ia = a.find_first_of("0123456789");
     size_t ib = b.find_first_of("0123456789");
@@ -251,26 +267,38 @@ bool name_less(const std::string& a, const std::string& b) {
     return a < b;
 }
 
+struct WheelPoolCache {
+    int generation = -1;
+    std::vector<std::string> rotors, reflectors;
+};
+
 std::vector<std::string> collect(const Suite& s, bool rotors) {
+    static std::map<std::string, WheelPoolCache> cache;
+    WheelPoolCache& entry = cache[s.code];
+    if (entry.generation == wheel_generation()) return rotors ? entry.rotors : entry.reflectors;
+
     const size_t want = s.alphabet.size();
-    std::vector<std::string> out;
-    if (rotors) {
-        for (const auto& kv : rotor_wirings())
-            if (kv.second.wiring.size() == want) out.push_back(kv.first);
-        for (const auto& kv : loaded_rotors())
-            if (kv.second.wiring.size() == want &&
-                std::find(out.begin(), out.end(), kv.first) == out.end())
-                out.push_back(kv.first);
-    } else {
-        for (const auto& kv : reflector_wirings())
-            if (kv.second.size() == want) out.push_back(kv.first);
-        for (const auto& kv : loaded_reflectors())
-            if (kv.second.size() == want &&
-                std::find(out.begin(), out.end(), kv.first) == out.end())
-                out.push_back(kv.first);
-    }
-    std::sort(out.begin(), out.end(), name_less);
-    return out;
+    std::vector<std::string> rot_out, refl_out;
+    for (const auto& kv : rotor_wirings())
+        if (kv.second.wiring.size() == want) rot_out.push_back(kv.first);
+    for (const auto& kv : loaded_rotors())
+        if (kv.second.wiring.size() == want &&
+            std::find(rot_out.begin(), rot_out.end(), kv.first) == rot_out.end())
+            rot_out.push_back(kv.first);
+    std::sort(rot_out.begin(), rot_out.end(), name_less);
+
+    for (const auto& kv : reflector_wirings())
+        if (kv.second.size() == want) refl_out.push_back(kv.first);
+    for (const auto& kv : loaded_reflectors())
+        if (kv.second.size() == want &&
+            std::find(refl_out.begin(), refl_out.end(), kv.first) == refl_out.end())
+            refl_out.push_back(kv.first);
+    std::sort(refl_out.begin(), refl_out.end(), name_less);
+
+    entry.generation = wheel_generation();
+    entry.rotors = std::move(rot_out);
+    entry.reflectors = std::move(refl_out);
+    return rotors ? entry.rotors : entry.reflectors;
 }
 }  // namespace
 

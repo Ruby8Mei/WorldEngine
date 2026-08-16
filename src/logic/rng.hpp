@@ -1,8 +1,8 @@
 // rng.hpp — cryptographically secure randomness, no dependencies
 //
 // This sits in the PREP layer, not the cipher, so it is free to use whatever
-// the operating system offers. Ruby's edge in the story is key hygiene, and
-// key hygiene starts with the key actually being unpredictable.
+// the operating system offers. Key hygiene starts with the key actually
+// being unpredictable.
 #pragma once
 
 #include <cstddef>
@@ -12,7 +12,7 @@
 namespace inop {
 
 // Fill buf with n bytes from the OS entropy source. Throws on failure —
-// silently degrading to a weak PRNG would be the exact sin the lore mocks.
+// silently degrading to a weak PRNG is exactly what this exists to prevent.
 void secure_bytes(uint8_t* buf, size_t n);
 
 // Uniform in [0, bound). Rejection-sampled, so no modulo bias.

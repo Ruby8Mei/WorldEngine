@@ -35,7 +35,11 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error);
 // Settings came from.
 bool validate_settings(const Settings& s, std::string* error);
 
+// Fails if the file is missing, empty, or fails validate_settings() against
+// its own declared suite — does not modify `s` on failure.
 bool load_settings(Settings& s, const std::string& path, std::string* error);
+
+// Overwrites `path` unconditionally if it can be opened for writing.
 bool save_settings(const Settings& s, const std::string& path);
 
 // (rotor_count + 1)-symbol key wanted by Machine's constructor, synthesising
@@ -53,5 +57,12 @@ int count_keysheet_entries(const std::string& path);
 // it. Used both for "one indexed entry for every message" and for
 // sequential iteration.
 bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error);
+
+// Same as load_keysheet_entry(), but scans forward from wherever `in` is
+// currently positioned instead of reopening the file and rescanning from
+// the top — for batch callers reading entries 1, 2, 3, ... in order from
+// one already-open stream, where reopening per entry would cost O(entries)
+// per call instead of O(1) amortized.
+bool load_keysheet_entry_from_stream(std::istream& in, int index, Settings& out, std::string* error);
 
 }  // namespace inop

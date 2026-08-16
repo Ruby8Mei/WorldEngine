@@ -23,6 +23,14 @@ void secure_shuffle(std::vector<T>& v) {
     }
 }
 
+// "Copy the alphabet into a vector and shuffle it" was written out
+// separately at every call site below — one shared helper instead.
+std::vector<char> shuffled_alphabet(const std::string& alphabet) {
+    std::vector<char> v(alphabet.begin(), alphabet.end());
+    secure_shuffle(v);
+    return v;
+}
+
 std::string ask(const std::string& prompt, const std::string& def) {
     std::cout << "  " << prompt;
     if (!def.empty()) std::cout << " [" << def << "]";
@@ -55,9 +63,19 @@ int ask_int(const std::string& prompt, int def, int lo, int hi) {
     }
 }
 
-const Suite& ask_suite() {
+// allow_legacy=false is for the rotor/reflector wheel generator specifically
+// — Legacy's wheels are the fixed historical set (I-VII / A-B-C), never
+// machine-generated, so it must never even be offered there. Keysheet
+// generation (gen_settings()) still allows Legacy: randomizing rings/
+// plugboard/key against its existing fixed wheels is legitimate.
+const Suite& ask_suite(bool allow_legacy = true) {
     while (true) {
-        std::string c = ask("suite (26 = Legacy, 38 = INOP-38)", "38");
+        std::string prompt = allow_legacy ? "suite (26 = Legacy, 38 = INOP-38)" : "suite (38 = INOP-38)";
+        std::string c = ask(prompt, "38");
+        if (!allow_legacy && c == "26") {
+            std::cout << "    ! Legacy's wheels are fixed and historical, never machine-generated\n";
+            continue;
+        }
         if (suites().count(c)) return suite(c);
         std::cout << "    ! unknown suite code\n";
     }
@@ -71,8 +89,7 @@ const Suite& ask_suite() {
 // rotation check with registry.cpp's load-time validator so the two can
 // never diverge again.
 std::string random_rotor_wiring(const Alphabet& alpha) {
-    std::vector<char> v(alpha.str().begin(), alpha.str().end());
-    secure_shuffle(v);
+    std::vector<char> v = shuffled_alphabet(alpha.str());
     std::string w(v.begin(), v.end());
     if (wiring_is_rotation(w, alpha.str()))
         throw std::runtime_error(
@@ -85,8 +102,7 @@ std::string random_reflector_wiring(const Alphabet& alpha) {
     if (n % 2 != 0)
         throw std::invalid_argument("reflectors need an even alphabet — every symbol must pair");
 
-    std::vector<char> pool(alpha.str().begin(), alpha.str().end());
-    secure_shuffle(pool);
+    std::vector<char> pool = shuffled_alphabet(alpha.str());
 
     std::string wiring(static_cast<size_t>(n), '?');
     for (size_t i = 0; i + 1 < pool.size(); i += 2) {
@@ -100,9 +116,39 @@ std::string random_reflector_wiring(const Alphabet& alpha) {
 std::string random_notches(const Alphabet& alpha, int count) {
     if (count < 1) count = 1;  // a notchless rotor gives the machine a period of 38
     if (count > alpha.size()) count = alpha.size();
-    std::vector<char> v(alpha.str().begin(), alpha.str().end());
-    secure_shuffle(v);
+    std::vector<char> v = shuffled_alphabet(alpha.str());
     return std::string(v.begin(), v.begin() + count);
+}
+
+// Per-rotor notch counts drawn independently in [1, max_notches_per_rotor]
+// each — not one shared count applied to every rotor — while still pulling
+// every symbol from one shuffled pool so no two rotors can ever land on
+// the same notch symbol. Used by callers that want each rotor to look like
+// an independent pick (the GUI's single-click "Generate Settings") rather
+// than random_settings()'s one-fixed-count-for-everyone contract (what the
+// CLI's interactive prompts ask for).
+std::vector<std::string> random_variable_notches(const Alphabet& alpha, int rotor_count,
+                                                   int max_notches_per_rotor) {
+    int cap = max_notches_per_rotor < 1 ? 1 : max_notches_per_rotor;
+    std::vector<char> pool = shuffled_alphabet(alpha.str());
+    std::vector<std::string> result;
+    size_t used = 0;
+    for (int i = 0; i < rotor_count; ++i) {
+        int rotors_left = rotor_count - i;
+        size_t remaining = pool.size() - used;
+        // Reserve at least 1 symbol for every rotor still to come after
+        // this one, so an early greedy draw can never starve a later rotor
+        // of its mandatory minimum.
+        size_t max_for_this = remaining - static_cast<size_t>(rotors_left - 1);
+        int this_cap = std::min(cap, static_cast<int>(max_for_this));
+        if (this_cap < 1)
+            throw std::runtime_error("not enough alphabet symbols for every rotor to have distinct notches");
+        int count = 1 + static_cast<int>(secure_below(static_cast<uint32_t>(this_cap)));
+        result.push_back(std::string(pool.begin() + static_cast<long>(used),
+                                      pool.begin() + static_cast<long>(used + static_cast<size_t>(count))));
+        used += static_cast<size_t>(count);
+    }
+    return result;
 }
 
 // ── settings generation ─────────────────────────────────────────────────
@@ -133,15 +179,29 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
     for (int i = 0; i < rotor_count; ++i)
         g.rings.push_back(static_cast<int>(secure_below(static_cast<uint32_t>(alpha.size()))) + 1);
 
-    // notches — legacy wheels carry historic ones, so leave those alone
-    for (int i = 0; i < rotor_count; ++i)
-        g.notches.push_back(s.notches_are_fixed ? std::string()
-                                                : random_notches(alpha, notches_per_rotor));
+    // notches — legacy wheels carry historic ones, so leave those alone.
+    // Drawn from one shuffled pool for the whole machine, not one shuffle
+    // per rotor, so no two rotors can ever land on the same notch symbol —
+    // a notch shared across rotors measurably shrinks keyspace.
+    if (s.notches_are_fixed) {
+        for (int i = 0; i < rotor_count; ++i) g.notches.push_back(std::string());
+    } else {
+        int npr = notches_per_rotor < 1 ? 1 : notches_per_rotor;
+        size_t total_needed = static_cast<size_t>(rotor_count) * static_cast<size_t>(npr);
+        if (total_needed > alpha.str().size())
+            throw std::runtime_error("not enough alphabet symbols for every rotor to have distinct notches");
+        std::vector<char> pool = shuffled_alphabet(alpha.str());
+        size_t used = 0;
+        for (int i = 0; i < rotor_count; ++i) {
+            g.notches.push_back(std::string(pool.begin() + static_cast<long>(used),
+                                             pool.begin() + static_cast<long>(used + static_cast<size_t>(npr))));
+            used += static_cast<size_t>(npr);
+        }
+    }
 
     // plugboard: draw distinct symbols, pair them off
     if (plug_pairs > 0) {
-        std::vector<char> v(s.alphabet.begin(), s.alphabet.end());
-        secure_shuffle(v);
+        std::vector<char> v = shuffled_alphabet(s.alphabet);
         int usable = std::min(plug_pairs, alpha.size() / 2);
         for (int i = 0; i < usable; ++i)
             g.plugs.push_back(std::string() + v[static_cast<size_t>(i * 2)] +
@@ -168,7 +228,7 @@ std::string settings_to_text(const GeneratedSettings& g) {
 namespace {
 
 void gen_wheels(bool rotors) {
-    const Suite& s = ask_suite();
+    const Suite& s = ask_suite(/*allow_legacy=*/false);
     Alphabet alpha(s.alphabet);
     const char* what = rotors ? "rotors" : "reflectors";
 

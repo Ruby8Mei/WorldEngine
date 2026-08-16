@@ -1,18 +1,35 @@
 #include "inop.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace inop {
 
 // ── Alphabet ────────────────────────────────────────────────────────────
 Alphabet::Alphabet(std::string symbols)
-    : symbols_(std::move(symbols)), size_(static_cast<int>(symbols_.size())), idx_(256, -1) {
+    : symbols_(std::move(symbols)), size_(static_cast<int>(symbols_.size())), idx_(256, -1),
+      // No lowercase letter anywhere in the declared alphabet -> treat this
+      // alphabet as uppercase-oriented (correctly classifies ALPHA38 as
+      // lowercase and Legacy's ALPHA26 as uppercase, without hardcoding
+      // either suite's identity here).
+      uppercase_(symbols_.find_first_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
     if (size_ == 0) throw std::invalid_argument("alphabet is empty");
     for (int i = 0; i < size_; ++i) {
         uint8_t c = static_cast<uint8_t>(symbols_[static_cast<size_t>(i)]);
         if (idx_[c] >= 0) throw std::invalid_argument("alphabet has a duplicate symbol");
         idx_[c] = static_cast<int16_t>(i);
     }
+}
+
+char Alphabet::fold_case(char c) const {
+    return uppercase_ ? static_cast<char>(std::toupper(static_cast<unsigned char>(c)))
+                       : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+std::string Alphabet::fold_case(const std::string& s) const {
+    std::string out(s);
+    for (char& c : out) c = fold_case(c);
+    return out;
 }
 
 // ── Rotor ───────────────────────────────────────────────────────────────
@@ -171,7 +188,12 @@ void Machine::set_key(const std::string& master_key) {
 void Machine::step_rotors() const {
     if (legacy_double_step_) {
         // Historic three-rotor behaviour, including the double step:
-        // rotors_[0] is leftmost, rotors_[2] is the fast rotor.
+        // rotors_[0] is leftmost, rotors_[2] is the fast rotor. Middle can
+        // step for two different reasons on one keypress: right carried into
+        // it (step_left is false, normal single step), or middle is itself
+        // on notch (step_left true) — in which case middle steps AGAIN on
+        // top of forcing left to step. That second case is the actual
+        // "double step" anomaly, not just a name for the whole branch.
         Rotor& left = rotors_[0];
         Rotor& middle = rotors_[1];
         Rotor& right = rotors_[2];
@@ -205,7 +227,10 @@ std::string Machine::encipher(const std::string& text) const {
 
         // Each rotor keeps a pointer to the table row for its current
         // offset, updated only when it actually moves.
-        int sig = pb[alpha_.index(text[k])];
+        // Unchecked: text reaching here has already been through
+        // preprocess() (or is prior ciphertext this same alphabet
+        // produced), so every symbol's membership is already guaranteed.
+        int sig = pb[alpha_.index_unchecked(text[k])];
         for (int i = n - 1; i >= 0; --i) sig = rotors_[static_cast<size_t>(i)].fwd_table()[sig];
         sig = reflector_.table()[sig];
         for (int i = 0; i < n; ++i) sig = rotors_[static_cast<size_t>(i)].bwd_table()[sig];

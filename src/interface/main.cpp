@@ -5,12 +5,14 @@
 #include <cstdlib>   // std::exit
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "batch.hpp"
 #include "generator.hpp"
+#include "gui.hpp"
 #include "inop.hpp"
 #include "languages.hpp"
 #include "pipeline.hpp"
@@ -224,7 +226,7 @@ Settings collect_settings() {
     std::cout << DIM << "  up to " << su.max_plug_pairs
               << " pairs, e.g. AB CD 3X — blank for none" << RST << "\n";
     while (true) {
-        auto pairs = split(lower(ask("pairs")));
+        auto pairs = split(alpha.fold_case(ask("pairs")));
         if (pairs.empty()) { s.plugs.clear(); break; }
         if (static_cast<int>(pairs.size()) > su.max_plug_pairs) {
             fail("too many pairs (max " + std::to_string(su.max_plug_pairs) + ")");
@@ -273,7 +275,7 @@ Settings collect_settings() {
                          "the next rotor, which collapses the machine's period");
                     continue;
                 }
-                std::string n = lower(raw);
+                std::string n = alpha.fold_case(raw);
                 if (static_cast<int>(n.size()) > su.max_notches) {
                     fail("at most " + std::to_string(su.max_notches)); continue;
                 }
@@ -301,7 +303,7 @@ Settings collect_settings() {
     std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
               << secure_string(su.alphabet, need) << RST << "\n";
     while (true) {
-        std::string k = lower(ask("key"));
+        std::string k = alpha.fold_case(ask("key"));
         if (k.size() != need && !(su.historic_lock && k.size() == need + 1)) {
             fail("need exactly " + std::to_string(need) + " symbols" +
                  (su.historic_lock ? " (or " + std::to_string(need + 1) + " for compatibility)" : ""));
@@ -382,12 +384,12 @@ void verify_legacy_integrity() {
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
-        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "aaaa",
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA",
                   /*legacy_stepping=*/true);
         m.set_moving_reflector(false);
-        std::string got = m.encipher("aaaaaaaaaaaa");
-        if (got != "bdzgowcxltks")
-            abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected bdzgowcxltks");
+        std::string got = m.encipher("AAAAAAAAAAAA");
+        if (got != "BDZGOWCXLTKS")
+            abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected BDZGOWCXLTKS");
     }
 
     // (b) the Legacy suite descriptor itself.
@@ -424,10 +426,10 @@ int self_test() {
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
-        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "aaaa", true);
+        Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA", true);
         m.set_moving_reflector(false);
-        std::string got = m.encipher("aaaaaaaaaaaa");
-        check(got == "bdzgowcxltks", "historic Enigma I-II-III/B vector -> " + got);
+        std::string got = m.encipher("AAAAAAAAAAAA");
+        check(got == "BDZGOWCXLTKS", "historic Enigma I-II-III/B vector -> " + got);
     }
 
     // 2. The machine is its own inverse when rewound.
@@ -589,33 +591,79 @@ int self_test() {
     {
         struct Row { const char* lang; const char* plain; const char* encoded; };
         static const Row rows[] = {
-            {"la", u8"Vēnī, vīdī, vīcī", "ve1ni1 vi1di1 vi1ci1"},
-            {"en", u8"The naïve café owner smiled.", "the nai6ve cafe2 owner smiled"},
-            {"es", u8"El niño comió piña en España.", "el nin7o comio2 pin7a en espan7a"},
-            {"ca", u8"El paral·lel és clar.", "el paral8el e2s clar"},
-            {"nl", u8"De coördinatie was ideeën waard.",
+            {"sqi", "Unë flas shqip dhe pi çaj.", "une6 flas shqip dhe pi c8aj"},
+            {"eus", "Kaixo, zer moduz zaude?", "kaixo zer moduz zaude"},
+            {"bos", "Ćao, Đorđe voli čokoladu i čaj.",
+             "c2ao d0ord0e voli c3okoladu i c3aj"},
+            {"yue", "Néih hóu, ngóh dōu hóu.", "ne2ih ho2u ngo2h do1u ho2u"},
+            {"cat", "El parallel és clar.", "el parallel e2s clar"},
+            {"cpf", "Li fò, li gen kè kontan, e li rete bò lanmè a.",
+             "li fo4 li gen ke4 kontan e li rete bo4 lanme4 a"},
+            {"hrv", "Ćao, Đorđe voli čokoladu i čaj.",
+             "c2ao d0ord0e voli c3okoladu i c3aj"},
+            {"czr", "Děkuji, můj přítel má nový dům.",
+             "de3kuji mu9j pr3i2tel ma2 novy2 du9m"},
+            {"dan", "Håper du får en fin dag på øya, kjære venn.",
+             "ha9per du fa9r en fin dag pa9 o0ya kjaere venn"},
+            {"nld", "De coördinatie was ideeën waard.",
              "de coo6rdinatie was ideee6n waard"},
-            {"pt", u8"O irmão comeu pão com maçã.", "o irma7o comeu pa7o com maca7"},
-            {"fr", u8"Le café est très cher.", "le cafe2 est tre4s cher"},
-            {"it", u8"Perché è così città?", "perche2 e4 cosi4 citta4"},
-            {"de", u8"Möchten Sie ein großes Käsebrötchen?",
-             "mo6chten sie ein gros8es ka6sebro6tchen"},
-            {"id", u8"Selamat pagi, apa kabar?", "selamat pagi apa kabar"},
-            {"ms", u8"Selamat pagi, apa khabar?", "selamat pagi apa khabar"},
-            {"tl", u8"Pinuntahan namin ang Peñafrancia.",
-             "pinuntahan namin ang pen7afrancia"},
-            {"zh", u8"Wǒ hěn xǐhuān zhège dìfāng.", "wo3 he3n xi3hua1n zhe4ge di4fa1ng"},
-            {"cs", u8"Děkuji, můj přítel má nový dům.",
-             "de3kuji muj pr3i2tel ma2 novy2 dum"},
-            {"sk", u8"Môj priateľ má nový dom v meste.",
-             "mo5j priatel3 ma2 novy2 dom v meste"},
-            {"tr", u8"Güzel bir gün, değil mi? Işık çok parlak.",
-             "gu6zel bir gu6n deg3il mi i8si8k cok parlak"},
-            {"ro", u8"Câinele meu aleargă în grădină.",
+            {"eng", "The naïve café owner smiled.", "the nai6ve cafe2 owner smiled"},
+            {"est", "Söödav õunapuu on hea.", "so6o6dav o7unapuu on hea"},
+            {"fin", "Hän on täällä.", "ha6n on ta6a6lla6"},
+            {"fra", "Le café est très cher.", "le cafe2 est tre4s cher"},
+            {"deu", "Möchten Sie ein großes Käsebrötchen?",
+             "mo6chten sie ein gros0es ka6sebro6tchen"},
+            {"heb", "Šalom, ḥaver tov. Ha ṭalmid ṣadiq, we Śarah šamehah.",
+             "s3alom h88aver tov ha t88almid s88adiq we s2arah s3amehah"},
+            {"hin", "Maiṃ Kṛṣṇa kī gītā paṛhtā hūṃ.",
+             "maim88 kr88s88n88a ki1 gi1ta1 par88hta1 hu1m88"},
+            {"hun", "Ő szereti a gyümölcsöt és a tűzhelyet.",
+             "o22 szereti a gyu6mo6lcso6t e2s a tu22zhelyet"},
+            {"ibo", "Ị bụ ezigbo ụmụ nwoke.", "i88 bu88 ezigbo u88mu88 nwoke"},
+            {"ind", "Selamat pagi, apa kabar?", "selamat pagi apa kabar"},
+            {"gle", "Tá mo mháthair ag ithe úll sa ghairdín.",
+             "ta2 mo mha2thair ag ithe u2ll sa ghairdi2n"},
+            {"ita", "Perché è così città?", "perche2 e4 cosi4 citta4"},
+            {"kor", "Annyeonghaseyo, jal jinaeseyo?", "annyeonghaseyo jal jinaeseyo"},
+            {"kmr", "Ez kurdî me û ji çayê hez dikim, ne ji şerî.",
+             "ez kurdi5 me u5 ji c8aye5 hez dikim ne ji s8eri5"},
+            {"lat", "Vēnī, vīdī, vīcī", "ve1ni1 vi1di1 vi1ci1"},
+            {"lit", "Ėjau prie ąžuolo su ūkininku.",
+             "e33jau prie a8z3uolo su u1kininku"},
+            {"ltz", "Lëtzebuerg ass e schéint Land.",
+             "le6tzebuerg ass e sche2int land"},
+            {"mly", "Selamat pagi, apa khabar?", "selamat pagi apa khabar"},
+            {"mlt", "Ġorġ jiekol ċerasa, u żmien huwa sabiħ.",
+             "g33org33 jiekol c33erasa u z33mien huwa sabih0"},
+            {"cmn", "Wǒ hěn xǐhuān zhège dìfāng.", "wo3 he3n xi3hua1n zhe4ge di4fa1ng"},
+            {"mri", "Kei te pai te rā, e hoa mā.", "kei te pai te ra1 e hoa ma1"},
+            {"cnr", "Śever i źenica su śutra.", "s2ever i z2enica su s2utra"},
+            {"nor", "Håper du får en fin dag på øya, kjære venn.",
+             "ha9per du fa9r en fin dag pa9 o0ya kjaere venn"},
+            {"pol", "Dziękuję, mój wujek ma ładny dom. Ćma i źrebię śpią, a łąka pachnie różą.",
+             "dzie8kuje8 mo2j wujek ma l0adny dom c2ma i z2rebie8 s2pia8 a l0a8ka pachnie ro2z33a8"},
+            {"por", "O irmão comeu pão com maçã.", "o irma7o comeu pa7o com mac8a7"},
+            {"ron", "Câinele meu aleargă în grădină.",
              "ca5inele meu alearga3 i5n gra3dina3"},
-            {"sl", u8"Šla sem v Ljubljano videti čudovito reko.",
+            {"gla", "Chì mi bàta ùr agus tha e math.", "chi4 mi ba4ta u4r agus tha e math"},
+            {"srp", "Ćao, Đorđe voli čokoladu i čaj.",
+             "c2ao d0ord0e voli c3okoladu i c3aj"},
+            {"svk", "Môj priateľ má nový dom v meste.",
+             "mo5j priatel3 ma2 novy2 dom v meste"},
+            {"slv", "Šla sem v Ljubljano videti čudovito reko.",
              "s3la sem v ljubljano videti c3udovito reko"},
-            {"mi", u8"Kei te pai te rā, e hoa mā.", "kei te pai te ra1 e hoa ma1"},
+            {"som", "Nabad, sidee tahay?", "nabad sidee tahay"},
+            {"spa", "El niño comió piña en España.", "el nin7o comio2 pin7a en espan7a"},
+            {"swa", "Habari, unaendeleaje?", "habari unaendeleaje"},
+            {"swe", "Åsa äter äpplen och dricker öl.", "a9sa a6ter a6pplen och dricker o6l"},
+            {"tgl", "Pinuntahan namin ang Peñafrancia.",
+             "pinuntahan namin ang pen7afrancia"},
+            {"tur", "Güzel bir gün, değil mi? Işık çok parlak.",
+             "gu6zel bir gu6n deg3il mi i0s8i0k c8ok parlak"},
+            {"cym", "Mae'r tŷ'n hardd a'r cŵn yn hapus.",
+             "maer ty5n hardd ar cw5n yn hapus"},
+            {"yor", "Ẹ ṣeun, ọmọ mi dára.", "e88 s88eun o88mo88 mi da2ra"},
+            {"zul", "Sawubona, unjani?", "sawubona unjani"},
         };
         for (const auto& r : rows) {
             std::string got = fold_diacritics(r.plain, r.lang);
@@ -632,10 +680,10 @@ int self_test() {
         auto encode = [](const std::string& raw, const std::string& lang) {
             return fold_diacritics(mark_literal_digits(raw), lang);
         };
-        check(encode("Room A2", "en") == "room a/2", "digit collision: Room A2");
-        check(encode(u8"Château Latour 1964", "fr") == "cha5teau latour 1964",
+        check(encode("Room A2", "eng") == "room a/2", "digit collision: Room A2");
+        check(encode("Château Latour 1964", "fra") == "cha5teau latour 1964",
               "digit collision: Chateau Latour 1964 (no false slash on a bare number)");
-        check(encode(u8"Côte d'Ivoire", "fr") == "co5te divoire",
+        check(encode("Côte d'Ivoire", "fra") == "co5te divoire",
               "digit collision: apostrophe dropped, no space inserted");
     }
 
@@ -658,63 +706,129 @@ int self_test() {
     {
         struct DiacRow { const char* lang; char base; int digit; const char* ch; };
         static const DiacRow rows[] = {
-            {"la",'a',1,"ā"},{"la",'e',1,"ē"},{"la",'i',1,"ī"},{"la",'o',1,"ō"},{"la",'u',1,"ū"},
+            {"sqi",'c',8,"ç"},{"sqi",'e',6,"ë"},
 
-            {"en",'a',2,"á"},{"en",'e',2,"é"},{"en",'i',2,"í"},{"en",'o',2,"ó"},{"en",'u',2,"ú"},
-            {"en",'a',4,"à"},{"en",'e',4,"è"},
-            {"en",'a',5,"â"},{"en",'e',5,"ê"},{"en",'i',5,"î"},{"en",'o',5,"ô"},{"en",'u',5,"û"},
-            {"en",'a',6,"ä"},{"en",'e',6,"ë"},{"en",'i',6,"ï"},{"en",'o',6,"ö"},{"en",'u',6,"ü"},
-            {"en",'n',7,"ñ"},
+            {"bos",'c',3,"č"},{"bos",'s',3,"š"},{"bos",'z',3,"ž"},{"bos",'c',2,"ć"},{"bos",'d',0,"đ"},
 
-            {"es",'a',2,"á"},{"es",'e',2,"é"},{"es",'i',2,"í"},{"es",'o',2,"ó"},{"es",'u',2,"ú"},
-            {"es",'n',7,"ñ"},{"es",'u',6,"ü"},
+            {"yue",'a',1,"ā"},{"yue",'e',1,"ē"},{"yue",'i',1,"ī"},{"yue",'o',1,"ō"},{"yue",'u',1,"ū"},
+            {"yue",'a',2,"á"},{"yue",'e',2,"é"},{"yue",'i',2,"í"},{"yue",'o',2,"ó"},{"yue",'u',2,"ú"},
+            {"yue",'a',3,"ǎ"},{"yue",'e',3,"ě"},{"yue",'i',3,"ǐ"},{"yue",'o',3,"ǒ"},{"yue",'u',3,"ǔ"},
+            {"yue",'a',4,"à"},{"yue",'e',4,"è"},{"yue",'i',4,"ì"},{"yue",'o',4,"ò"},{"yue",'u',4,"ù"},
+            {"yue",'a',5,"â"},{"yue",'e',5,"ê"},{"yue",'i',5,"î"},{"yue",'o',5,"ô"},{"yue",'u',5,"û"},
+            {"yue",'a',7,"ã"},{"yue",'e',7,"ẽ"},{"yue",'i',7,"ĩ"},{"yue",'o',7,"õ"},{"yue",'u',7,"ũ"},
 
-            {"ca",'a',4,"à"},{"ca",'e',4,"è"},{"ca",'o',4,"ò"},
-            {"ca",'e',2,"é"},{"ca",'i',2,"í"},{"ca",'o',2,"ó"},{"ca",'u',2,"ú"},
-            {"ca",'i',6,"ï"},{"ca",'u',6,"ü"},
+            {"cpf",'a',4,"à"},{"cpf",'e',4,"è"},{"cpf",'o',4,"ò"},
 
-            {"nl",'e',6,"ë"},{"nl",'i',6,"ï"},{"nl",'o',6,"ö"},{"nl",'u',6,"ü"},{"nl",'e',2,"é"},
+            {"hrv",'c',3,"č"},{"hrv",'s',3,"š"},{"hrv",'z',3,"ž"},{"hrv",'c',2,"ć"},{"hrv",'d',0,"đ"},
 
-            {"pt",'a',7,"ã"},{"pt",'o',7,"õ"},
-            {"pt",'a',2,"á"},{"pt",'e',2,"é"},{"pt",'i',2,"í"},{"pt",'o',2,"ó"},{"pt",'u',2,"ú"},
-            {"pt",'a',5,"â"},{"pt",'e',5,"ê"},{"pt",'o',5,"ô"},{"pt",'a',4,"à"},
+            {"lat",'a',1,"ā"},{"lat",'e',1,"ē"},{"lat",'i',1,"ī"},{"lat",'o',1,"ō"},{"lat",'u',1,"ū"},
 
-            {"fr",'e',2,"é"},
-            {"fr",'a',4,"à"},{"fr",'e',4,"è"},{"fr",'u',4,"ù"},
-            {"fr",'a',5,"â"},{"fr",'e',5,"ê"},{"fr",'i',5,"î"},{"fr",'o',5,"ô"},{"fr",'u',5,"û"},
-            {"fr",'e',6,"ë"},{"fr",'i',6,"ï"},{"fr",'u',6,"ü"},{"fr",'y',6,"ÿ"},
+            {"eng",'a',2,"á"},{"eng",'e',2,"é"},{"eng",'i',2,"í"},{"eng",'o',2,"ó"},{"eng",'u',2,"ú"},
+            {"eng",'a',4,"à"},{"eng",'e',4,"è"},
+            {"eng",'a',5,"â"},{"eng",'e',5,"ê"},{"eng",'i',5,"î"},{"eng",'o',5,"ô"},{"eng",'u',5,"û"},
+            {"eng",'a',6,"ä"},{"eng",'e',6,"ë"},{"eng",'i',6,"ï"},{"eng",'o',6,"ö"},{"eng",'u',6,"ü"},
+            {"eng",'n',7,"ñ"},
 
-            {"it",'a',4,"à"},{"it",'e',4,"è"},{"it",'i',4,"ì"},{"it",'o',4,"ò"},{"it",'u',4,"ù"},
-            {"it",'e',2,"é"},
+            {"spa",'a',2,"á"},{"spa",'e',2,"é"},{"spa",'i',2,"í"},{"spa",'o',2,"ó"},{"spa",'u',2,"ú"},
+            {"spa",'n',7,"ñ"},{"spa",'u',6,"ü"},
 
-            {"de",'a',6,"ä"},{"de",'o',6,"ö"},{"de",'u',6,"ü"},{"de",'s',8,"ß"},
+            {"cat",'a',4,"à"},{"cat",'e',4,"è"},{"cat",'o',4,"ò"},
+            {"cat",'e',2,"é"},{"cat",'i',2,"í"},{"cat",'o',2,"ó"},{"cat",'u',2,"ú"},
+            {"cat",'i',6,"ï"},{"cat",'u',6,"ü"},{"cat",'c',8,"ç"},
 
-            {"tl",'n',7,"ñ"},
-            {"tl",'a',2,"á"},{"tl",'e',2,"é"},{"tl",'i',2,"í"},{"tl",'o',2,"ó"},{"tl",'u',2,"ú"},
+            {"nld",'e',6,"ë"},{"nld",'i',6,"ï"},{"nld",'o',6,"ö"},{"nld",'u',6,"ü"},{"nld",'e',2,"é"},
 
-            {"zh",'a',1,"ā"},{"zh",'e',1,"ē"},{"zh",'i',1,"ī"},{"zh",'o',1,"ō"},{"zh",'u',1,"ū"},
-            {"zh",'a',2,"á"},{"zh",'e',2,"é"},{"zh",'i',2,"í"},{"zh",'o',2,"ó"},{"zh",'u',2,"ú"},
-            {"zh",'a',3,"ǎ"},{"zh",'e',3,"ě"},{"zh",'i',3,"ǐ"},{"zh",'o',3,"ǒ"},{"zh",'u',3,"ǔ"},
-            {"zh",'a',4,"à"},{"zh",'e',4,"è"},{"zh",'i',4,"ì"},{"zh",'o',4,"ò"},{"zh",'u',4,"ù"},
-            {"zh",'u',6,"ü"},
+            {"dan",'o',0,"ø"},{"dan",'a',9,"å"},
 
-            {"cs",'a',2,"á"},{"cs",'e',2,"é"},{"cs",'i',2,"í"},{"cs",'o',2,"ó"},{"cs",'u',2,"ú"},
-            {"cs",'y',2,"ý"},
-            {"cs",'e',3,"ě"},{"cs",'s',3,"š"},{"cs",'c',3,"č"},{"cs",'r',3,"ř"},{"cs",'z',3,"ž"},
-            {"cs",'d',3,"ď"},{"cs",'t',3,"ť"},{"cs",'n',3,"ň"},
+            {"czr",'a',2,"á"},{"czr",'e',2,"é"},{"czr",'i',2,"í"},{"czr",'o',2,"ó"},{"czr",'u',2,"ú"},
+            {"czr",'y',2,"ý"},
+            {"czr",'e',3,"ě"},{"czr",'s',3,"š"},{"czr",'c',3,"č"},{"czr",'r',3,"ř"},{"czr",'z',3,"ž"},
+            {"czr",'d',3,"ď"},{"czr",'t',3,"ť"},{"czr",'n',3,"ň"},{"czr",'u',9,"ů"},
 
-            {"sk",'a',2,"á"},{"sk",'e',2,"é"},{"sk",'i',2,"í"},{"sk",'o',2,"ó"},{"sk",'u',2,"ú"},
-            {"sk",'y',2,"ý"},{"sk",'a',6,"ä"},{"sk",'o',5,"ô"},
-            {"sk",'l',3,"ľ"},{"sk",'n',3,"ň"},{"sk",'s',3,"š"},{"sk",'c',3,"č"},{"sk",'z',3,"ž"},
-            {"sk",'t',3,"ť"},{"sk",'d',3,"ď"},
+            {"por",'a',7,"ã"},{"por",'o',7,"õ"},
+            {"por",'a',2,"á"},{"por",'e',2,"é"},{"por",'i',2,"í"},{"por",'o',2,"ó"},{"por",'u',2,"ú"},
+            {"por",'a',5,"â"},{"por",'e',5,"ê"},{"por",'o',5,"ô"},{"por",'a',4,"à"},{"por",'c',8,"ç"},
 
-            {"tr",'g',3,"ğ"},{"tr",'o',6,"ö"},{"tr",'u',6,"ü"},{"tr",'i',8,"ı"},
+            {"fra",'e',2,"é"},
+            {"fra",'a',4,"à"},{"fra",'e',4,"è"},{"fra",'u',4,"ù"},
+            {"fra",'a',5,"â"},{"fra",'e',5,"ê"},{"fra",'i',5,"î"},{"fra",'o',5,"ô"},{"fra",'u',5,"û"},
+            {"fra",'e',6,"ë"},{"fra",'i',6,"ï"},{"fra",'u',6,"ü"},{"fra",'y',6,"ÿ"},{"fra",'c',8,"ç"},
 
-            {"ro",'a',5,"â"},{"ro",'i',5,"î"},{"ro",'a',3,"ă"},
+            {"ita",'a',4,"à"},{"ita",'e',4,"è"},{"ita",'i',4,"ì"},{"ita",'o',4,"ò"},{"ita",'u',4,"ù"},
+            {"ita",'e',2,"é"},
 
-            {"sl",'s',3,"š"},{"sl",'c',3,"č"},{"sl",'z',3,"ž"},
+            {"deu",'a',6,"ä"},{"deu",'o',6,"ö"},{"deu",'u',6,"ü"},{"deu",'s',0,"ß"},
 
-            {"mi",'a',1,"ā"},{"mi",'e',1,"ē"},{"mi",'i',1,"ī"},{"mi",'o',1,"ō"},{"mi",'u',1,"ū"},
+            {"heb",'h',88,"ḥ"},{"heb",'t',88,"ṭ"},{"heb",'s',88,"ṣ"},{"heb",'s',3,"š"},{"heb",'s',2,"ś"},
+
+            {"hin",'a',1,"ā"},{"hin",'i',1,"ī"},{"hin",'u',1,"ū"},
+            {"hin",'t',88,"ṭ"},{"hin",'d',88,"ḍ"},{"hin",'n',88,"ṇ"},{"hin",'s',88,"ṣ"},
+            {"hin",'h',88,"ḥ"},{"hin",'m',88,"ṃ"},{"hin",'r',88,"ṛ"},{"hin",'l',88,"ḷ"},
+            {"hin",'n',33,"ṅ"},{"hin",'n',7,"ñ"},{"hin",'s',2,"ś"},
+
+            {"hun",'a',2,"á"},{"hun",'e',2,"é"},{"hun",'i',2,"í"},{"hun",'o',2,"ó"},{"hun",'u',2,"ú"},
+            {"hun",'o',6,"ö"},{"hun",'u',6,"ü"},{"hun",'o',22,"ő"},{"hun",'u',22,"ű"},
+
+            {"ibo",'i',88,"ị"},{"ibo",'o',88,"ọ"},{"ibo",'u',88,"ụ"},
+
+            {"gle",'a',2,"á"},{"gle",'e',2,"é"},{"gle",'i',2,"í"},{"gle",'o',2,"ó"},{"gle",'u',2,"ú"},
+
+            {"kmr",'c',8,"ç"},{"kmr",'e',5,"ê"},{"kmr",'i',5,"î"},{"kmr",'u',5,"û"},{"kmr",'s',8,"ş"},
+
+            {"lit",'a',8,"ą"},{"lit",'e',8,"ę"},{"lit",'i',8,"į"},{"lit",'u',8,"ų"},
+            {"lit",'c',3,"č"},{"lit",'s',3,"š"},{"lit",'z',3,"ž"},{"lit",'u',1,"ū"},{"lit",'e',33,"ė"},
+
+            {"ltz",'e',6,"ë"},{"ltz",'e',2,"é"},
+
+            {"mlt",'c',33,"ċ"},{"mlt",'g',33,"ġ"},{"mlt",'h',0,"ħ"},{"mlt",'z',33,"ż"},
+
+            {"cmn",'a',1,"ā"},{"cmn",'e',1,"ē"},{"cmn",'i',1,"ī"},{"cmn",'o',1,"ō"},{"cmn",'u',1,"ū"},
+            {"cmn",'a',2,"á"},{"cmn",'e',2,"é"},{"cmn",'i',2,"í"},{"cmn",'o',2,"ó"},{"cmn",'u',2,"ú"},
+            {"cmn",'a',3,"ǎ"},{"cmn",'e',3,"ě"},{"cmn",'i',3,"ǐ"},{"cmn",'o',3,"ǒ"},{"cmn",'u',3,"ǔ"},
+            {"cmn",'a',4,"à"},{"cmn",'e',4,"è"},{"cmn",'i',4,"ì"},{"cmn",'o',4,"ò"},{"cmn",'u',4,"ù"},
+            {"cmn",'u',6,"ü"},{"cmn",'u',61,"ǖ"},{"cmn",'u',62,"ǘ"},{"cmn",'u',63,"ǚ"},{"cmn",'u',64,"ǜ"},
+
+            {"mri",'a',1,"ā"},{"mri",'e',1,"ē"},{"mri",'i',1,"ī"},{"mri",'o',1,"ō"},{"mri",'u',1,"ū"},
+
+            {"cnr",'c',3,"č"},{"cnr",'s',3,"š"},{"cnr",'z',3,"ž"},{"cnr",'c',2,"ć"},{"cnr",'d',0,"đ"},
+            {"cnr",'s',2,"ś"},{"cnr",'z',2,"ź"},
+
+            {"nor",'o',0,"ø"},{"nor",'a',9,"å"},
+
+            {"pol",'a',8,"ą"},{"pol",'e',8,"ę"},
+            {"pol",'c',2,"ć"},{"pol",'n',2,"ń"},{"pol",'s',2,"ś"},{"pol",'z',2,"ź"},{"pol",'o',2,"ó"},
+            {"pol",'l',0,"ł"},{"pol",'z',33,"ż"},
+
+            {"ron",'a',5,"â"},{"ron",'i',5,"î"},{"ron",'a',3,"ă"},
+
+            {"gla",'a',4,"à"},{"gla",'e',4,"è"},{"gla",'i',4,"ì"},{"gla",'o',4,"ò"},{"gla",'u',4,"ù"},
+
+            {"srp",'c',3,"č"},{"srp",'s',3,"š"},{"srp",'z',3,"ž"},{"srp",'c',2,"ć"},{"srp",'d',0,"đ"},
+
+            {"svk",'a',2,"á"},{"svk",'e',2,"é"},{"svk",'i',2,"í"},{"svk",'o',2,"ó"},{"svk",'u',2,"ú"},
+            {"svk",'y',2,"ý"},{"svk",'a',6,"ä"},{"svk",'o',5,"ô"},{"svk",'l',2,"ĺ"},{"svk",'r',2,"ŕ"},
+            {"svk",'l',3,"ľ"},{"svk",'n',3,"ň"},{"svk",'s',3,"š"},{"svk",'c',3,"č"},{"svk",'z',3,"ž"},
+            {"svk",'t',3,"ť"},{"svk",'d',3,"ď"},
+
+            {"slv",'s',3,"š"},{"slv",'c',3,"č"},{"slv",'z',3,"ž"},
+
+            {"swe",'a',9,"å"},{"swe",'a',6,"ä"},{"swe",'o',6,"ö"},
+
+            {"tgl",'n',7,"ñ"},
+            {"tgl",'a',2,"á"},{"tgl",'e',2,"é"},{"tgl",'i',2,"í"},{"tgl",'o',2,"ó"},{"tgl",'u',2,"ú"},
+
+            {"tur",'g',3,"ğ"},{"tur",'o',6,"ö"},{"tur",'u',6,"ü"},{"tur",'i',0,"ı"},{"tur",'c',8,"ç"},
+            {"tur",'s',8,"ş"},
+
+            {"cym",'a',5,"â"},{"cym",'e',5,"ê"},{"cym",'i',5,"î"},{"cym",'o',5,"ô"},{"cym",'u',5,"û"},
+            {"cym",'w',5,"ŵ"},{"cym",'y',5,"ŷ"},{"cym",'i',6,"ï"},
+
+            {"yor",'e',88,"ẹ"},{"yor",'o',88,"ọ"},{"yor",'s',88,"ṣ"},
+
+            {"fin",'a',6,"ä"},{"fin",'o',6,"ö"},
+
+            {"est",'a',6,"ä"},{"est",'o',6,"ö"},{"est",'u',6,"ü"},{"est",'o',7,"õ"},
+            {"est",'s',3,"š"},{"est",'z',3,"ž"},
         };
         int rows_checked = 0, rows_failed = 0;
         for (const auto& r : rows) {
@@ -733,26 +847,26 @@ int self_test() {
         }
         check(rows_failed == 0, "exhaustive per-language diacritic round trip: " +
                                      std::to_string(rows_checked) + " (letter,digit) pairs across "
-                                     "19 languages");
+                                     "49 languages");
 
         // Pinyin ü + tone: the one case where two diacritic digits chain on
         // a single letter. Verified against the exact examples from the
         // audit that requested this feature.
         auto check_chain = [&](const std::string& word, const std::string& expected_folded) {
-            std::string folded = fold_diacritics(word, "zh");
+            std::string folded = fold_diacritics(word, "cmn");
             check(folded == expected_folded,
                   "pinyin u-tone chain " + word + " -> " + folded);
-            std::string back = fold_diacritics(resubstitute(folded, "zh"), "zh");
+            std::string back = fold_diacritics(resubstitute(folded, "cmn"), "cmn");
             check(back == folded, "pinyin u-tone chain round trip " + word);
         };
-        check_chain(u8"lǜ", "lu64");
-        check_chain(u8"nǚ", "nu63");
-        check_chain(u8"lǖ", "lu61");
-        check_chain(u8"lǘ", "lu62");
+        check_chain("lǜ", "lu64");
+        check_chain("nǚ", "nu63");
+        check_chain("lǖ", "lu61");
+        check_chain("lǘ", "lu62");
         // No non-Chinese language should ever produce a two-digit chain —
         // ü alone (no tone) must stay a plain single-digit "u6" everywhere
         // else.
-        check(fold_diacritics(u8"über", "de") == "u6ber",
+        check(fold_diacritics("über", "deu") == "u6ber",
               "German u with diaeresis does not chain (no tone system)");
     }
 
@@ -822,17 +936,52 @@ void run_batch_mode(const PipelineConfig& cfg) {
     }
 
     size_t n = sequential ? std::min(messages.size(), static_cast<size_t>(entries)) : messages.size();
-    std::string last_lang = "en";
+    std::string last_lang = "eng";
     size_t processed = 0, signoff_added = 0;
+
+    // Fixed-index mode uses the exact same config for every message in the
+    // batch, so the keysheet entry, Machine, and Pipeline are all built
+    // once here rather than rebuilt from scratch (and the file reopened and
+    // rescanned) on every single iteration — Pipeline::run_pass already
+    // rewinds the Machine before each encipher, so one instance is safe to
+    // reuse across repeated encrypt()/decrypt() calls. Sequential mode
+    // genuinely needs a fresh entry per message, so it streams through one
+    // open ifstream instead (entries are read in order, so this costs one
+    // forward scan total rather than one rescan-from-the-top per entry).
+    Settings fixed_settings;
+    std::optional<Machine> fixed_machine;
+    std::optional<Pipeline> fixed_pipe;
+    std::ifstream sequential_stream;
+    if (!sequential) {
+        std::string err;
+        if (!load_keysheet_entry(keysheet, fixed_index, fixed_settings, &err)) { fail(err); return; }
+        fixed_machine.emplace(build_machine(fixed_settings));
+        fixed_pipe.emplace(*fixed_machine, cfg);
+    } else {
+        sequential_stream.open(keysheet);
+    }
 
     for (size_t i = 0; i < n; ++i) {
         int idx = sequential ? static_cast<int>(i) + 1 : fixed_index;
         Settings s;
-        std::string err;
-        if (!load_keysheet_entry(keysheet, idx, s, &err)) { fail(err); continue; }
-
-        Machine m = build_machine(s);
-        Pipeline pipe(m, cfg);
+        std::optional<Machine> seq_machine;
+        std::optional<Pipeline> seq_pipe;
+        Machine* m_ptr;
+        Pipeline* pipe_ptr;
+        if (sequential) {
+            std::string err;
+            if (!load_keysheet_entry_from_stream(sequential_stream, idx, s, &err)) { fail(err); continue; }
+            seq_machine.emplace(build_machine(s));
+            seq_pipe.emplace(*seq_machine, cfg);
+            m_ptr = &*seq_machine;
+            pipe_ptr = &*seq_pipe;
+        } else {
+            s = fixed_settings;
+            m_ptr = &*fixed_machine;
+            pipe_ptr = &*fixed_pipe;
+        }
+        Machine& m = *m_ptr;
+        Pipeline& pipe = *pipe_ptr;
         const Suite& su = suite(s.suite_code);
 
         std::cout << "\n" << BOLD << "  [" << (i + 1) << "/" << n << "] config #" << idx << RST << "\n";
@@ -927,10 +1076,11 @@ int main(int argc, char** argv) {
     while (true) {
         std::cout << "\n  1  run INOP\n"
                   << "  2  maintenance  " << DIM << "(generate wheels or key sheets)" << RST << "\n"
-                  << "  3  quit\n";
+                  << "  3  GUI settings panel  " << DIM << "(experimental, opt-in)" << RST << "\n"
+                  << "  4  quit\n";
         std::string c = ask("choice [1]");
         if (c.empty() || c == "1") break;
-        if (c == "3") { std::cout << DIM << "  closed.\n" << RST; return 0; }
+        if (c == "4") { std::cout << DIM << "  closed.\n" << RST; return 0; }
         if (c == "2") {
             run_generator();
             // a fresh batch may have just been written — pick it up
@@ -938,6 +1088,7 @@ int main(int argc, char** argv) {
             if (more > 0)
                 std::cout << DIM << "  wheel pool now " << more << " loaded wheels" << RST << "\n";
         }
+        if (c == "3") run_gui_settings();
     }
 
     Settings settings;
@@ -1000,7 +1151,7 @@ int main(int argc, char** argv) {
               << RST << "\n\n";
 
     const Alphabet& active_alpha = machine.alphabet();
-    std::string last_lang = "en";
+    std::string last_lang = "eng";
 
     while (true) {
         std::string line = ask("message >");
@@ -1046,13 +1197,13 @@ int main(int argc, char** argv) {
             std::string raw = ask("  ciphertext");
             auto toks = split(raw);
             std::string lang;
-            if (!active.historic_lock && !toks.empty() && toks.back().size() == 2 &&
+            if (!active.historic_lock && !toks.empty() && toks.back().size() == 3 &&
                 is_supported_language(lower(toks.back()))) {
                 lang = lower(toks.back());
                 toks.pop_back();
             }
             std::string clean;
-            for (auto& t : toks) for (char c : lower(t)) clean += c;
+            for (auto& t : toks) for (char c : active_alpha.fold_case(t)) clean += c;
             std::string marker;
             if (cfg.padding) marker = lower(ask("  marker"));
             try {

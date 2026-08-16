@@ -17,6 +17,7 @@ inop_keysheet.txt
 inop.settings
 *.settings
 *.keysheet
+machine_settings/
 
 # ── editor / OS noise ───────────────────────────────────────────────────
 .vscode/

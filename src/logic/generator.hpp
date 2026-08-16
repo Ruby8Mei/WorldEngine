@@ -26,6 +26,12 @@ std::string random_reflector_wiring(const Alphabet& alpha);
 // Never returns an empty string — a notchless rotor collapses the machine.
 std::string random_notches(const Alphabet& alpha, int count);
 
+// One notch-string per rotor, each rotor's count drawn independently in
+// [1, max_notches_per_rotor] rather than one shared count for every rotor —
+// see the .cpp for why this exists alongside random_settings().
+std::vector<std::string> random_variable_notches(const Alphabet& alpha, int rotor_count,
+                                                   int max_notches_per_rotor);
+
 // ── settings generation ─────────────────────────────────────────────────
 
 struct GeneratedSettings {

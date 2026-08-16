@@ -54,6 +54,26 @@ void secure_bytes(uint8_t* buf, size_t n) {
 #endif
 }
 
+namespace {
+// Fisher-Yates shuffling a wheel batch draws once per swap, which used to
+// cost one OS entropy call (BCryptGenRandom/fread) per draw. Buffered in
+// bulk instead, the same batching secure_string() already does below —
+// refilled only when exhausted, not on every single draw.
+uint32_t next_uint32() {
+    static std::vector<uint8_t> pool;
+    static size_t pos = 0;
+    if (pos + 4 > pool.size()) {
+        pool.resize(4096);
+        secure_bytes(pool.data(), pool.size());
+        pos = 0;
+    }
+    uint32_t v = static_cast<uint32_t>(pool[pos]) | (static_cast<uint32_t>(pool[pos + 1]) << 8) |
+                 (static_cast<uint32_t>(pool[pos + 2]) << 16) | (static_cast<uint32_t>(pool[pos + 3]) << 24);
+    pos += 4;
+    return v;
+}
+}  // namespace
+
 uint32_t secure_below(uint32_t bound) {
     if (bound == 0) throw std::invalid_argument("secure_below(0)");
     if (bound == 1) return 0;
@@ -62,10 +82,7 @@ uint32_t secure_below(uint32_t bound) {
     const uint32_t limit = UINT32_MAX - (UINT32_MAX % bound) - 1;
     uint32_t v;
     do {
-        uint8_t b[4];
-        secure_bytes(b, 4);
-        v = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) |
-            (static_cast<uint32_t>(b[2]) << 16) | (static_cast<uint32_t>(b[3]) << 24);
+        v = next_uint32();
     } while (v > limit);
     return v % bound;
 }

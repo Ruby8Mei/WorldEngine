@@ -1,0 +1,31 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "cli",
+      "displayName": "CLI only (no GUI, no vcpkg)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cli",
+      "cacheVariables": {
+        "INOP_WITH_GUI": "OFF",
+        "CMAKE_CXX_COMPILER": "g++.exe"
+      }
+    },
+    {
+      "name": "gui",
+      "displayName": "GUI enabled (MinGW + vcpkg x64-mingw-static)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/gui",
+      "cacheVariables": {
+        "INOP_WITH_GUI": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "CMAKE_CXX_COMPILER": "g++.exe"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "cli", "configurePreset": "cli" },
+    { "name": "gui", "configurePreset": "gui" }
+  ]
+}
