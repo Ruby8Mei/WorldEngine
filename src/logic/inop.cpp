@@ -5,13 +5,8 @@
 
 namespace inop {
 
-// ── Alphabet ────────────────────────────────────────────────────────────
 Alphabet::Alphabet(std::string symbols)
     : symbols_(std::move(symbols)), size_(static_cast<int>(symbols_.size())), idx_(256, -1),
-      // No lowercase letter anywhere in the declared alphabet -> treat this
-      // alphabet as uppercase-oriented (correctly classifies ALPHA38 as
-      // lowercase and Legacy's ALPHA26 as uppercase, without hardcoding
-      // either suite's identity here).
       uppercase_(symbols_.find_first_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos) {
     if (size_ == 0) throw std::invalid_argument("alphabet is empty");
     for (int i = 0; i < size_; ++i) {
@@ -32,7 +27,6 @@ std::string Alphabet::fold_case(const std::string& s) const {
     return out;
 }
 
-// ── Rotor ───────────────────────────────────────────────────────────────
 Rotor::Rotor(std::string name, std::string wiring, std::string notches, const Alphabet& alpha)
     : name_(std::move(name)), size_(alpha.size()) {
     if (static_cast<int>(wiring.size()) != size_)
@@ -49,7 +43,7 @@ Rotor::Rotor(std::string name, std::string wiring, std::string notches, const Al
     for (int i = 0; i < size_; ++i)
         fwd_[static_cast<size_t>(i)] = static_cast<uint8_t>(alpha.index(wiring[static_cast<size_t>(i)]));
     for (int i = 0; i < size_; ++i)
-        rev_[fwd_[static_cast<size_t>(i)]] = static_cast<uint8_t>(i);  // invert directly, O(n)
+        rev_[fwd_[static_cast<size_t>(i)]] = static_cast<uint8_t>(i);
 
     notch_.assign(static_cast<size_t>(size_), false);
     set_notches(notches, alpha);
@@ -96,7 +90,6 @@ std::string Rotor::notch_str(const Alphabet& alpha) const {
     return out;
 }
 
-// ── Reflector ───────────────────────────────────────────────────────────
 Reflector::Reflector(std::string name, std::string wiring, const Alphabet& alpha)
     : name_(std::move(name)), size_(alpha.size()) {
     if (static_cast<int>(wiring.size()) != size_)
@@ -127,7 +120,6 @@ Reflector::Reflector(std::string name, std::string wiring, const Alphabet& alpha
     }
 }
 
-// ── Plugboard ───────────────────────────────────────────────────────────
 Plugboard::Plugboard(const std::vector<std::string>& pairs, const Alphabet& alpha)
     : pairs_(pairs) {
     const int size = alpha.size();
@@ -152,7 +144,6 @@ Plugboard::Plugboard(const std::vector<std::string>& pairs, const Alphabet& alph
     }
 }
 
-// ── Machine ─────────────────────────────────────────────────────────────
 Machine::Machine(const Alphabet& alpha, std::vector<Rotor> rotors, Reflector reflector,
                  Plugboard plugboard, const std::vector<int>& rings, const std::string& master_key,
                  bool legacy_stepping)
@@ -184,16 +175,8 @@ void Machine::set_key(const std::string& master_key) {
     reflector_.rotate_to(master_key.back(), alpha_);
 }
 
-// Stepping happens BEFORE the signal is sent, exactly as on the real machine.
 void Machine::step_rotors() const {
     if (legacy_double_step_) {
-        // Historic three-rotor behaviour, including the double step:
-        // rotors_[0] is leftmost, rotors_[2] is the fast rotor. Middle can
-        // step for two different reasons on one keypress: right carried into
-        // it (step_left is false, normal single step), or middle is itself
-        // on notch (step_left true) — in which case middle steps AGAIN on
-        // top of forcing left to step. That second case is the actual
-        // "double step" anomaly, not just a name for the whole branch.
         Rotor& left = rotors_[0];
         Rotor& middle = rotors_[1];
         Rotor& right = rotors_[2];
@@ -205,8 +188,6 @@ void Machine::step_rotors() const {
         if (step_mid) middle.step();
         if (step_left) left.step();
     } else {
-        // Generic odometer cascade: always advance the fast rotor, and carry
-        // leftward for as long as each stepped rotor lands on a notch.
         for (size_t i = rotors_.size(); i-- > 0;) {
             if (!rotors_[i].step()) break;
         }
@@ -225,11 +206,6 @@ std::string Machine::encipher(const std::string& text) const {
     for (size_t k = 0; k < text.size(); ++k) {
         step_rotors();
 
-        // Each rotor keeps a pointer to the table row for its current
-        // offset, updated only when it actually moves.
-        // Unchecked: text reaching here has already been through
-        // preprocess() (or is prior ciphertext this same alphabet
-        // produced), so every symbol's membership is already guaranteed.
         int sig = pb[alpha_.index_unchecked(text[k])];
         for (int i = n - 1; i >= 0; --i) sig = rotors_[static_cast<size_t>(i)].fwd_table()[sig];
         sig = reflector_.table()[sig];
@@ -239,4 +215,5 @@ std::string Machine::encipher(const std::string& text) const {
     return out;
 }
 
-}  // namespace inop
+}
+

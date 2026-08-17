@@ -14,7 +14,6 @@
 namespace inop {
 namespace {
 
-// Fisher-Yates driven by the OS entropy source, not rand().
 template <typename T>
 void secure_shuffle(std::vector<T>& v) {
     for (size_t i = v.size(); i > 1; --i) {
@@ -23,8 +22,6 @@ void secure_shuffle(std::vector<T>& v) {
     }
 }
 
-// "Copy the alphabet into a vector and shuffle it" was written out
-// separately at every call site below — one shared helper instead.
 std::vector<char> shuffled_alphabet(const std::string& alphabet) {
     std::vector<char> v(alphabet.begin(), alphabet.end());
     secure_shuffle(v);
@@ -42,7 +39,6 @@ std::string ask(const std::string& prompt, const std::string& def) {
     size_t b = line.find_last_not_of(" \t\r\n");
     std::string trimmed = line.substr(a, b - a + 1);
 
-    // Leading ':' disambiguates from a legitimate bare "q" answer elsewhere.
     std::string low = trimmed;
     for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (low == ":q" || low == ":quit" || low == ":exit") {
@@ -63,11 +59,6 @@ int ask_int(const std::string& prompt, int def, int lo, int hi) {
     }
 }
 
-// allow_legacy=false is for the rotor/reflector wheel generator specifically
-// — Legacy's wheels are the fixed historical set (I-VII / A-B-C), never
-// machine-generated, so it must never even be offered there. Keysheet
-// generation (gen_settings()) still allows Legacy: randomizing rings/
-// plugboard/key against its existing fixed wheels is legitimate.
 const Suite& ask_suite(bool allow_legacy = true) {
     while (true) {
         std::string prompt = allow_legacy ? "suite (26 = Legacy, 38 = INOP-38)" : "suite (38 = INOP-38)";
@@ -81,13 +72,8 @@ const Suite& ask_suite(bool allow_legacy = true) {
     }
 }
 
-}  // namespace
+}
 
-// ── generation primitives ───────────────────────────────────────────────
-// A wiring that is a pure rotation of the alphabet is a shift cipher, which
-// is what a dead RNG produces. Reject it rather than ship it. Shares the
-// rotation check with registry.cpp's load-time validator so the two can
-// never diverge again.
 std::string random_rotor_wiring(const Alphabet& alpha) {
     std::vector<char> v = shuffled_alphabet(alpha.str());
     std::string w(v.begin(), v.end());
@@ -114,19 +100,12 @@ std::string random_reflector_wiring(const Alphabet& alpha) {
 }
 
 std::string random_notches(const Alphabet& alpha, int count) {
-    if (count < 1) count = 1;  // a notchless rotor gives the machine a period of 38
+    if (count < 1) count = 1;
     if (count > alpha.size()) count = alpha.size();
     std::vector<char> v = shuffled_alphabet(alpha.str());
     return std::string(v.begin(), v.begin() + count);
 }
 
-// Per-rotor notch counts drawn independently in [1, max_notches_per_rotor]
-// each — not one shared count applied to every rotor — while still pulling
-// every symbol from one shuffled pool so no two rotors can ever land on
-// the same notch symbol. Used by callers that want each rotor to look like
-// an independent pick (the GUI's single-click "Generate Setup") rather
-// than random_settings()'s one-fixed-count-for-everyone contract (what the
-// CLI's interactive prompts ask for).
 std::vector<std::string> random_variable_notches(const Alphabet& alpha, int rotor_count,
                                                    int max_notches_per_rotor) {
     int cap = max_notches_per_rotor < 1 ? 1 : max_notches_per_rotor;
@@ -136,9 +115,6 @@ std::vector<std::string> random_variable_notches(const Alphabet& alpha, int roto
     for (int i = 0; i < rotor_count; ++i) {
         int rotors_left = rotor_count - i;
         size_t remaining = pool.size() - used;
-        // Reserve at least 1 symbol for every rotor still to come after
-        // this one, so an early greedy draw can never starve a later rotor
-        // of its mandatory minimum.
         size_t max_for_this = remaining - static_cast<size_t>(rotors_left - 1);
         int this_cap = std::min(cap, static_cast<int>(max_for_this));
         if (this_cap < 1)
@@ -151,7 +127,6 @@ std::vector<std::string> random_variable_notches(const Alphabet& alpha, int roto
     return result;
 }
 
-// ── settings generation ─────────────────────────────────────────────────
 GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
                                    int notches_per_rotor) {
     if (rotor_count < s.min_rotors || rotor_count > s.max_rotors)
@@ -163,26 +138,19 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
     GeneratedSettings g;
     g.suite_code = s.code;
 
-    // rotors: distinct, in a random order
     std::vector<std::string> pool = available_rotors(s);
     if (static_cast<int>(pool.size()) < rotor_count)
         throw std::runtime_error("not enough rotors available for this suite — generate a batch first");
     secure_shuffle(pool);
     g.rotors.assign(pool.begin(), pool.begin() + rotor_count);
 
-    // reflector
     std::vector<std::string> refl = available_reflectors(s);
     if (refl.empty()) throw std::runtime_error("no reflectors available for this suite");
     g.reflector = refl[secure_below(static_cast<uint32_t>(refl.size()))];
 
-    // rings
     for (int i = 0; i < rotor_count; ++i)
         g.rings.push_back(static_cast<int>(secure_below(static_cast<uint32_t>(alpha.size()))) + 1);
 
-    // notches — legacy wheels carry historic ones, so leave those alone.
-    // Drawn from one shuffled pool for the whole machine, not one shuffle
-    // per rotor, so no two rotors can ever land on the same notch symbol —
-    // a notch shared across rotors measurably shrinks keyspace.
     if (s.notches_are_fixed) {
         for (int i = 0; i < rotor_count; ++i) g.notches.push_back(std::string());
     } else {
@@ -199,7 +167,6 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
         }
     }
 
-    // plugboard: draw distinct symbols, pair them off
     if (plug_pairs > 0) {
         std::vector<char> v = shuffled_alphabet(s.alphabet);
         int usable = std::min(plug_pairs, alpha.size() / 2);
@@ -224,16 +191,14 @@ std::string settings_to_text(const GeneratedSettings& g) {
     return o.str();
 }
 
-// ── menu actions ────────────────────────────────────────────────────────
 namespace {
 
 void gen_wheels(bool rotors) {
-    const Suite& s = ask_suite(/*allow_legacy=*/false);
+    const Suite& s = ask_suite(false);
     Alphabet alpha(s.alphabet);
     const char* what = rotors ? "rotors" : "reflectors";
 
     int count = ask_int(std::string("how many ") + what, rotors ? 50 : 10, 1, 500);
-    // 'G' for generated, so a batch does not silently shadow a factory wheel
     std::string prefix = ask("name prefix", rotors ? "G" : "GX");
     int start = ask_int("first number", 1, 0, 100000);
 
@@ -272,8 +237,6 @@ void gen_wheels(bool rotors) {
     std::cout << "  " << count << " " << what << " " << (append ? "appended to " : "written to ")
               << path << "\n";
 
-    // Pull them into the live pool now, so a settings batch generated in this
-    // same session can actually draw on them.
     int loaded = load_wheel_file(path);
     std::cout << "  " << loaded << " wheels now in the pool ("
               << available_rotors(s).size() << " rotors, "
@@ -290,8 +253,6 @@ void gen_settings() {
     if (!s.notches_are_fixed && notch_n > 1)
         std::cout << "  note: 1 notch per rotor gives the longest period; more shortens it\n";
 
-    // rotor count: fixed suites (Legacy) have nothing to ask; a ranged suite
-    // (INOP-38) lets the operator pin one count or draw a fresh one per entry.
     bool random_count = false;
     int fixed_count = s.min_rotors;
     if (s.min_rotors == s.max_rotors) {
@@ -338,10 +299,9 @@ void gen_settings() {
     }
 }
 
-}  // namespace
+}
 
 void run_generator() {
-    // Never generate key material without proving the RNG is alive first.
     try {
         entropy_self_check();
     } catch (const std::exception& e) {
@@ -364,4 +324,5 @@ void run_generator() {
     }
 }
 
-}  // namespace inop
+}
+

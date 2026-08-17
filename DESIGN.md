@@ -46,7 +46,7 @@ one key, and should not use it for anything real.
 ## 3. Suites
 
 | Suite | Alphabet | Rotors | Purpose |
-|-------|----------|--------|---------|
+| --- | --- | --- | --- |
 | Legacy | 26 | 3 (fixed) | Faithful 1939 Enigma. Reference implementation and regression test. |
 | INOP-38 | 38 | 5-10 | The actual machine. The operator picks the count once per session, first thing, before rings, notches or the master key are asked for — those all follow from it. |
 
@@ -57,12 +57,11 @@ correctness check against the historic vector `BDZGOWCXLTKS` (rotors I II
 III, reflector B, rings 01, key `AAA`, twelve presses of `A`). The alphabet
 itself is **uppercase** — matching the convention the original wiring
 tables and traffic were always published in — unlike INOP-38, whose
-lowercase/numeral-suffix scheme (see the README's numeral-suffix section for
-why) is a feature Legacy never touches at all. Rotor/reflector/suite names
-like `I`, `B`, `26` are identifiers, not alphabet symbols, and keep whatever
-case they've always had.
+lowercase/numeral-suffix scheme (see section 9 for why) is a feature Legacy
+never touches at all. Rotor/reflector/suite names like `I`, `B`, `26` are
+identifiers, not alphabet symbols, and keep whatever case they always had.
 
-**Legacy's master key is 3 symbols, not 4**: one window letter per rotor, with
+**Legacys master key is 3 symbols, not 4**: one window letter per rotor, with
 no orientation symbol. The historic reflector does not rotate — it is fixed
 at position 0, not merely defaulted there. A 4-symbol key from an older sheet
 still loads; the trailing symbol is ignored with a notice rather than
@@ -70,7 +69,7 @@ rejected outright, so old key sheets do not stop working. See
 `verify_legacy_integrity()` in section 6.
 
 Its limitations are the *point*. A Legacy machine silently drops digits from a
-message, which is precisely why INOP-38's alphabet exists.
+message, which is precisely why INOP-38s alphabet exists.
 
 ## 4. Deliberate decisions — do not "fix" these
 
@@ -84,13 +83,13 @@ detection. Rotor machines had none. Out of scope.
 a password. Running it through PBKDF2 would be a category error.
 
 **Ciphertext length tracks message length.** Padding scales with the message,
-so length leaks for messages beyond about 30 symbols. Accepted. Padding's
+so length leaks for messages beyond about 30 symbols. Accepted. Paddings
 purpose here is cover traffic and boundary hiding, not length hiding. (Below
 ~16 symbols the noise floor does bucket messages to a uniform 112.)
 
-**Corrupting a marker destroys the message.** 32 of a typical ciphertext's
+**Corrupting a marker destroys the message.** 32 of a typical ciphertexts
 symbols are single points of failure, about 15%. Accepted; the operational
-answer is retransmission under the day's backup settings, ideally reworded or
+answer is retransmission under the days backup settings, ideally reworded or
 in another language.
 
 **Legacy silently drops symbols outside its alphabet.** Historically accurate
@@ -129,14 +128,14 @@ an operator typing.
 ## 5. Decisions with non-obvious rationale
 
 **The double pass** (encipher → reverse → encipher from a rewound state) is
-the single most important line in the pipeline. Enigma's reflector guarantees
+the single most important line in the pipeline. Enigmas reflector guarantees
 a letter never enciphers to itself, which is what let Bletchley crib-drag. The
 reversal makes ciphertext position *i* depend on plaintext position *L−1−i*,
 destroying that guarantee while keeping the whole-message map self-inverse.
 Removing the reversal turns the double pass into an identity function.
 
 **Daily wheel regeneration** is the other structural defence. Bletchley never
-had to solve Enigma's wiring — the Poles obtained it in 1932, and every
+had to solve Enigmas wiring — the Poles obtained it in 1932, and every
 technique afterwards assumed it as a known constant. Regenerating wheels daily
 removes that constant, which is why a bombe has nothing to grip.
 
@@ -195,13 +194,13 @@ and `*.settings` are in `.gitignore`.
 Genuine, unresolved, and welcome:
 
 1. **Reflector motion adds no period.** It advances once per character, as does
-   the fast rotor, so its position is pinned to the fast rotor's and adds no
+   the fast rotor, so its position is pinned to the fast rotors and adds no
    state. Fixes: give it its own counter on a modulus coprime to 38 (37 gives
    ×37), or nest it at the end of the odometer. Its *starting* orientation is
    real key material either way.
 2. **The master key is reused for a whole session.** Every message sent under
    one key is in depth with every other. A per-message indicator protocol is
-   the right fix. This is the owner's decision and is deliberately unassigned.
+   the right fix. This is the owners decision and is deliberately unassigned.
 
 Resolved since the last pass, kept here for history:
 
@@ -210,15 +209,15 @@ Resolved since the last pass, kept here for history:
   full stop. Neither a blank answer nor `-` is accepted. This matches the
   floor `random_notches()` already enforced on the generator side (`if
   (count < 1) count = 1`) — a notch-less rotor never lands on a notch, so it
-  never advances the rotor to its left, which collapses the whole machine's
+  never advances the rotor to its left, which collapses the whole machines
   period the same way a fixed rotor would. `-` still means "none" when
   *displayed* (`save_settings`, the settings display) for suites whose
-  wheels carry no notches at all (Legacy's historic wheels), and a
+  wheels carry no notches at all (Legacys historic wheels), and a
   zero-notch rotor loaded from a hand-edited settings file or key sheet
   still builds — this fix is specifically about the interactive prompt not
   being able to produce one by accident.
 - ~~Digits in Legacy~~ — the per-language lookup table now exists
-  (`src/logic/languages.cpp`), exactly as anticipated: it's prep-layer only,
+  (`src/logic/languages.cpp`), exactly as anticipated: its prep-layer only,
   gated to INOP-38, and never touches Legacy. Legacy keeps the historical
   convention (`NULL EINS ZWEI …`, or simply dropping digits) as its only
   option, unchanged.
@@ -228,8 +227,8 @@ Resolved since the last pass, kept here for history:
 Accepted or open, but already identified — no need to report these again:
 
 - `Machine::encipher` is `const` while mutating `mutable` rotor state.
-- `rng.cpp`'s POSIX branch holds a static `FILE*` that is never closed and is
-  not thread-safe. Single-threaded program.
+- The POSIX branch in `rng.cpp` holds a static `FILE*` that is never closed
+  and is not thread-safe. Single-threaded program.
 - `std::exit()` inside `ask()` bypasses destructors.
 - `main.cpp` is long and could be split.
 - `carve()` (pipeline.cpp) uses `find`/`rfind`; a marker sequence occurring by
@@ -246,7 +245,7 @@ letter folds to its base letter followed by a digit naming which mark it
 carried.
 
 | Digit | Diacritic | Examples |
-|---|---|---|
+| --- | --- | --- |
 | 1 | macron | ā → a1 |
 | 2 | acute | á → a2, ć → c2, ĺ → l2 |
 | 3 | caron (also reused for breve) | ǎ → a3, ň → n3, ğ → g3, ă → a3 |
@@ -322,12 +321,14 @@ INOP will never:
 **The graphical interface is a deliberate, bounded exception, not a
 reversal of this section.** The terminal remains the primary, complete
 interface — it has zero dependencies beyond a compiler and works exactly
-as it always has. The optional `INOP_WITH_GUI` build adds a single
-settings-panel window (GLFW + raw OpenGL + stb_truetype, opt-in via a
-terminal menu option) once GLFW became reliably buildable on the
-operator's machine. It does not touch the cipher core, does not change
-what a CLI-only build depends on, and does not open the door to a general
-GUI framework — see `src/interface/gui.hpp`'s header comment and the
-GUI-specific files under `src/interface/gui_*` for the boundary.
+as it always has. The optional `INOP_WITH_GUI` build adds a GLFW + raw
+OpenGL + stb_truetype interface (opt-in via a terminal menu option) once
+GLFW became reliably buildable on the operators machine. It opens on a
+main menu (Open INOP, Maintenance, Settings, Exit) that leads to the Setup
+screen — the machine-configuration panel that was this exceptions original
+scope — with Maintenance and Settings still stubs pending further screens.
+It does not touch the cipher core, does not change what a CLI-only build
+depends on, and does not open the door to a general GUI framework — see
+the GUI-specific files under `src/interface/gui_*` for the boundary.
 
 The category is the achievement. A better rotor machine, not a modern one.

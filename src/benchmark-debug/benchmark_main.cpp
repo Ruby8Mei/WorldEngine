@@ -1,12 +1,3 @@
-// benchmark_main.cpp — combinatorial correctness/timing harness.
-//
-// Scoped to the benchmark/test suite ONLY: every test case is a fully
-// independent encrypt/decrypt job with its own rotor state, which is what
-// makes this workload embarrassingly parallel across messages (never
-// within one message — rotor stepping is sequential by design). See
-// GPU_FEASIBILITY.md. This file must never be wired into the live message
-// pipeline in main.cpp, which is intentionally kept at human-operator
-// speed.
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -30,12 +21,12 @@ using namespace inop;
 namespace {
 
 struct Args {
-    std::vector<std::string> languages;  // empty == all
-    int configs = 3;    // x: independent configs per (language, category)
-    int messages = 3;   // x: messages per config
+    std::vector<std::string> languages;
+    int configs = 3;
+    int messages = 3;
     std::string out = "log.txt";
     std::string corpus_dir = "benchmark/corpus";
-    std::string hamlet;  // path to a Hamlet corpus file; empty == skip
+    std::string hamlet;
 };
 
 std::string next_val(int& i, int argc, char** argv) {
@@ -77,7 +68,6 @@ Args parse_args(int argc, char** argv) {
     return a;
 }
 
-// ── message categories ──────────────────────────────────────────────────
 
 const char* CATEGORIES[] = {"same_char", "alternating", "cyclic", "jumbled",
                              "real_message", "repeated_phrase", "edge_case"};
@@ -101,7 +91,7 @@ std::string cat_alternating(std::mt19937& rng, int len) {
 std::string cat_cyclic(std::mt19937& rng, int len) {
     static const std::string alpha = "abcdefghijklmnopqrstuvwxyz";
     std::string cycle;
-    int n = 5 + static_cast<int>(rng() % 4);  // 5-8 symbol cycle
+    int n = 5 + static_cast<int>(rng() % 4);
     for (int i = 0; i < n; ++i) cycle += alpha[rng() % alpha.size()];
     std::string out;
     out.reserve(static_cast<size_t>(len));
@@ -142,8 +132,6 @@ std::map<std::string, std::string>& corpus_cache() {
     return c;
 }
 
-// Empty string if no corpus file exists for this language — callers skip
-// the real_message category in that case rather than fabricating text.
 const std::string& load_corpus(const std::string& lang, const std::string& dir) {
     auto it = corpus_cache().find(lang);
     if (it != corpus_cache().end()) return it->second;
@@ -188,7 +176,7 @@ Machine machine_from_generated(const GeneratedSettings& g) {
     return build_machine(s);
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
     Args args = parse_args(argc, argv);
@@ -204,7 +192,7 @@ int main(int argc, char** argv) {
            "failure_detail\n";
 
     const Suite& su = suite("38");
-    PipelineConfig cfg;  // defaults: double pass + padding + moving reflector on
+    PipelineConfig cfg;
 
     std::mt19937 rng(0xC0FFEE);
     long long test_id = 0;
@@ -219,7 +207,7 @@ int main(int argc, char** argv) {
 
         for (const char* category : CATEGORIES) {
             std::string cat = category;
-            if (cat == "real_message" && corpus.empty()) continue;  // nothing to test with
+            if (cat == "real_message" && corpus.empty()) continue;
 
             std::vector<std::string> edges;
             if (cat == "edge_case") edges = edge_cases();
@@ -271,17 +259,10 @@ int main(int argc, char** argv) {
                         double total_s = (r.encrypt_us + r.decrypt_us) / 1e6;
                         r.chars_per_sec = total_s > 0 ? static_cast<double>(r.chars_processed) / total_s : 0.0;
 
-                        // Pipeline::decrypt() maps SPACE_SUB back to a real
-                        // space before returning — mirror that here, or
-                        // every message with a space in it "fails".
                         std::string expected = preprocess(folded, alpha);
                         std::replace(expected.begin(), expected.end(), SPACE_SUB, ' ');
                         bool exact = back == expected;
 
-                        // resubstitute() strips literal-digit '/' markers for
-                        // human readability (by design — see README), so
-                        // reproducing `back` needs mark_literal_digits() run
-                        // again too, not just fold_diacritics() alone.
                         std::string human = resubstitute(back, lang);
                         bool roundtrip = fold_diacritics(mark_literal_digits(human), lang) == back;
 
@@ -346,3 +327,4 @@ int main(int argc, char** argv) {
 
     return failed > 0 ? 1 : 0;
 }
+

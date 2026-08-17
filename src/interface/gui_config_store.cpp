@@ -24,16 +24,10 @@ const std::string kDir = "setup";
 
 void ensure_dir() {
 #if defined(_WIN32)
-    CreateDirectoryA(kDir.c_str(), nullptr);  // no-op if it already exists
+    CreateDirectoryA(kDir.c_str(), nullptr);
 #endif
 }
 
-// Bumped by every successful save_config()/delete_config() — lets
-// list_configs() skip the FindFirstFileA/FindNextFileA walk + re-sort on
-// every call. The Load/Overwrite tile panel calls this once per rendered
-// frame for as long as it's open just to browse/scroll it, so without this
-// the same directory gets re-read 60x/sec for a listing that only actually
-// changes on an explicit Save/Create/Delete.
 int g_dir_generation = 0;
 int g_dir_cache_gen = -1;
 std::vector<SavedConfigInfo> g_dir_cache;
@@ -69,10 +63,6 @@ nlohmann::json to_json(const PanelState& s) {
     return j;
 }
 
-// Best-effort peek at just the suite_code field, for categorizing a tile
-// without running full load_config() validation — a file that's otherwise
-// corrupted should still show up somewhere; clicking it still surfaces the
-// usual corruption popup.
 std::string peek_suite_code(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return "";
@@ -85,7 +75,7 @@ std::string peek_suite_code(const std::string& path) {
     }
 }
 
-}  // namespace
+}
 
 const std::vector<DeveloperPreset>& developer_presets() {
     static const std::vector<DeveloperPreset> v = {};
@@ -145,7 +135,7 @@ std::string suggest_filename(const PanelState& state) {
 
     for (int n = 1; n <= kMaxSavedPerSuite; ++n)
         if (!taken[n]) return prefix + "-" + std::to_string(n) + ".json";
-    return "";  // every INOP-x/Enigma-x slot in [1, kMaxSavedPerSuite] is taken
+    return "";
 }
 
 bool save_config(const PanelState& state, const std::string& filename, std::string* error) {
@@ -249,5 +239,6 @@ bool delete_config(const std::string& path, std::string* error) {
 #endif
 }
 
-}  // namespace gui
-}  // namespace inop
+}
+}
+

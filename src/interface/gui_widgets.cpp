@@ -11,7 +11,7 @@ bool rect_contains(const Rect& r, double mx, double my) {
 
 namespace {
 
-const void* g_focus = nullptr;       // identity of the std::string* being edited
+const void* g_focus = nullptr;
 bool g_click_consumed_this_frame = false;
 
 struct PendingDropdown {
@@ -23,17 +23,12 @@ struct PendingDropdown {
 };
 PendingDropdown g_pending;
 
-// Scroll offset (pixels) for whichever dropdown popup is currently open.
-// Reset to 0 whenever a *different* dropdown becomes the open one, so
-// switching from a long rotor-picker list to another dropdown never
-// starts mid-scrolled. Only one popup is ever open at a time, so a single
-// shared offset (rather than one per dropdown id) is enough.
 float g_popup_scroll = 0.0f;
 int g_popup_scroll_owner = -1;
 
 const float PAD = 6.0f;
 
-}  // namespace
+}
 
 void begin_widget_frame() {
     g_click_consumed_this_frame = false;
@@ -51,12 +46,12 @@ Color border() { return rgba(0.32f, 0.32f, 0.36f); }
 Color border_invalid() { return rgba(0.75f, 0.30f, 0.28f); }
 Color text() { return rgba(0.92f, 0.92f, 0.90f); }
 Color text_dim() { return rgba(0.58f, 0.58f, 0.60f); }
-Color accent() { return rgba(0.78f, 0.60f, 0.28f); }  // brass/amber
+Color accent() { return rgba(0.78f, 0.60f, 0.28f); }
 Color disabled_bg() { return rgba(0.16f, 0.16f, 0.17f); }
 Color disabled_text() { return rgba(0.40f, 0.40f, 0.42f); }
 Color error_bg() { return rgba(0.30f, 0.12f, 0.12f); }
 Color error_text() { return rgba(0.92f, 0.70f, 0.70f); }
-}  // namespace palette
+}
 
 void label(const Rect& r, const std::string& text, bool dim, Font font) {
     float ty = r.y + (r.h + text_line_height(font) * 0.7f) * 0.5f;
@@ -156,7 +151,7 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
 bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t max_len,
                     bool enabled, bool invalid, bool center_text) {
     return text_field(r, value, in, "0123456789", max_len, enabled, invalid,
-                       CaseFold::None, /*placeholder=*/"", center_text);
+                       CaseFold::None, "", center_text);
 }
 
 bool dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
@@ -212,16 +207,10 @@ void draw_open_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
     draw_rect_outline(popup.x, popup.y, popup.w, popup.h, palette::accent());
 
     bool clicked_inside = false;
-    // Rows are only skipped when *entirely* outside the popup — a row
-    // scrolled by a fraction of its height is still partially inside and
-    // must draw, but without a scissor clip that partial draw renders at
-    // full size and bleeds past the popup's own edges into whatever sits
-    // just above/below it (the closed box itself, or the next widget
-    // down). begin_scissor crops that overflow to the popup rect.
     begin_scissor(popup.x, popup.y, popup.w, popup.h);
     for (size_t i = 0; i < options.size(); ++i) {
         float row_y = popup.y + row_h * static_cast<float>(i) - g_popup_scroll;
-        if (row_y + row_h < popup.y || row_y > popup.y + popup.h) continue;  // fully scrolled off-screen
+        if (row_y + row_h < popup.y || row_y > popup.y + popup.h) continue;
 
         Rect row{popup.x, row_y, popup.w, row_h};
         bool hovered = rect_contains(row, in.mouse_x, in.mouse_y) && rect_contains(popup, in.mouse_x, in.mouse_y);
@@ -236,18 +225,16 @@ void draw_open_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
     end_scissor();
 
     if (max_scroll > 0.0f) {
-        // A minimal scrollbar thumb on the right edge — enough to signal
-        // "there's more below" without a full scrollbar widget.
         float thumb_h = std::max(12.0f, popup.h * (list_h / (static_cast<float>(options.size()) * row_h)));
         float thumb_y = popup.y + (popup.h - thumb_h) * (g_popup_scroll / max_scroll);
         draw_rect(popup.x + popup.w - 4, thumb_y, 3, thumb_h, palette::accent());
     }
 
     if (in.mouse_pressed && !clicked_inside && !rect_contains(g_pending.box, in.mouse_x, in.mouse_y)) {
-        // Click landed outside the box and outside the popup — close it.
         if (!rect_contains(popup, in.mouse_x, in.mouse_y)) open_dropdown_id = -1;
     }
 }
 
-}  // namespace gui
-}  // namespace inop
+}
+}
+

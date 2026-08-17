@@ -24,8 +24,6 @@ int index_of(const std::vector<std::string>& v, const std::string& s) {
     return -1;
 }
 
-// A lighter-weight clickable text button than the generic filled button()
-// widget, drawn in the Wordmark font — used only for the "INOP" wordmark.
 bool wordmark_button(const Rect& r, const GuiInput& in) {
     bool hovered = rect_contains(r, in.mouse_x, in.mouse_y);
     if (hovered) draw_rect(r.x, r.y, r.w, r.h, palette::panel());
@@ -34,14 +32,10 @@ bool wordmark_button(const Rect& r, const GuiInput& in) {
     return hovered && in.mouse_pressed;
 }
 
-// Dropdowns default to stretching across whatever column they're laid out
-// in, but their actual values (rotor/reflector names, suite/language
-// labels) are all short — sizing the box to the longest current option
-// (clamped to a sane range) avoids a mostly-empty oversized container.
 float dropdown_content_width(const std::vector<std::string>& options, float min_w, float max_w) {
     float w = min_w;
     for (const auto& s : options) {
-        float tw = text_width(Font::Body, s) + 34.0f;  // padding + the v/^ arrow indicator
+        float tw = text_width(Font::Body, s) + 34.0f;
         if (tw > w) w = tw;
     }
     return w > max_w ? max_w : w;
@@ -61,7 +55,7 @@ void log_next_clicked(const PanelState& state) {
               << " master_key_len=" << state.master_key_text.size() << "\n";
 }
 
-}  // namespace
+}
 
 std::string plug_pair(const PanelState& state, int slot) {
     return state.plug_left[slot] + state.plug_right[slot];
@@ -73,7 +67,6 @@ std::string notch_text(const RotorRow& row) {
     return s;
 }
 
-// ── validation ──────────────────────────────────────────────────────────
 
 FieldValidity derive_validity(const PanelState& state) {
     FieldValidity v;
@@ -118,13 +111,8 @@ FieldValidity derive_validity(const PanelState& state) {
 
         bool notch_ok;
         if (su.notches_are_fixed) {
-            notch_ok = true;  // historic wheels carry their own notches — nothing to type
+            notch_ok = true;
         } else {
-            // At least one of the three boxes must be filled — any single
-            // one counts (box 2 alone is just as valid a one-notch rotor
-            // as box 0 alone); the other two are simply optional extra
-            // notch symbols. A gap (box 0 and 2 filled, box 1 empty) is
-            // fine too — notch_text() just concatenates whatever's filled.
             notch_ok = !row.notch_box[0].empty() || !row.notch_box[1].empty() ||
                        !row.notch_box[2].empty();
             if (notch_ok) {
@@ -137,13 +125,6 @@ FieldValidity derive_validity(const PanelState& state) {
         v.notch_ok[i] = notch_ok;
     }
 
-    // A notch symbol may be used at most once anywhere in the active set —
-    // not just within one rotor's own three boxes (a rotor can't sensibly
-    // notch on the same letter twice) but across different rotors too
-    // (two rotors sharing a notch measurably shrinks the keyspace and
-    // opens a cryptanalytic angle, not just a UX nicety). Counted globally
-    // rather than per-row so both "same rotor" and "different rotor"
-    // collisions are caught the same way.
     if (!su.notches_are_fixed) {
         int notch_count[256] = {};
         for (int i = 0; i < state.rotor_count; ++i)
@@ -163,8 +144,6 @@ FieldValidity derive_validity(const PanelState& state) {
                      std::find(avail_reflectors.begin(), avail_reflectors.end(), state.reflector_name) !=
                          avail_reflectors.end();
 
-    // Live per-slot scan (highlighting only) plus the authoritative gate:
-    // constructing a real Plugboard, exactly like the CLI does.
     std::vector<std::string> active_pairs;
     bool used[256] = {};
     for (int i = 0; i < kMaxPlugSlots; ++i) {
@@ -212,14 +191,6 @@ void apply_toggle_lock(PanelState& state) {
 }
 
 void on_suite_changed(PanelState& state) {
-    // A full purge, not a selective "clear only what's now invalid" pass —
-    // switching machines mid-edit should feel like starting fresh for the
-    // new suite, not leave behind e.g. INOP-38-only digit/# notch and
-    // plugboard characters that just show up as validation errors against
-    // the new suite's smaller alphabet. Loading a saved file already
-    // replaces the whole PanelState wholesale (see on_load_tile_picked) —
-    // this makes a manual suite switch behave the same way, rather than
-    // trying to carry over whatever happens to still be valid.
     std::string suite_code = state.suite_code;
     std::string language_code = state.language_code;
     state = PanelState{};
@@ -230,10 +201,6 @@ void on_suite_changed(PanelState& state) {
     if (state.rotor_count < su.min_rotors) state.rotor_count = su.min_rotors;
     if (state.rotor_count > su.max_rotors) state.rotor_count = su.max_rotors;
 
-    // Toggles are a spectrum entirely within INOP-38; switching TO Legacy
-    // forces them off (apply_suite_lock) — switching back to INOP-38 needs
-    // no equivalent step since the fresh PanelState{} above already carries
-    // PipelineConfig{}'s true/true/true defaults.
     if (su.historic_lock) apply_toggle_lock(state);
 }
 
@@ -246,7 +213,6 @@ bool master_key_valid(const PanelState& state, const FieldValidity& validity) {
     return true;
 }
 
-// ── panel ───────────────────────────────────────────────────────────────
 
 SetupPanel::SetupPanel() {
     for (int i = 0; i < kMaxRotors; ++i) rotor_pick_idx_[i] = -1;
@@ -283,7 +249,7 @@ void SetupPanel::sync_state_from_indices() {
         if (new_suite != state_.suite_code) {
             state_.suite_code = new_suite;
             on_suite_changed(state_);
-            return;  // suite change already re-clamped/cleared everything below
+            return;
         }
     }
 
@@ -312,10 +278,6 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
 
     bool unlocked = validity_.all_mandatory_ok;
     if (unlocked && !state_.master_key_prefilled) {
-        // Shown as a greyed placeholder only (see draw_master_key) — never
-        // written into state_.master_key_text itself, so the operator's
-        // first keystroke starts a clean field instead of appending to a
-        // suggestion they'd otherwise have to backspace through first.
         const Suite& su = suite(state_.suite_code);
         master_key_placeholder_ =
             secure_string(su.alphabet, static_cast<size_t>(validity_.master_key_needed_len));
@@ -355,13 +317,6 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
     if (bottom_h > 10.0f) draw_bottom_row(in, w, bottom_y, bottom_h);
 
     if (any_file_modal) draw_file_overlays(real_in, w, h);
-    // Must run before sync_state_from_indices(): a popup-item click is
-    // handled in here (see gui_widgets::draw_open_dropdown_popup), and it
-    // writes straight into rotor_pick_idx_/suite_idx_/etc. via the pointer
-    // dropdown() captured — sync_state_from_indices() has to see that
-    // write this same frame, or the next frame's sync_indices_from_state()
-    // reads the (still unchanged) PanelState and stomps the selection
-    // right back to empty before it's ever visible.
     draw_open_dropdown_popup(real_in, ui_.open_dropdown_id);
 
     sync_state_from_indices();
@@ -371,8 +326,6 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
 
 void SetupPanel::draw_header(const GuiInput& in, float width) {
     const float pad = 6.0f;
-    // Sized to the actual rendered logo (plus a little breathing room)
-    // instead of a fixed box the text only half-filled.
     float word_tw = text_width(Font::Wordmark, "INOP");
     float word_th = text_line_height(Font::Wordmark);
     Rect wordmark_r{16, pad, word_tw + 24.0f, word_th + 12.0f};
@@ -395,10 +348,6 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
         ui_.file_panel_scroll = 0;
     }
 
-    // Alphabet strip: centered in the gap between the wordmark and the
-    // button stack, not flush against the logo and not a separate
-    // full-width row above everything. BodyLarge for visual prominence —
-    // it's a persistent reference, not incidental label text.
     const Suite& su = suite(state_.suite_code);
     float gap_x0 = wordmark_r.x + wordmark_r.w + 20.0f;
     float gap_x1 = next_r.x - 20.0f;
@@ -406,10 +355,6 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
     float strip_x = gap_x0 + std::max(0.0f, (gap_x1 - gap_x0 - alpha_tw) * 0.5f);
     label(Rect{strip_x, pad, alpha_tw, word_th + 12.0f}, su.alphabet, false, Font::BodyLarge);
 
-    // '#' stands in for the space character in INOP-38 messages — not
-    // obvious from the alphabet strip alone, so spell it out underneath
-    // whenever the current suite's alphabet actually has one (Legacy's
-    // 26-letter alphabet doesn't).
     if (su.alphabet.find('#') != std::string::npos) {
         std::string hint = "# = space";
         float hint_tw = text_width(Font::Body, hint);
@@ -432,9 +377,6 @@ void SetupPanel::draw_top_row(const GuiInput& in, float width, float y, float h)
     Rect machine_r{left.x, left.y + 20, machine_w, 30};
     dropdown(machine_r, suite_labels_, suite_idx_, 0, ui_.open_dropdown_id, in, true);
 
-    // Legacy/Enigma has no language/diacritic system at all (DESIGN.md) —
-    // hidden outright rather than shown disabled, same as the hardening
-    // column, rotor-count buttons, and rows/plugboard slots it'll never use.
     if (!su.historic_lock) {
         label(Rect{left.x, left.y + 58, left.w, 18}, "language");
         float lang_w = dropdown_content_width(language_labels_, 120.0f, 220.0f);
@@ -461,10 +403,6 @@ void SetupPanel::draw_master_key(const GuiInput& in, Rect area) {
     bool unlocked = validity_.all_mandatory_ok;
     label(Rect{area.x, area.y, area.w, 18}, "master key", !unlocked);
 
-    // Sized to fit its actual max content (at most 11 characters, 10
-    // rotors + 1) rather than stretching across the whole column — a
-    // field that can never hold more than a handful of characters
-    // shouldn't look like it was built for a paragraph.
     int needed = validity_.master_key_needed_len;
     float field_w = text_width(Font::Body, std::string(static_cast<size_t>(needed) + 1, 'w')) + 24.0f;
     if (field_w > area.w) field_w = area.w;
@@ -490,9 +428,6 @@ void SetupPanel::draw_bottom_row(const GuiInput& in, float width, float y, float
     Rect left{margin, y, left_w, h};
     Rect right{margin * 2 + left_w, y, right_w, h};
 
-    // Legacy/Enigma is fixed at exactly su.min_rotors == su.max_rotors — a
-    // row of "3 of 3" buttons has nothing to actually choose, so it's
-    // hidden rather than shown as a single disabled button.
     float grid_y = left.y;
     if (su.min_rotors != su.max_rotors) {
         label(Rect{left.x, left.y, left.w, 18}, "rotor count (" + std::to_string(su.min_rotors) + "-" +
@@ -502,19 +437,12 @@ void SetupPanel::draw_bottom_row(const GuiInput& in, float width, float y, float
         grid_y = left.y + 56;
     }
 
-    // Mirrors draw_rotor_grid's own visible-row count so the reflector
-    // dropdown sits right after the grid it actually drew, not after
-    // room reserved for 10 rows Legacy will never show.
     int visible_rows = su.historic_lock ? su.max_rotors : kMaxRotors;
     Rect grid_area{left.x, grid_y, left.w, visible_rows * 30.0f + 20.0f};
     draw_rotor_grid(in, grid_area);
 
     float reflector_y = grid_area.y + grid_area.h + 12;
     label(Rect{left.x, reflector_y, left.w, 16}, "reflector");
-    // Matches the rotor picker box exactly (same width formula, same
-    // height — draw_rotor_grid always resolves each row to 30px tall
-    // minus its 4px gap, i.e. 26px) rather than being sized independently
-    // and ending up visibly shorter.
     float reflector_w = dropdown_content_width(rotor_options_, 120.0f, 200.0f);
     Rect reflector_r{left.x, reflector_y + 20, reflector_w, 26};
     dropdown(reflector_r, reflector_options_, reflector_idx_, 30, ui_.open_dropdown_id, in, true,
@@ -527,7 +455,7 @@ void SetupPanel::draw_rotor_count_buttons(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     int lo = su.min_rotors, hi = su.max_rotors;
     int count = hi - lo + 1;
-    bool enabled = lo != hi;  // Legacy is fixed at 3 — shown, not editable
+    bool enabled = lo != hi;
     float gap = 6.0f;
     float btn_w = (area.w - gap * (count - 1)) / static_cast<float>(count);
 
@@ -542,11 +470,6 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
     const Suite& su = suite(state_.suite_code);
     const float header_h = 20.0f;
 
-    // Ring only ever needs 1-38 (2 digits) and notch is now three small
-    // single-character boxes — neither needs anywhere near half the row's
-    // width. The rotor picker is sized to its actual longest option too
-    // (with a floor generous enough for the "rotor selection" header not
-    // to run into the ring column) rather than stretching to fill the rest.
     const float ring_w = 50.0f;
     const float notch_box_w = 26.0f, notch_gap = 4.0f;
     const float notch_total_w = notch_box_w * kNotchBoxes + notch_gap * (kNotchBoxes - 1);
@@ -558,10 +481,6 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
     label(Rect{ring_x, area.y, ring_w, header_h}, "ring", true);
     label(Rect{notch_x, area.y, notch_total_w, header_h}, "notch", true);
 
-    // A historic-lock suite (Legacy/Enigma) has a fixed rotor count — rows
-    // beyond it will never be usable, so they're hidden outright rather
-    // than shown greyed out (same reasoning as the rotor-count buttons,
-    // language, and hardening column — see draw_bottom_row/draw_top_row).
     int visible_rows = su.historic_lock ? su.max_rotors : kMaxRotors;
     float grid_top = area.y + header_h;
     float row_h = (area.h - header_h) / static_cast<float>(visible_rows);
@@ -575,15 +494,12 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
         dropdown(pick_r, rotor_options_, rotor_pick_idx_[i], 10 + i, ui_.open_dropdown_id, in, active,
                  active && !validity_.rotor_pick_ok[i]);
         numeric_field(ring_r, state_.rotor_rows[i].ring_text, in, 2, active,
-                      active && !validity_.ring_ok[i], /*center_text=*/true);
+                      active && !validity_.ring_ok[i], true);
 
         if (su.notches_are_fixed) {
             Rect notch_r{notch_x, ry, notch_total_w, row_h - 4};
             draw_rect(notch_r.x, notch_r.y, notch_r.w, notch_r.h, palette::disabled_bg());
             draw_rect_outline(notch_r.x, notch_r.y, notch_r.w, notch_r.h, palette::border());
-            // The historic wheel's own fixed notch, not a "-" placeholder
-            // — Legacy rotors don't take typed notches, but the operator
-            // still benefits from seeing which letter theirs steps on.
             std::string display = "-";
             if (active && !state_.rotor_rows[i].rotor_name.empty()) {
                 Alphabet alpha(su.alphabet);
@@ -597,7 +513,7 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
             for (int b = 0; b < kNotchBoxes; ++b) {
                 Rect box_r{notch_x + b * (notch_box_w + notch_gap), ry, notch_box_w, row_h - 4};
                 text_field(box_r, state_.rotor_rows[i].notch_box[b], in, su.alphabet, 1, active,
-                           row_invalid, fold, /*placeholder=*/"", /*center_text=*/true);
+                           row_invalid, fold, "", true);
             }
         }
     }
@@ -610,26 +526,17 @@ void SetupPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
     float cell_w = area.w / cols;
     float cell_h = (area.h - 24) / rows;
 
-    // Each pair is two small single-character boxes joined by a dash —
-    // {box} - {box} — rather than one wider two-character field.
     const float box_size = 28.0f;
     const float dash_w = 14.0f;
     const float pair_w = box_size * 2 + dash_w;
 
-    // The header used to sit flush at area.x, but the first pair-box is
-    // centered within its (wider) cell, not flush at area.x either —
-    // leaving the label visibly to the left of where the grid it's
-    // labeling actually begins.
     float first_container_x = area.x + (cell_w - pair_w) * 0.5f;
     label(Rect{first_container_x, area.y, area.w, 18},
           "plugboard (up to " + std::to_string(su.max_plug_pairs) + " pairs)");
 
-    // A historic-lock suite's max_plug_pairs (10 for Legacy) fits exactly
-    // within the first two columns — the third is never usable, so it's
-    // skipped entirely rather than shown as five dead disabled slots.
     CaseFold fold = Alphabet(su.alphabet).uses_uppercase() ? CaseFold::ToUpper : CaseFold::ToLower;
     for (int i = 0; i < su.max_plug_pairs && i < kMaxPlugSlots; ++i) {
-        int col = i / rows;  // three columns of five, per spec
+        int col = i / rows;
         int row = i % rows;
         float cx = area.x + col * cell_w + (cell_w - pair_w) * 0.5f;
         float cy = grid_y + row * cell_h + (cell_h - box_size) * 0.5f;
@@ -640,14 +547,11 @@ void SetupPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
         Rect right_r{cx + box_size + dash_w, cy, box_size, box_size};
 
         text_field(left_r, state_.plug_left[i], in, su.alphabet, 1, true, invalid,
-                   fold, /*placeholder=*/"", /*center_text=*/true);
-        // Centered rather than left-aligned from dash_r.x — otherwise it
-        // draws flush against the left box's right edge and looks clipped
-        // into it.
+                   fold, "", true);
         float dash_tw = text_width(Font::Body, "-");
         label(Rect{dash_r.x + (dash_r.w - dash_tw) * 0.5f, dash_r.y, dash_r.w, dash_r.h}, "-");
         text_field(right_r, state_.plug_right[i], in, su.alphabet, 1, true, invalid,
-                   fold, /*placeholder=*/"", /*center_text=*/true);
+                   fold, "", true);
     }
 }
 
@@ -666,7 +570,7 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
                                                        state_.suite_code);
         if (r.preset_picked) {
             state_ = *r.preset;
-            sync_indices_from_state();  // same-frame resync, established pattern
+            sync_indices_from_state();
             ui_.show_load_panel = false;
         } else if (r.delete_requested)
             on_delete_tile_requested(r.delete_path);
@@ -700,12 +604,6 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         if (button(create_btn, "Create new", under_in, true)) {
             ui_.show_save_chooser = false;
             ui_.show_create_name_modal = true;
-            // suggest_filename() returns a full "INOP-1.json" filename (it
-            // has to, to compare against files already on disk) — the field
-            // itself only ever holds the bare name, since ".json" is a
-            // fixed suffix appended once on confirm (see below); strip it
-            // here or the field would show "INOP-1.json" and end up saved
-            // as "INOP-1.json.json".
             std::string suggested = suggest_filename(state_);
             const std::string ext = ".json";
             if (suggested.size() > ext.size() &&
@@ -731,8 +629,6 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         text_field(field_r, ui_.create_name_text, under_in,
                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ", 64, true,
                    !ui_.create_name_error.empty());
-        // .json is fixed, not editable — the only way this could ever be
-        // anything but a setup JSON is if the extension were typeable.
         Rect ext_r{field_r.x + field_r.w + 4, field_r.y, ext_w, 32};
         draw_rect(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::disabled_bg());
         draw_rect_outline(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::border());
@@ -774,31 +670,17 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
 void SetupPanel::on_generate_clicked() {
     const Suite& su = suite(state_.suite_code);
     try {
-        // Randomized within the suite's own bounds rather than always the
-        // maximum — a generated machine should look like any other machine
-        // the operator might have picked by hand, not always the biggest
-        // one possible. (Legacy's rotor count is fixed min==max, so this is
-        // a no-op there.)
         int rotor_count = su.min_rotors + static_cast<int>(secure_below(
                                static_cast<uint32_t>(su.max_rotors - su.min_rotors + 1)));
         int plug_pairs = static_cast<int>(secure_below(static_cast<uint32_t>(su.max_plug_pairs + 1)));
 
-        // notches_per_rotor=1 here is just a safe placeholder for
-        // random_settings()'s own (fixed-count-for-everyone) notch fill —
-        // it gets discarded below in favor of random_variable_notches(),
-        // which draws each rotor's count independently.
-        GeneratedSettings g = random_settings(su, rotor_count, plug_pairs, /*notches_per_rotor=*/1);
+        GeneratedSettings g = random_settings(su, rotor_count, plug_pairs, 1);
         if (!su.notches_are_fixed)
             g.notches = random_variable_notches(Alphabet(su.alphabet), rotor_count, su.max_notches);
         state_.rotor_count = rotor_count;
 
         for (int i = 0; i < kMaxRotors; ++i) {
             if (i >= state_.rotor_count) {
-                // Blank rows beyond the new count so leftover key material
-                // from a previous (larger) generation can't linger — Load
-                // Setup never has this problem since it starts from a
-                // fresh, empty PanelState every time; Generate mutates the
-                // existing one in place and has to clear this explicitly.
                 state_.rotor_rows[i] = RotorRow{};
                 continue;
             }
@@ -820,16 +702,10 @@ void SetupPanel::on_generate_clicked() {
             state_.plug_right[i] = std::string(1, g.plugs[i][1]);
         }
 
-        // random_settings() always sizes the key rotor_count+1, but
-        // historic-lock suites (Legacy/Enigma) need exactly rotor_count —
-        // regenerate at the length this panel's own validity rule expects
-        // instead of reusing g.master_key verbatim.
         FieldValidity v = derive_validity(state_);
         state_.master_key_text = secure_string(su.alphabet, static_cast<size_t>(v.master_key_needed_len));
         state_.master_key_prefilled = true;
 
-        // Same-frame resync, per the on_load_tile_picked pattern — must not
-        // wait for next frame's top-of-frame sync or this gets stomped back.
         sync_indices_from_state();
     } catch (const std::exception& e) {
         std::cout << "[gui] generate failed: " << e.what() << "\n";
@@ -843,15 +719,10 @@ void SetupPanel::on_load_tile_picked(const std::string& path) {
     std::string err;
     if (load_config(path, loaded, &err)) {
         state_ = loaded;
-        // sync_state_from_indices() runs later this same frame and would
-        // otherwise overwrite these freshly-loaded rotor/reflector names
-        // right back to whatever the STALE (pre-load) index members held —
-        // re-deriving them from the just-loaded state now keeps that later
-        // write-back a no-op instead of a silent revert.
         sync_indices_from_state();
         ui_.show_load_panel = false;
     } else {
-        ui_.show_corruption_popup = true;  // load panel stays open, per spec
+        ui_.show_corruption_popup = true;
     }
 }
 
@@ -875,7 +746,7 @@ void SetupPanel::on_create_confirmed() {
         ui_.create_name_error = "name cannot be empty";
         return;
     }
-    name += ".json";  // fixed suffix — the field can't contain '.' itself
+    name += ".json";
     if (config_exists(name)) {
         ui_.create_name_error = "a file with that name already exists";
         return;
@@ -901,5 +772,6 @@ void SetupPanel::on_delete_confirmed() {
     ui_.show_delete_confirm = false;
 }
 
-}  // namespace gui
-}  // namespace inop
+}
+}
+

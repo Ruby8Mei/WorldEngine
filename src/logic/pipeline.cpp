@@ -26,13 +26,9 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
         if (c == ' ') {
             if (has_space_sub) out += SPACE_SUB;
         } else if (c == SPACE_SUB) {
-            // A literal '#' is pruned rather than carried through: decrypt()
-            // maps every SPACE_SUB back to a space, so a literal one would
-            // be indistinguishable from a substituted space either way.
         } else if (alpha.contains(c)) {
             out += c;
         }
-        // anything else is silently dropped — the machine has no key for it
     }
     return out;
 }
@@ -44,7 +40,7 @@ std::string mark_literal_digits(const std::string& text) {
     for (unsigned char c : text) {
         bool is_digit = c >= '0' && c <= '9';
         bool prev_is_letter = (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') ||
-                               prev >= 0x80;  // any byte of a multi-byte UTF-8 letter
+                               prev >= 0x80;
         if (is_digit && prev_is_letter) out += '/';
         out += static_cast<char>(c);
         prev = c;
@@ -85,21 +81,17 @@ std::string carve(const std::string& full, const std::string& marker) {
     return full.substr(i + marker.size(), j - i - marker.size());
 }
 
-}  // namespace
+}
 
 Pipeline::Pipeline(Machine& machine, PipelineConfig cfg) : machine_(machine), cfg_(cfg) {
     machine_.set_moving_reflector(cfg_.moving_reflector);
 }
 
-// Every pass starts from the same rewound state, which is what makes the
-// double pass reversible.
 std::string Pipeline::run_pass(const std::string& text) {
     machine_.rewind();
     return machine_.encipher(text);
 }
 
-// encrypt()/decrypt() both run a pass, and — if double_pass is on — reverse
-// and run a second one. Was written out identically in both places.
 std::string Pipeline::run_double_pass(const std::string& text) {
     std::string s = run_pass(text);
     if (cfg_.double_pass) {
@@ -127,8 +119,6 @@ Encrypted Pipeline::encrypt(const std::string& plaintext) {
 }
 
 std::string Pipeline::decrypt(const std::string& ciphertext, const std::string& marker) {
-    // A blank marker must fail loudly, not silently hand back the raw
-    // noise-padded blob as if it were the message.
     if (cfg_.padding && marker.empty())
         throw std::runtime_error("a marker is required to decipher a padded message");
 
@@ -138,4 +128,5 @@ std::string Pipeline::decrypt(const std::string& ciphertext, const std::string& 
     return s;
 }
 
-}  // namespace inop
+}
+

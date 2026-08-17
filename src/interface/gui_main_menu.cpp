@@ -6,7 +6,7 @@ namespace gui {
 namespace {
 constexpr float kMargin = 24.0f;
 constexpr float kButtonW = 220.0f, kButtonH = 40.0f, kButtonGap = 14.0f;
-}  // namespace
+}
 
 void MainMenu::frame(const GuiInput& in, int width, int height) {
     open_inop_requested_ = false;
@@ -15,17 +15,10 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
     float w = static_cast<float>(width), h = static_cast<float>(height);
     clear(palette::background());
 
-    // Title, top centre, just under the margin — reuses the Wordmark font
-    // (44pt), the largest atlas baked; ask if this needs to be bigger than
-    // the setup screen's own wordmark, since that would need a dedicated
-    // font size.
     float title_tw = text_width(Font::Wordmark, "INOP");
     float title_th = text_line_height(Font::Wordmark);
     label(Rect{(w - title_tw) * 0.5f, kMargin, title_tw, title_th}, "INOP", false, Font::Wordmark);
 
-    // Four buttons stacked in the screen's centre, in this order: Open
-    // INOP, Maintenance, Settings, Exit. Maintenance and Settings are
-    // deliberate stubs — no screen exists for either yet.
     const int kCount = 4;
     float stack_h = kCount * kButtonH + (kCount - 1) * kButtonGap;
     float x = (w - kButtonW) * 0.5f;
@@ -44,5 +37,6 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
     if (button(exit_r, "Exit", in, true)) exit_requested_ = true;
 }
 
-}  // namespace gui
-}  // namespace inop
+}
+}
+

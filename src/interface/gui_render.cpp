@@ -13,15 +13,8 @@
 #include <windows.h>
 #endif
 
-// GLFW's header includes the platform GL header (GL/gl.h on Windows) for
-// us, giving every OpenGL 1.1 entry point opengl32.dll exports statically —
-// no GLAD/GLEW loader needed. This is only safe as long as gui.cpp never
-// asks GLFW for a specific GL version/profile (see the comment there).
 #include <GLFW/glfw3.h>
 
-// GL_CLAMP_TO_EDGE is GL 1.2, not 1.1, so some gl.h headers omit the
-// enum. It is just a constant, not a function pointer, so no loader is
-// needed to use it — define it ourselves if missing.
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
@@ -36,7 +29,7 @@ namespace {
 
 struct FontAtlas {
     GLuint texture = 0;
-    std::vector<stbtt_bakedchar> chars;  // ASCII 32..127 (96 glyphs)
+    std::vector<stbtt_bakedchar> chars;
     int bitmap_w = 0, bitmap_h = 0;
     float pixel_height = 0;
 };
@@ -97,9 +90,9 @@ const FontAtlas& atlas_for(Font font) {
     }
 }
 
-int g_viewport_h = 0;  // needed to flip our top-left-origin rects into glScissor's bottom-left ones
+int g_viewport_h = 0;
 
-}  // namespace
+}
 
 bool render_init() {
     glDisable(GL_DEPTH_TEST);
@@ -123,8 +116,6 @@ void set_viewport(int width, int height) {
     glViewport(0, 0, width, height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    // Top-left origin, y increasing downward — matches GLFW cursor
-    // coordinates so widget hit-testing needs no flip.
     glOrtho(0, width, height, 0, -1, 1);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
@@ -132,9 +123,6 @@ void set_viewport(int width, int height) {
 
 void begin_scissor(float x, float y, float w, float h) {
     glEnable(GL_SCISSOR_TEST);
-    // glScissor is bottom-left-origin regardless of the glOrtho we set up,
-    // so flip y here rather than asking every caller to think in GL's
-    // coordinate space.
     glScissor(static_cast<int>(x), static_cast<int>(static_cast<float>(g_viewport_h) - (y + h)),
               static_cast<int>(w), static_cast<int>(h));
 }
@@ -172,9 +160,6 @@ void draw_rect_outline(float x, float y, float w, float h, Color c, float thickn
 bool load_fonts() {
     const char* windir = std::getenv("WINDIR");
     std::string fonts_dir = windir ? std::string(windir) + "\\Fonts\\" : "C:\\Windows\\Fonts\\";
-    // Times New Roman throughout, not just the wordmark — Body/BodyLarge
-    // used to be Segoe UI, but the operator asked for one consistent
-    // typeface across the whole panel.
     bool ok_body = bake_font(fonts_dir + "times.ttf", 18.0f, g_body);
     bool ok_word = bake_font(fonts_dir + "times.ttf", 44.0f, g_wordmark);
     bool ok_large = bake_font(fonts_dir + "times.ttf", 28.0f, g_body_large);
@@ -220,5 +205,6 @@ void draw_text(Font font, float x, float baseline_y, const std::string& text, Co
     glDisable(GL_TEXTURE_2D);
 }
 
-}  // namespace gui
-}  // namespace inop
+}
+}
+

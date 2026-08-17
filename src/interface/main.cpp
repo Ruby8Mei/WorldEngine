@@ -1,8 +1,7 @@
-// main.cpp — INOP terminal interface
 #include <algorithm>
-#include <cctype>    // std::toupper, std::isspace
+#include <cctype>
 #include <chrono>
-#include <cstdlib>   // std::exit
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -22,11 +21,10 @@
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX               // MinGW's os_defines.h already defines this
-#define NOMINMAX               // stop windows.h defining min/max as macros
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
 #include <windows.h>
-// Older MinGW and pre-Win10 SDK headers lack this constant.
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
 #endif
@@ -34,7 +32,6 @@
 
 using namespace inop;
 
-// ── ANSI helpers ────────────────────────────────────────────────────────
 namespace {
 
 bool g_color = true;
@@ -55,11 +52,6 @@ void enable_vt() {
     if (h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode))
         SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     SetConsoleOutputCP(CP_UTF8);
-    // SetConsoleOutputCP alone only affects what the console WRITES. Typed
-    // or pasted accented characters are decoded on the way IN using the
-    // console's separate input codepage, which defaults to the system
-    // legacy codepage, not UTF-8 — without this, é/è/â/... arrive already
-    // mangled or dropped before fold_diacritics ever sees them.
     SetConsoleCP(CP_UTF8);
 #endif
 }
@@ -77,10 +69,6 @@ std::string upper(std::string s) {
     return s;
 }
 
-// The cipher alphabet is lowercase (ALPHA26/ALPHA38 in inop.hpp), so any
-// value that gets fed into it — plugboard pairs, notch symbols, the master
-// key, ciphertext, markers — needs this, not upper(). Rotor/reflector/suite
-// NAMES are identifiers, not alphabet symbols, and stay upper().
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
@@ -90,15 +78,11 @@ std::string ask(const std::string& prompt) {
     std::cout << CYAN << prompt << RST << " ";
     std::string line;
     if (!std::getline(std::cin, line)) { std::cout << "\n"; std::exit(0); }
-    // trim
     size_t a = line.find_first_not_of(" \t\r\n");
     if (a == std::string::npos) return "";
     size_t b = line.find_last_not_of(" \t\r\n");
     std::string trimmed = line.substr(a, b - a + 1);
 
-    // The leading ':' is what makes this unambiguous — a bare "q" or "quit"
-    // is a legitimate answer at several prompts (notch symbols, master key
-    // symbols, plugboard pairs), since both alphabets contain Q.
     std::string low = trimmed;
     for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (low == ":q" || low == ":quit" || low == ":exit") {
@@ -122,8 +106,6 @@ bool ask_toggle(const std::string& prompt, bool def) {
     return a == "ON" || a == "Y" || a == "YES" || a == "1";
 }
 
-// Language tag for the numeral-suffix diacritic scheme — INOP-38 only.
-// Asked once per message, defaulting to whatever was chosen last time.
 std::string ask_language(const std::string& def) {
     while (true) {
         std::string c = lower(ask("language [" + def + "]"));
@@ -133,10 +115,8 @@ std::string ask_language(const std::string& def) {
     }
 }
 
-// ── settings ────────────────────────────────────────────────────────────
-void verify_legacy_integrity();  // defined below; forward-declared for collect_settings()
+void verify_legacy_integrity();
 
-// ── interactive setup ───────────────────────────────────────────────────
 Settings collect_settings() {
     Settings s;
     rule("suite");
@@ -223,7 +203,7 @@ Settings collect_settings() {
             continue;
         }
         try {
-            Plugboard probe(pairs, alpha);  // validates fully
+            Plugboard probe(pairs, alpha);
             s.plugs = pairs;
             break;
         } catch (const std::exception& e) { fail(e.what()); }
@@ -279,10 +259,6 @@ Settings collect_settings() {
     }
 
     rule("master key");
-    // The historic reflector does not rotate, so a Legacy key carries no
-    // orientation symbol — just one window letter per rotor. A 4-symbol key
-    // from an older sheet is still accepted for compatibility; build_machine()
-    // drops the extra symbol with a notice rather than rejecting it.
     const size_t need = su.historic_lock ? s.rotors.size() : s.rotors.size() + 1;
     std::cout << DIM << "  " << need << " symbols: one window position per rotor"
               << (su.historic_lock ? "" : ", plus the reflector orientation") << RST << "\n";
@@ -308,9 +284,6 @@ Settings collect_settings() {
     return s;
 }
 
-// Notches, rings and rotors are read back from the MACHINE rather than from
-// what was typed, so this shows what is actually loaded — including the
-// historic notches on legacy wheels, which the operator never enters.
 void show_settings(const Settings& s, const Machine& m) {
     const Suite& su = suite(s.suite_code);
     rule("active settings");
@@ -325,7 +298,6 @@ void show_settings(const Settings& s, const Machine& m) {
     for (size_t i = 0; i < n; ++i)
         ring[i] = i < s.rings.size() ? std::to_string(s.rings[i]) : "?";
 
-    // one column per rotor, wide enough for whichever field is longest
     std::vector<size_t> w(n);
     for (size_t i = 0; i < n; ++i) {
         w[i] = s.rotors[i].size();
@@ -356,33 +328,23 @@ void show_settings(const Settings& s, const Machine& m) {
     rule();
 }
 
-// ── Legacy integrity guard ──────────────────────────────────────────────
-//
-// The Legacy suite is a museum exhibit and a correctness anchor at the same
-// time: if it silently drifted from the historic machine it claims to be,
-// nothing would notice except a cryptanalyst. Run before the main menu and
-// again whenever Legacy is actually selected, so a regression is caught at
-// the moment it matters rather than only under --self-test.
 void verify_legacy_integrity() {
     auto abort_check = [](const std::string& what) {
         std::cout << RED << "  !! legacy integrity check failed: " << what << RST << "\n";
         std::exit(1);
     };
 
-    // (a) the historic Enigma vector: rotors I II III, reflector B, rings
-    // 1 1 1, key AAAA, twelve presses of A.
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
         Machine m(a, std::move(rs), make_reflector("B", a), Plugboard({}, a), {1, 1, 1}, "AAAA",
-                  /*legacy_stepping=*/true);
+                  true);
         m.set_moving_reflector(false);
         std::string got = m.encipher("AAAAAAAAAAAA");
         if (got != "BDZGOWCXLTKS")
             abort_check("historic Enigma I-II-III/B vector produced '" + got + "', expected BDZGOWCXLTKS");
     }
 
-    // (b) the Legacy suite descriptor itself.
     {
         const Suite& su = suite("26");
         if (su.alphabet.size() != 26) abort_check("Legacy alphabet is not 26 symbols");
@@ -392,7 +354,6 @@ void verify_legacy_integrity() {
         if (!su.notches_are_fixed) abort_check("Legacy suite notches are not fixed");
     }
 
-    // (c) apply_suite_lock forces double pass, padding and moving reflector off.
     {
         PipelineConfig cfg;
         cfg.double_pass = cfg.padding = cfg.moving_reflector = true;
@@ -403,7 +364,6 @@ void verify_legacy_integrity() {
     }
 }
 
-// ── self-test ───────────────────────────────────────────────────────────
 int self_test() {
     int failures = 0;
     auto check = [&](bool ok, const std::string& what) {
@@ -411,8 +371,6 @@ int self_test() {
         if (!ok) ++failures;
     };
 
-    // 1. Historic Enigma vector: rotors I II III, reflector B, all rings 01,
-    //    key AAA. Pressing A twelve times gives a known ciphertext.
     {
         Alphabet a(ALPHA26);
         std::vector<Rotor> rs{make_rotor("I", a), make_rotor("II", a), make_rotor("III", a)};
@@ -422,7 +380,6 @@ int self_test() {
         check(got == "BDZGOWCXLTKS", "historic Enigma I-II-III/B vector -> " + got);
     }
 
-    // 2. The machine is its own inverse when rewound.
     {
         Alphabet a(ALPHA38);
         std::vector<Rotor> rs;
@@ -442,7 +399,6 @@ int self_test() {
         check(ct != plain, "ciphertext differs from plaintext");
     }
 
-    // 3. Full pipeline round trip, padding and double pass on.
     {
         Settings s;
         s.suite_code = "38";
@@ -462,7 +418,6 @@ int self_test() {
         check(e.ciphertext.size() % 16 == 0, "ciphertext is block aligned");
     }
 
-    // 4. The double pass removes Enigma's fatal no-self-encipherment property.
     {
         Settings s;
         s.suite_code = "38";
@@ -491,7 +446,6 @@ int self_test() {
         check(doubled > 0, "double pass: self-mapping restored, hits=" + std::to_string(doubled));
     }
 
-    // 5. The Legacy lock: a 1939 machine cannot be given INOP features.
     {
         PipelineConfig c;
         c.double_pass = c.padding = c.moving_reflector = true;
@@ -505,10 +459,6 @@ int self_test() {
               "INOP-38 keeps its features, 16-symbol blocks");
     }
 
-    // 5b. Stepping rule follows the SUITE, not rotors_.size(). Two 3-rotor
-    //     machines with identical wirings, notches, reflector, rings and key
-    //     must diverge once one is built as Legacy-style and the other as
-    //     INOP-38-style — nothing about "3 rotors" may pick that for them.
     {
         Alphabet a(ALPHA38);
         auto build = [&](bool legacy_stepping) {
@@ -531,7 +481,6 @@ int self_test() {
               "INOP-38-style stepping — the rule is chosen by the caller, not inferred");
     }
 
-    // 6. The entropy source must be provably alive.
     {
         bool ok = true;
         std::string why;
@@ -539,8 +488,6 @@ int self_test() {
         check(ok, ok ? "entropy source is alive and uniform" : why);
     }
 
-    // 7. wiring_is_rotation must rank by the declared alphabet, not ASCII —
-    //    ASCII sorts digits/#// before letters, ALPHA38 puts them after.
     {
         auto shift_by_one = [](const std::string& alpha) {
             std::string w;
@@ -552,13 +499,10 @@ int self_test() {
               "shift-by-1 wiring of ALPHA38 is caught as a rotation");
         check(wiring_is_rotation(shift_by_one(ALPHA26), ALPHA26),
               "shift-by-1 wiring of ALPHA26 is caught as a rotation");
-        // R1's factory wiring, copied from registry.cpp — must NOT be
-        // flagged as a rotation.
         const std::string r1 = "bxml2uokh3#46705cyg19etfprid8swqavnzj/";
         check(!wiring_is_rotation(r1, ALPHA38), "built-in R1 wiring is accepted, not a rotation");
     }
 
-    // 8. Throughput.
     {
         Alphabet a(ALPHA38);
         std::vector<Rotor> rs;
@@ -574,10 +518,6 @@ int self_test() {
                   << static_cast<long>(text.size() / ms / 1000.0) << "M symbols/s\n";
     }
 
-    // 9. Numeral-suffix diacritic scheme: every worked example from the
-    //    README, fold_diacritics() must match exactly, and folding what
-    //    resubstitute() hands back must reproduce the same encoded form
-    //    (encode/decode are inverses on these fixtures).
     {
         struct Row { const char* lang; const char* plain; const char* encoded; };
         static const Row rows[] = {
@@ -664,8 +604,6 @@ int self_test() {
         }
     }
 
-    // 10. Digit-collision fix: a literal digit right after a letter gets a
-    //     separating '/'; a diacritic-introduced digit never does.
     {
         auto encode = [](const std::string& raw, const std::string& lang) {
             return fold_diacritics(mark_literal_digits(raw), lang);
@@ -677,12 +615,6 @@ int self_test() {
               "digit collision: apostrophe dropped, no space inserted");
     }
 
-    // 11. Exhaustive per-language diacritic round trip: every (letter,
-    //     digit) pair each language's resubstitute() table supports, not
-    //     just the characters that happened to show up in a worked example
-    //     sentence. Catches table gaps a natural-language sentence might
-    //     never exercise (this is exactly what caught src/languages.cpp
-    //     missing Catalan i6/u6 and Dutch u6 during a manual audit).
     {
         struct DiacRow { const char* lang; char base; int digit; const char* ch; };
         static const DiacRow rows[] = {
@@ -829,9 +761,6 @@ int self_test() {
                                      std::to_string(rows_checked) + " (letter,digit) pairs across "
                                      "49 languages");
 
-        // Pinyin ü + tone: the one case where two diacritic digits chain on
-        // a single letter. Verified against the exact examples from the
-        // audit that requested this feature.
         auto check_chain = [&](const std::string& word, const std::string& expected_folded) {
             std::string folded = fold_diacritics(word, "cmn");
             check(folded == expected_folded,
@@ -843,9 +772,6 @@ int self_test() {
         check_chain("nǚ", "nu63");
         check_chain("lǖ", "lu61");
         check_chain("lǘ", "lu62");
-        // No non-Chinese language should ever produce a two-digit chain —
-        // ü alone (no tone) must stay a plain single-digit "u6" everywhere
-        // else.
         check(fold_diacritics("über", "deu") == "u6ber",
               "German u with diaeresis does not chain (no tone system)");
     }
@@ -856,13 +782,6 @@ int self_test() {
     return failures == 0 ? 0 : 1;
 }
 
-// ── batch processing ────────────────────────────────────────────────────
-//
-// Every message gets its own Machine — either the same indexed keysheet
-// entry reused for all of them, or the next entry in file order for each
-// one. `cfg` (double pass / padding / moving reflector) is the operator
-// procedure choice made at session start and is reused across the batch;
-// only the rotor/reflector/rings/notches/key vary per message.
 void run_batch_mode(const PipelineConfig& cfg) {
     rule("batch");
     std::string src = ask("input: (p)aste or (f)ile [p]");
@@ -919,15 +838,6 @@ void run_batch_mode(const PipelineConfig& cfg) {
     std::string last_lang = "eng";
     size_t processed = 0;
 
-    // Fixed-index mode uses the exact same config for every message in the
-    // batch, so the keysheet entry, Machine, and Pipeline are all built
-    // once here rather than rebuilt from scratch (and the file reopened and
-    // rescanned) on every single iteration — Pipeline::run_pass already
-    // rewinds the Machine before each encipher, so one instance is safe to
-    // reuse across repeated encrypt()/decrypt() calls. Sequential mode
-    // genuinely needs a fresh entry per message, so it streams through one
-    // open ifstream instead (entries are read in order, so this costs one
-    // forward scan total rather than one rescan-from-the-top per entry).
     Settings fixed_settings;
     std::optional<Machine> fixed_machine;
     std::optional<Pipeline> fixed_pipe;
@@ -995,9 +905,8 @@ void banner() {
               << "  rotor cipher machine  ::  terminal build" << RST << "\n";
 }
 
-}  // namespace
+}
 
-// ── main ────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
     enable_vt();
     for (int i = 1; i < argc; ++i) {
@@ -1027,8 +936,6 @@ int main(int argc, char** argv) {
                   << "  !! key sheets on this machine until this is fixed.\n";
     }
 
-    // Any wheels generated by the maintenance menu join the factory set —
-    // but only if the file survives validation.
     {
         std::vector<std::string> problems;
         int extra = load_wheel_file("inop_wheels.txt", &problems);
@@ -1044,7 +951,6 @@ int main(int argc, char** argv) {
 
     verify_legacy_integrity();
 
-    // ── mode choice ───────────────────────────────────────────────────
     while (true) {
         std::cout << "\n  1  run INOP\n"
                   << "  2  maintenance  " << DIM << "(generate wheels or key sheets)" << RST << "\n"
@@ -1055,7 +961,6 @@ int main(int argc, char** argv) {
         if (c == "4") { std::cout << DIM << "  closed.\n" << RST; return 0; }
         if (c == "2") {
             run_generator();
-            // a fresh batch may have just been written — pick it up
             int more = load_wheel_file("inop_wheels.txt", 0);
             if (more > 0)
                 std::cout << DIM << "  wheel pool now " << more << " loaded wheels" << RST << "\n";
@@ -1129,9 +1034,6 @@ int main(int argc, char** argv) {
         std::string line = ask("message >");
         if (line.empty()) continue;
 
-        // Commands are case-insensitive, and anything starting with ':' that
-        // is not recognised gets refused rather than enciphered — a mistyped
-        // command should not quietly become a message.
         if (line[0] == ':') {
             std::string cmd = line;
             for (char& ch : cmd) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -1217,3 +1119,4 @@ int main(int argc, char** argv) {
     std::cout << DIM << "  closed.\n" << RST;
     return 0;
 }
+

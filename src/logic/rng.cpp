@@ -1,11 +1,3 @@
-// rng.cpp — OS entropy, no third-party dependencies.
-//
-// Windows: BCryptGenRandom (Vista+). Needs -lbcrypt at link time.
-// Everything else: /dev/urandom.
-//
-// Both are cryptographically secure. There is deliberately no fallback to
-// rand() or std::random_device — silently degrading to a weak generator is
-// exactly the failure this file exists to prevent, so it throws instead.
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -33,8 +25,6 @@ namespace inop {
 void secure_bytes(uint8_t* buf, size_t n) {
     if (n == 0) return;
 #if defined(_WIN32)
-    // A NULL algorithm handle with this flag uses the system default RNG,
-    // so there is no handle to open, close, or leak.
     while (n > 0) {
         ULONG chunk = n > 0x40000000u ? 0x40000000u : static_cast<ULONG>(n);
         if (BCryptGenRandom(NULL, reinterpret_cast<PUCHAR>(buf), chunk,
@@ -55,10 +45,6 @@ void secure_bytes(uint8_t* buf, size_t n) {
 }
 
 namespace {
-// Fisher-Yates shuffling a wheel batch draws once per swap, which used to
-// cost one OS entropy call (BCryptGenRandom/fread) per draw. Buffered in
-// bulk instead, the same batching secure_string() already does below —
-// refilled only when exhausted, not on every single draw.
 uint32_t next_uint32() {
     static std::vector<uint8_t> pool;
     static size_t pos = 0;
@@ -72,13 +58,12 @@ uint32_t next_uint32() {
     pos += 4;
     return v;
 }
-}  // namespace
+}
 
 uint32_t secure_below(uint32_t bound) {
     if (bound == 0) throw std::invalid_argument("secure_below(0)");
     if (bound == 1) return 0;
 
-    // Reject the ragged tail so every value is equally likely.
     const uint32_t limit = UINT32_MAX - (UINT32_MAX % bound) - 1;
     uint32_t v;
     do {
@@ -92,7 +77,6 @@ std::string secure_string(const std::string& alphabet, size_t n) {
     if (size == 0) throw std::invalid_argument("secure_string: empty alphabet");
     if (n == 0) return std::string();
 
-    // Draw in bulk and reject the biased tail — one call, not n.
     const uint32_t limit = 256 - (256 % size);
     std::string out;
     out.reserve(n);
@@ -108,7 +92,6 @@ std::string secure_string(const std::string& alphabet, size_t n) {
 }
 
 void entropy_self_check() {
-    // 1. raw bytes must not be constant, and must cover a decent spread
     const size_t N = 4096;
     std::vector<uint8_t> buf(N);
     secure_bytes(buf.data(), N);
@@ -121,8 +104,6 @@ void entropy_self_check() {
             "entropy source is degenerate: " + std::to_string(distinct) +
             " distinct byte values in " + std::to_string(N) + " bytes (expected ~250)");
 
-    // 2. secure_below must actually vary. This is the exact path that failed
-    //    silently once: keys looked random while every shuffle returned 0.
     const int draws = 512;
     bool hit[38] = {false};
     int spread = 0;
@@ -137,4 +118,5 @@ void entropy_self_check() {
             " distinct values in " + std::to_string(draws) + " draws (expected 38)");
 }
 
-}  // namespace inop
+}
+

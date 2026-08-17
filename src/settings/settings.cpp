@@ -18,10 +18,6 @@ std::string lower(std::string s) {
     return s;
 }
 
-// Shared by load_settings()/load_keysheet_entry_from_stream(): parse one
-// block from `in`, default an error if parsing found nothing at all,
-// validate it, and append `context` to whatever error either step
-// produced. Both callers used to hand-roll this exact sequence themselves.
 bool parse_and_validate(std::istream& in, Settings& out, const std::string& incomplete_msg,
                          const std::string& context, std::string* error) {
     Settings s;
@@ -36,7 +32,7 @@ bool parse_and_validate(std::istream& in, Settings& out, const std::string& inco
     out = s;
     return true;
 }
-}  // namespace
+}
 
 bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
     out = Settings();
@@ -52,11 +48,6 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
         else if (key == "reflector") is >> out.reflector;
         else if (key == "key") {
             is >> out.master_key;
-            // Fold every alphabet-bound field toward this record's own
-            // suite's case (Legacy uppercase, INOP-38 lowercase) now that
-            // "suite" is guaranteed already read — both save_settings() and
-            // settings_to_text() always write it first, and this "key" line
-            // is always last (parsing stops here either way).
             if (suites().count(out.suite_code)) {
                 Alphabet fold_alpha(suite(out.suite_code).alphabet);
                 out.master_key = fold_alpha.fold_case(out.master_key);
@@ -82,8 +73,8 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
         }
         else if (key == "notches")   while (is >> tok) out.notches.push_back(tok == "-" ? "" : tok);
     }
-    if (!saw_rotors && out.master_key.empty()) return false;  // nothing read at all
-    return true;  // EOF reached mid-record — validate_settings will catch anything missing
+    if (!saw_rotors && out.master_key.empty()) return false;
+    return true;
 }
 
 bool validate_settings(const Settings& s, std::string* error) {
@@ -143,11 +134,6 @@ Machine build_machine(const Settings& s, std::string* note) {
         rotors.push_back(std::move(r));
     }
 
-    // The Machine core always wants (rotor count + 1) key symbols — one
-    // window letter per rotor, plus a reflector orientation letter. A
-    // historic-lock suite's reflector is fixed at position 0 and its key
-    // sheet carries no orientation symbol, so that symbol is synthesised
-    // here rather than by relaxing Machine's own contract.
     std::string key = s.master_key;
     if (su.historic_lock) {
         const size_t want = s.rotors.size();
@@ -156,7 +142,7 @@ Machine build_machine(const Settings& s, std::string* note) {
                                key.back() + "' ignored";
             key = key.substr(0, want);
         }
-        key += alpha.at(0);  // reflector fixed at position 0
+        key += alpha.at(0);
     }
 
     return Machine(alpha, std::move(rotors), make_reflector(s.reflector, alpha),
@@ -197,4 +183,5 @@ bool load_keysheet_entry(const std::string& path, int index, Settings& out, std:
     return true;
 }
 
-}  // namespace inop
+}
+

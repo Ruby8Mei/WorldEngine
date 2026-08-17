@@ -14,18 +14,8 @@ struct Wiring {
     std::string notches;
 };
 
-// The wheels below are DEFAULTS: demo and regression material, baked into the
-// binary so the program has something to run before anyone generates a real
-// batch. They are fixed, public, and shipped in source control — the exact
-// opposite of key material. Real traffic must run on wheels generated fresh
-// per `generator.hpp` (maintenance menu -> rotor/reflector batch) and loaded
-// from inop_wheels.txt, never on these.
 const std::map<std::string, Wiring>& rotor_wirings() {
     static const std::map<std::string, Wiring> w = {
-        // Legacy — the historic Wehrmacht Enigma wheels, notches and all.
-        // Uppercase to match the convention the original wiring tables and
-        // traffic were always published in — INOP-38 is the one with the
-        // lowercase/numeral-suffix scheme, and it doesn't apply here.
         {"I",    {"EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q"}},
         {"II",   {"AJDKSIRUXBLHWTMCQGZNPYFVOE", "E"}},
         {"III",  {"BDFHJLCPRTXVZNYEIWGAKMUSQO", "V"}},
@@ -34,7 +24,6 @@ const std::map<std::string, Wiring>& rotor_wirings() {
         {"VI",   {"JPGVOUMFYQBENHZRDKASXLICTW", "ZM"}},
         {"VII",  {"NZJHGRCXMYSWBOUFAIVLPEKQDT", "ZM"}},
 
-        // INOP-38 — 38 symbols, notches chosen per message.
         {"R1",   {"bxml2uokh3#46705cyg19etfprid8swqavnzj/", ""}},
         {"R2",   {"1q27#cpzl3rhv6mktjuxfbe5o9n0as4di/ywg8", ""}},
         {"R3",   {"zo5rnuby/k0smtpajwcx23edl8fg9vh4176i#q", ""}},
@@ -49,8 +38,6 @@ const std::map<std::string, Wiring>& rotor_wirings() {
     return w;
 }
 
-// Same warning as rotor_wirings() above: defaults/demo/regression material
-// only, never for real traffic.
 const std::map<std::string, std::string>& reflector_wirings() {
     static const std::map<std::string, std::string> w = {
         {"A", "EJMZALYXVBWFCRQUONTSPIKHGD"},
@@ -66,7 +53,7 @@ const std::map<std::string, std::string>& reflector_wirings() {
     return w;
 }
 
-}  // namespace
+}
 
 const std::map<std::string, Suite>& suites() {
     static const std::map<std::string, Suite> s = {
@@ -89,8 +76,6 @@ const Suite& suite(const std::string& code) {
 }
 
 namespace {
-// Wheels loaded from disk. Checked before the built-ins, so a generated
-// wheel can shadow a factory one by reusing its name.
 std::map<std::string, Wiring>& loaded_rotors() {
     static std::map<std::string, Wiring> m;
     return m;
@@ -100,16 +85,11 @@ std::map<std::string, std::string>& loaded_reflectors() {
     return m;
 }
 
-// Bumped every time load_wheel_file() actually commits new wheels — lets
-// collect() cache its result instead of rebuilding+re-sorting on every
-// call, since the GUI's per-frame validation path calls available_rotors()/
-// available_reflectors() several times a frame for a pool that only ever
-// actually changes on a suite switch or a wheel-file reload.
 int& wheel_generation() {
     static int g = 0;
     return g;
 }
-}  // namespace
+}
 
 Rotor make_rotor(const std::string& name, const Alphabet& alpha) {
     auto lit = loaded_rotors().find(name);
@@ -138,8 +118,6 @@ bool is_permutation(const std::string& wiring, const std::string& alphabet) {
     return sw == sa;
 }
 
-// The suite whose alphabet this wiring's length matches, or null if none
-// does — a wiring of a length no known suite uses can't be validated at all.
 const Suite* suite_for_length(size_t len) {
     for (const auto& kv : suites())
         if (kv.second.alphabet.size() == len) return &kv.second;
@@ -149,15 +127,12 @@ const Suite* suite_for_length(size_t len) {
 void note(std::vector<std::string>* out, const std::string& msg) {
     if (out) out->push_back(msg);
 }
-}  // namespace
+}
 
-// A wiring that is a fixed shift of the alphabet is a Caesar rotor: it adds
-// nothing, and several in series still compose to one. It is also exactly
-// what a dead random number generator emits, so it is never legitimate.
 bool wiring_is_rotation(const std::string& wiring, const std::string& alphabet) {
     const int n = static_cast<int>(wiring.size());
     if (n != static_cast<int>(alphabet.size()) || n < 2) return n < 2;
-    Alphabet alpha(alphabet);  // O(1) indexed lookup instead of rebuilding a std::map every call
+    Alphabet alpha(alphabet);
     int shift = (alpha.index(wiring[0]) - 0 + n) % n;
     for (int i = 1; i < n; ++i)
         if ((alpha.index(wiring[static_cast<size_t>(i)]) - i + n) % n != shift) return false;
@@ -176,13 +151,12 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
         std::istringstream is(line);
         std::string kind, name, wiring, notches;
         if (!(is >> kind >> name >> wiring)) continue;
-        is >> notches;  // optional, rotors only
+        is >> notches;
         if (kind == "rotor")          rot[name] = Wiring{wiring, notches};
         else if (kind == "reflector") refl[name] = wiring;
     }
     if (rot.empty() && refl.empty()) return 0;
 
-    // ---- validate before anything is trusted -------------------------
     bool bad = false;
 
     std::map<std::string, std::vector<std::string> > by_wiring;
@@ -251,10 +225,6 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
 }
 
 namespace {
-// Natural-ish ordering for names with a numeric suffix: R2 before R10.
-// Names without one (the Roman-numeral Legacy wheels) fall through to
-// plain string comparison below, which happens to sort I-VII correctly by
-// coincidence, not because Roman numerals are handled specially.
 bool name_less(const std::string& a, const std::string& b) {
     size_t ia = a.find_first_of("0123456789");
     size_t ib = b.find_first_of("0123456789");
@@ -300,7 +270,7 @@ std::vector<std::string> collect(const Suite& s, bool rotors) {
     entry.reflectors = std::move(refl_out);
     return rotors ? entry.rotors : entry.reflectors;
 }
-}  // namespace
+}
 
 std::vector<std::string> available_rotors(const Suite& s)     { return collect(s, true); }
 std::vector<std::string> available_reflectors(const Suite& s) { return collect(s, false); }
@@ -314,4 +284,5 @@ bool reflector_exists(const std::string& name, const Suite& s) {
     return std::find(v.begin(), v.end(), name) != v.end();
 }
 
-}  // namespace inop
+}
+
