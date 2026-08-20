@@ -33,7 +33,7 @@ struct Args {
     std::vector<std::string> languages;  // empty == all
     int configs = 3;    // x: independent configs per (language, category)
     int messages = 3;   // x: messages per config
-    std::string out = "log.txt";
+    std::string out = "benchmark.csv";
     std::string corpus_dir = "benchmark/corpus";
     std::string hamlet;  // path to a Hamlet corpus file; empty == skip
 };
@@ -66,7 +66,7 @@ Args parse_args(int argc, char** argv) {
             a.hamlet = next_val(i, argc, argv);
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "inop_benchmark [--languages all|la,en,...] [--configs N] "
-                         "[--messages N] [--out log.txt] [--corpus-dir benchmark/corpus] "
+                         "[--messages N] [--out benchmark.csv] [--corpus-dir benchmark/corpus] "
                          "[--hamlet path]\n";
             std::exit(0);
         } else {
@@ -135,6 +135,29 @@ std::vector<std::string> edge_cases() {
         std::string(3000, 'z'),
         "room a2 and room b3, meet at 1400 on 28/2/1941",
     };
+}
+
+// real_message excerpt sizes, cycled across configs/messages so a single
+// run exercises short/medium/long/full-length text per language rather
+// than always the same fixed window.
+const std::vector<size_t> REAL_MESSAGE_LENGTH_TIERS = {100, 400, 1500, 5000};
+
+// corpus.substr() cuts on raw bytes, and corpora with dense multi-byte
+// diacritics (Hindi IAST, Korean romanization, ...) can land a cut in the
+// middle of a UTF-8 character — producing an invalid tail byte sequence
+// that then fails the resubstitute round-trip. Back the end position off
+// to the last complete character boundary instead of truncating
+// mid-character. `end` is an absolute offset into `s`.
+size_t utf8_safe_end(const std::string& s, size_t end) {
+    while (end > 0 && (static_cast<unsigned char>(s[end]) & 0xC0) == 0x80) --end;
+    return end;
+}
+
+// Same idea for a start offset: don't begin an excerpt on a continuation
+// byte either, or the first character in the message is broken too.
+size_t utf8_safe_start(const std::string& s, size_t start) {
+    while (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0) == 0x80) ++start;
+    return start;
 }
 
 std::map<std::string, std::string>& corpus_cache() {
@@ -208,7 +231,7 @@ int main(int argc, char** argv) {
 
     std::mt19937 rng(0xC0FFEE);
     long long test_id = 0;
-    long long total = 0, failed = 0;
+    long long total = 0, failed = 0, missing_corpus = 0;
 
     for (const auto& lang : languages) {
         if (!is_supported_language(lang)) {
@@ -216,6 +239,11 @@ int main(int argc, char** argv) {
             continue;
         }
         const std::string& corpus = load_corpus(lang, args.corpus_dir);
+        if (corpus.empty()) {
+            std::cerr << "  !! " << lang << ": no corpus file in " << args.corpus_dir
+                      << ", real_message category skipped\n";
+            ++missing_corpus;
+        }
 
         for (const char* category : CATEGORIES) {
             std::string cat = category;
@@ -239,9 +267,13 @@ int main(int argc, char** argv) {
                     else if (cat == "jumbled")     raw = cat_jumbled(rng, len);
                     else if (cat == "repeated_phrase") raw = cat_repeated_phrase(len);
                     else if (cat == "real_message") {
-                        size_t off = (static_cast<size_t>(mi) * 37) % (corpus.size() + 1);
-                        size_t take = std::min<size_t>(400, corpus.size() - off);
-                        raw = corpus.substr(off, take);
+                        size_t tier_idx = static_cast<size_t>(ci * args.messages + mi) %
+                                          REAL_MESSAGE_LENGTH_TIERS.size();
+                        size_t want = REAL_MESSAGE_LENGTH_TIERS[tier_idx];
+                        size_t off = utf8_safe_start(
+                            corpus, (static_cast<size_t>(mi) * 37) % (corpus.size() + 1));
+                        size_t end = utf8_safe_end(corpus, off + std::min(want, corpus.size() - off));
+                        raw = corpus.substr(off, end - off);
                     } else if (cat == "edge_case") {
                         raw = edges[static_cast<size_t>(mi) % edges.size()];
                     }
@@ -309,6 +341,9 @@ int main(int argc, char** argv) {
 
     log.close();
     std::cout << total << " test case(s), " << failed << " failure(s). Log: " << args.out << "\n";
+    if (missing_corpus > 0)
+        std::cout << "  !! " << missing_corpus << " of " << languages.size()
+                  << " language(s) had no real_message corpus — see warnings above\n";
 
     if (!args.hamlet.empty()) {
         std::ifstream f(args.hamlet, std::ios::binary);

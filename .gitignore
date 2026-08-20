@@ -19,6 +19,11 @@ inop.settings
 *.keysheet
 setup/
 
+# ── generated benchmark output ──────────────────────────────────────────
+# Timing columns are machine/run-specific — committing them just churns the
+# diff on every re-run for no benefit.
+benchmark.csv
+
 # ── editor / OS noise ───────────────────────────────────────────────────
 .vscode/
 .idea/
