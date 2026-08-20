@@ -141,7 +141,7 @@ covered in full in DESIGN.md rather than here:
 - **The numeral-suffix diacritic scheme.** INOP-38s alphabet has no accented
   letters, so an accented character folds to its base letter plus a digit
   naming which mark it carried (é becomes `e2`, for instance) instead of
-  being dropped. It supports 49 languages by name, is fully reversible, and
+  being dropped. It supports 48 languages by name, is fully reversible, and
   needs no special handling for Pinyin input since it already speaks this
   scheme natively. `fold_diacritics()` and `resubstitute()` in
   `src/logic/languages.cpp` are the entry points; see DESIGN.md for the

@@ -1,4 +1,4 @@
-// languages.hpp — numeral-suffix diacritic scheme for the 49 officially
+// languages.hpp — numeral-suffix diacritic scheme for the 48 officially
 // supported languages.
 //
 // Digits, not new symbols, carry the marks: INOP-38s alphabet already
@@ -9,10 +9,14 @@
 // declared language — because the same digit is deliberately reused across
 // diacritic *classes* that never co-occur in one language's own alphabet
 // (caron and breve both land on digit 3, for instance). Decoding
-// (resubstitute) is where the language tag actually matters: it's what
-// resolves "a3" back to Romanian's ă versus Pinyin's ǎ. A repeated digit
-// ("22", "33", Pinyin's "61"-"64") chains a second mark on the first —
-// see the digit table in languages.cpp for the full assignment.
+// (resubstitute) tries the declared language's own table first — it's what
+// resolves "a3" back to Romanian's ă versus Pinyin's ǎ, the one digit
+// genuinely shared between two languages that disagree on it — then falls
+// back to a table merged from every language for any other mark that's
+// valid Latin diacritic content but not one of the declared language's own
+// (a foreign name, a loanword). A repeated digit ("22", "33", Pinyin's
+// "61"-"64") chains a second mark on the first — see the digit table in
+// languages.cpp for the full assignment.
 #pragma once
 
 #include <string>
@@ -25,7 +29,7 @@ struct LanguageInfo {
     std::string name;
 };
 
-// The 49 officially supported languages, alphabetical by display name
+// The 48 officially supported languages, alphabetical by display name
 // (matching Google Translate's own ordering convention).
 const std::vector<LanguageInfo>& supported_languages();
 bool is_supported_language(const std::string& code);

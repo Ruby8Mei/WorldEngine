@@ -603,8 +603,6 @@ int self_test() {
             {"fra", "Le café est très cher.", "le cafe2 est tre4s cher"},
             {"deu", "Möchten Sie ein großes Käsebrötchen?",
              "mo6chten sie ein gros0es ka6sebro6tchen"},
-            {"heb", "Šalom, ḥaver tov. Ha ṭalmid ṣadiq, we Śarah šamehah.",
-             "s3alom h88aver tov ha t88almid s88adiq we s2arah s3amehah"},
             {"hin", "Maiṃ Kṛṣṇa kī gītā paṛhtā hūṃ.",
              "maim88 kr88s88n88a ki1 gi1ta1 par88hta1 hu1m88"},
             {"hun", "Ő szereti a gyümölcsöt és a tűzhelyet.",
@@ -739,8 +737,6 @@ int self_test() {
 
             {"deu",'a',6,"ä"},{"deu",'o',6,"ö"},{"deu",'u',6,"ü"},{"deu",'s',0,"ß"},
 
-            {"heb",'h',88,"ḥ"},{"heb",'t',88,"ṭ"},{"heb",'s',88,"ṣ"},{"heb",'s',3,"š"},{"heb",'s',2,"ś"},
-
             {"hin",'a',1,"ā"},{"hin",'i',1,"ī"},{"hin",'u',1,"ū"},
             {"hin",'t',88,"ṭ"},{"hin",'d',88,"ḍ"},{"hin",'n',88,"ṇ"},{"hin",'s',88,"ṣ"},
             {"hin",'h',88,"ḥ"},{"hin",'m',88,"ṃ"},{"hin",'r',88,"ṛ"},{"hin",'l',88,"ḷ"},
@@ -827,7 +823,7 @@ int self_test() {
         }
         check(rows_failed == 0, "exhaustive per-language diacritic round trip: " +
                                      std::to_string(rows_checked) + " (letter,digit) pairs across "
-                                     "49 languages");
+                                     "48 languages");
 
         // Pinyin ü + tone: the one case where two diacritic digits chain on
         // a single letter. Verified against the exact examples from the

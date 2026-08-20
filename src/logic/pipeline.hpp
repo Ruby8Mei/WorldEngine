@@ -37,8 +37,11 @@ bool apply_suite_lock(PipelineConfig& cfg, bool historic_lock, int block);
 // Lowercase, map spaces to '#', drop anything the alphabet cannot carry.
 std::string preprocess(const std::string& text, const Alphabet& alpha);
 
-// Insert '/' between a letter and an immediately-following literal digit in
-// RAW operator input — "Room A2" -> "Room A/2" — so it survives folding and
+// Insert '/' between a letter and a literal digit that will end up
+// immediately following it once folding is done — "Room A2" -> "Room A/2",
+// but also "text(2024)" -> "text/(2024)" since fold_diacritics() drops the
+// parenthesis and the digit would otherwise land right against the letter
+// with nothing marking it as literal. So it survives folding and
 // preprocessing distinguishable from a digit the diacritic-numeral scheme
 // introduces (which never gets a separator). A space is not used for this:
 // spaces get folded to SPACE_SUB same as any other space in the message, so

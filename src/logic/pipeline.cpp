@@ -40,14 +40,31 @@ std::string preprocess(const std::string& text, const Alphabet& alpha) {
 std::string mark_literal_digits(const std::string& text) {
     std::string out;
     out.reserve(text.size() + 8);
-    unsigned char prev = 0;
+    // Tracks the last character that will still be there after
+    // fold_diacritics() strips punctuation it doesn't carry (parens, %,
+    // commas, ...) — not just the literal previous byte. Punctuation sitting
+    // between a letter and a digit ("neomneun(50.74%)") disappears during
+    // folding, so if marking only looked at the immediate previous byte, the
+    // digit would end up touching the letter in the folded text with no '/'
+    // to say it doesn't belong to a diacritic-numeral pair — exactly the gap
+    // that broke the human-readable round trip on real corpus text with
+    // parenthetical numbers.
+    unsigned char prev_surviving = 0;
     for (unsigned char c : text) {
         bool is_digit = c >= '0' && c <= '9';
-        bool prev_is_letter = (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') ||
-                               prev >= 0x80;  // any byte of a multi-byte UTF-8 letter
+        bool prev_is_letter = (prev_surviving >= 'A' && prev_surviving <= 'Z') ||
+                               (prev_surviving >= 'a' && prev_surviving <= 'z') ||
+                               prev_surviving >= 0x80;  // any byte of a multi-byte UTF-8 letter
         if (is_digit && prev_is_letter) out += '/';
         out += static_cast<char>(c);
-        prev = c;
+
+        // Mirrors apply_fold_table()'s keep-set (letters, digits, space,
+        // '#', '/') plus multi-byte UTF-8 bytes, which survive as
+        // recognized diacritics get converted rather than dropped.
+        bool survives = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                         (c >= '0' && c <= '9') || c == ' ' || c == '#' ||
+                         c == '/' || c >= 0x80;
+        if (survives) prev_surviving = c;
     }
     return out;
 }

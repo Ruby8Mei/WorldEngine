@@ -257,7 +257,7 @@ carried.
 | 8 | cedilla (consonants) / ogonek (vowels) | ç → c8, ş → s8, ą → a8, ę → e8 |
 | 9 | ring-above | å → a9, ů → u9 |
 | 0 | one genuinely distinct (non-diacritic) letter, at most one per language | German ß → s0, Turkish dotless ı → i0, Croatian đ → d0, Polish ł → l0, Danish ø → o0, Maltese ħ → h0 |
-| 88 | dot-below, its own doubled slot | Yoruba ẹ → e88, Hindi ṭ → t88, Hebrew ḥ → h88 |
+| 88 | dot-below, its own doubled slot | Yoruba ẹ → e88, Hindi ṭ → t88, Hindi ḥ → h88 |
 
 Cedilla and ogonek never land on the same base letter, so sharing digit 8
 between them is unambiguous. A repeated digit chains a second mark on top
@@ -281,24 +281,38 @@ A second pass fixes digit collision: a literal digit right after a letter
 in the raw input is genuinely ambiguous with the diacritic marker (`a2`
 could mean *á, folded* or *the letters a and 2*). Whenever a literal digit
 directly follows a letter with no separator, a `/` gets force-inserted
-between them — "Room A2" becomes "room a/2". A diacritic-fold pair never
-gets a separator; a forced literal digit always does. On decrypt, that `/`
-tells `resubstitute()` to strip it and hand back a plain number instead of
-attempting a lookup. A `/` is not inserted before a bare number with no
-preceding letter, so "1964" stays "1964".
+between them — "Room A2" becomes "room a/2". `mark_literal_digits()` looks
+past punctuation that `fold_diacritics()` will later strip, not just the
+literal previous byte — "text(2024)" also gets marked ("text/(2024)"),
+because the `(` disappears during folding and the digit would otherwise
+land unmarked right against the letter (found via real Wikipedia-sourced
+benchmark corpus text, which naturally has this pattern; synthetic test
+strings never did). A diacritic-fold pair never gets a separator; a forced
+literal digit always does. On decrypt, that `/` tells `resubstitute()` to
+strip it and hand back a plain number instead of attempting a lookup. A
+`/` is not inserted before a bare number with no preceding letter, so
+"1964" stays "1964".
 
 Encoding is lossless in a way plain accent-stripping is not: `e2` can only
 have come from *é*, never from *e*, so decryption restores the accent
 exactly. `fold_diacritics()` and `resubstitute()` live in
-`src/logic/languages.cpp`; encoding is the same for every language, because
-decoding is where the language actually matters — digit 3 alone covers
-Pinyins caron and Romanians breve, two marks that never show up in the
-same language, so only the declared language can tell `a3` apart
-afterward.
+`src/logic/languages.cpp`; encoding is the same for every language via one
+shared global table, so decoding must be too: `resubstitute()` tries the
+active language's own table first, and falls back to a global table
+(merged from every language's own table) for a mark that's legitimate in
+some *other* supported language but not this one — a foreign proper noun,
+a loanword, a gloss. The one real ambiguity in the merged table — digit 3
+alone covers both Pinyin's caron and Romanian's breve, and the two
+languages disagree on what it means — is excluded from the fallback
+automatically rather than guessed at, so a Pinyin name inside a Romanian
+message stays a visibly stranded digit instead of silently decoding to
+the wrong character. That exclusion is computed at startup from whichever
+languages' tables actually collide, not hand-maintained, so it stays
+correct if a future language introduces a new collision.
 
-Officially supported, 49 languages, alphabetical by name: Albanian,
+Officially supported, 48 languages, alphabetical by name: Albanian,
 Basque, Bosnian, Cantonese, Catalan, Creole, Croatian, Czech, Danish,
-Dutch, English, Estonian, Finnish, French, German, Hebrew (Latin), Hindi
+Dutch, English, Estonian, Finnish, French, German, Hindi
 (Latin), Hungarian, Igbo, Indonesian, Irish, Italian, Korean (Latin),
 Kurdish (Kurmanji), Latin, Lithuanian, Luxembourgish, Malay, Maltese,
 Mandarin (via Pinyin), Maori, Montenegrin, Norwegian, Polish, Portuguese,
@@ -307,7 +321,11 @@ Spanish, Swahili, Swedish, Tagalog, Turkish, Welsh, Yoruba, Zulu/Xhosa.
 Cantonese is a diacritic tone scheme devised for this project specifically
 (not a claim to match Yale or Jyutping, which are both tone-number
 systems) — six tones over the five plain vowels, reusing the same
-mark-shape digits Mandarin already uses for its own four tones.
+mark-shape digits Mandarin already uses for its own four tones. Hebrew is
+not currently supported — real-world Hebrew text has no niqqud (vowel
+points), which an academic transliteration scheme needs to be meaningful,
+and shin/sin (š/ś) can't even be disambiguated without it; revisit once
+there's a real plan for non-Latin-native scripts.
 
 ## 10. Non-goals
 

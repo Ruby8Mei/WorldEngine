@@ -15,7 +15,7 @@ const std::vector<LanguageInfo>& supported_languages() {
         {"czr", "Czech"},     {"dan", "Danish"},    {"nld", "Dutch"},
         {"eng", "English"},   {"est", "Estonian"},
         {"fin", "Finnish"},   {"fra", "French"},    {"deu", "German"},
-        {"heb", "Hebrew (Latin)"}, {"hin", "Hindi (Latin)"},
+        {"hin", "Hindi (Latin)"},
         {"hun", "Hungarian"}, {"ibo", "Igbo"}, {"ind", "Indonesian"}, {"gle", "Irish"},
         {"ita", "Italian"},   {"kor", "Korean (Latin)"},
         {"kmr", "Kurdish (Kurmanji)"}, {"lat", "Latin"},
@@ -123,8 +123,7 @@ const std::vector<FoldEntry>& single_fold_table() {
         // dot-below -> repeated 8 (its own doubled slot, same convention as
         // the dot-above/double-acute slots above — single 8 stays cedilla/
         // ogonek, unrelated). Covers Yoruba's open vowels + ṣ, Igbo's open
-        // vowels, Hindi's IAST retroflex/visarga/anusvara/vocalic set, and
-        // Hebrew's academic-transliteration ḥ/ṭ/ṣ.
+        // vowels, and Hindi's IAST retroflex/visarga/anusvara/vocalic set.
         {"ẹ", "e88"}, {"Ẹ", "e88"}, {"ọ", "o88"}, {"Ọ", "o88"},
         {"ị", "i88"}, {"Ị", "i88"}, {"ụ", "u88"}, {"Ụ", "u88"},
         {"ṣ", "s88"}, {"Ṣ", "s88"}, {"ṭ", "t88"}, {"Ṭ", "t88"},
@@ -257,11 +256,6 @@ const std::map<std::string, DecodeTable>& decode_tables() {
 
         {"deu", make({{{'a',6},"ä"}, {{'o',6},"ö"}, {{'u',6},"ü"}, {{'s',0},"ß"}})},
 
-        // Academic/scholarly transliteration (dot-below consonants), not
-        // the casual digraph-only style.
-        {"heb", make({{{'h',88},"ḥ"}, {{'t',88},"ṭ"}, {{'s',88},"ṣ"},
-                      {{'s',3},"š"}, {{'s',2},"ś"}})},
-
         // Full academic IAST retroflex/nasal/visarga/anusvara/vocalic set —
         // deliberately inclusive over minimal, per operator preference, so
         // no legitimately-encoded mark gets silently stripped. Excludes only
@@ -373,6 +367,36 @@ const std::map<std::string, DecodeTable>& decode_tables() {
     return t;
 }
 
+// fold_diacritics() folds every language's diacritics through one shared
+// global table, but resubstitute() historically only ever consulted the
+// active language's own table — so a diacritic that's legitimate in some
+// OTHER supported language (a foreign proper noun, a loanword, a gloss)
+// folds fine but can never decode back for a language whose own table
+// doesn't happen to define that mark. Built by merging every language's
+// decode table; any (letter, digit) key where two languages disagree on
+// the mark is a genuine ambiguity (confirmed to exist exactly once today:
+// 'a3' means Romanian's ă in ron but Pinyin's ǎ in cmn/yue) and must NOT
+// be guessed at, or a message could silently decode to the wrong
+// character while looking like a successful round trip. Excluding
+// conflicting keys — rather than hand-listing them — keeps this correct
+// automatically if a future language's table introduces a new collision.
+const DecodeTable& global_decode_table() {
+    static const DecodeTable t = [] {
+        DecodeTable merged;
+        std::map<DecodeKey, bool> conflicting;
+        for (const auto& [lang, table] : decode_tables()) {
+            for (const auto& [key, value] : table) {
+                auto it = merged.find(key);
+                if (it == merged.end()) merged[key] = value;
+                else if (it->second != value) conflicting[key] = true;
+            }
+        }
+        for (const auto& [key, _] : conflicting) merged.erase(key);
+        return merged;
+    }();
+    return t;
+}
+
 }  // namespace
 
 std::string fold_diacritics(const std::string& text, const std::string& language) {
@@ -402,6 +426,19 @@ std::string resubstitute(const std::string& text, const std::string& language) {
     auto lt = decode_tables().find(language);
     const DecodeTable empty;
     const DecodeTable& table = lt != decode_tables().end() ? lt->second : empty;
+    const DecodeTable& global = global_decode_table();
+
+    // Language-specific table first (it's the authority on that language's
+    // own orthography); the global table only steps in for a mark that
+    // isn't one of this language's own — see global_decode_table() above.
+    // Returns nullptr on a miss in both — never compare the result against
+    // one specific table's end() iterator, since it may come from either.
+    auto find_mark = [&](const DecodeKey& key) -> const std::string* {
+        auto it = table.find(key);
+        if (it != table.end()) return &it->second;
+        auto git = global.find(key);
+        return git != global.end() ? &git->second : nullptr;
+    };
 
     std::string out;
     out.reserve(text.size());
@@ -420,12 +457,14 @@ std::string resubstitute(const std::string& text, const std::string& language) {
             // matches for this language.
             if (i + 2 < n && std::isdigit(static_cast<unsigned char>(text[i + 2]))) {
                 int two = (text[i + 1] - '0') * 10 + (text[i + 2] - '0');
-                auto it2 = table.find({c, two});
-                if (it2 != table.end()) { out += it2->second; i += 3; continue; }
+                if (const std::string* mark = find_mark({c, two})) {
+                    out += *mark; i += 3; continue;
+                }
             }
             int one = text[i + 1] - '0';
-            auto it1 = table.find({c, one});
-            if (it1 != table.end()) { out += it1->second; i += 2; continue; }
+            if (const std::string* mark = find_mark({c, one})) {
+                out += *mark; i += 2; continue;
+            }
         }
         if (is_letter && i + 1 < n && text[i + 1] == '/' && i + 2 < n &&
             std::isdigit(static_cast<unsigned char>(text[i + 2]))) {
