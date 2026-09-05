@@ -1,5 +1,6 @@
 #include "gui_script.hpp"
 
+#include <cctype>
 #include <fstream>
 #include <sstream>
 
@@ -64,7 +65,8 @@ bool InputScript::load(const std::string& path, std::string* error) {
         } else if (verb == "key") {
             std::string which;
             if (!(ls >> which))
-                return fail(line_no, "key needs enter, escape, backspace or an arrow");
+                return fail(line_no,
+                            "key needs enter, escape, backspace, an arrow or a single letter");
             if (which == "enter") s.key = Key::Enter;
             else if (which == "escape") s.key = Key::Escape;
             else if (which == "backspace") s.key = Key::Backspace;
@@ -72,7 +74,10 @@ bool InputScript::load(const std::string& path, std::string* error) {
             else if (which == "down") s.key = Key::Down;
             else if (which == "left") s.key = Key::Left;
             else if (which == "right") s.key = Key::Right;
-            else return fail(line_no, "unknown key '" + which + "'");
+            else if (which.size() == 1 && std::isalpha(static_cast<unsigned char>(which[0]))) {
+                s.key = Key::Letter;
+                s.letter = static_cast<char>(std::toupper(static_cast<unsigned char>(which[0])));
+            } else return fail(line_no, "unknown key '" + which + "'");
             s.verb = Verb::Key;
         } else if (verb == "ctrl") {
             std::string which;
@@ -184,6 +189,7 @@ bool InputScript::fill(GuiInput& out, float dt) {
                 case Key::Down: out.key_down = true; break;
                 case Key::Left: out.key_left = true; break;
                 case Key::Right: out.key_right = true; break;
+                case Key::Letter: out.key_letter = s.letter; break;
             }
             ++at_;
             break;

@@ -1,7 +1,9 @@
 #include "gui_prefs.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <system_error>
 
 #include <nlohmann/json.hpp>
 
@@ -13,6 +15,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#include <shellapi.h>
 #endif
 
 namespace inop {
@@ -130,27 +134,111 @@ Theme effective_theme(Theme t) {
     return Theme::Dark;
 }
 
+namespace {
+
+// The name shown for a file nobody named for us: the filename with its
+// extension taken off. Underscores read as word breaks, since that is what
+// a font file uses where a name has a space.
+std::string name_from_filename(const std::string& file) {
+    std::string out = file.substr(0, file.find_last_of('.'));
+    for (char& c : out)
+        if (c == '_') c = ' ';
+    return out;
+}
+
+bool is_font_filename(const std::string& file) {
+    const std::size_t dot = file.find_last_of('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = file.substr(dot);
+    for (char& c : ext)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return ext == ".ttf" || ext == ".otf";
+}
+
+std::vector<FontChoice> g_fonts;
+// Font files found in the folder that were turned away for having no
+// licence beside them. Kept so the settings row can name them rather than
+// leaving the operator to wonder why the file they just copied in is not
+// on the list.
+std::vector<std::string> g_unlicensed;
+bool g_fonts_scanned = false;
+
+}  // namespace
+
+void refresh_available_fonts() {
+    // The operator list, in the operator order. The first two come with
+    // Windows and the next two come with INOP. Harlow is a Microsoft face,
+    // neither bundled nor guaranteed, so it appears only where it is
+    // installed. Grandview was asked for and then dropped: it is a
+    // Microsoft font that may not be redistributed, so bundling it was
+    // never open to us.
+    const FontChoice candidates[] = {
+        {"Courier New", "cour.ttf"},
+        {"Times New Roman", "times.ttf"},
+        {"Crimson Pro", "CrimsonPro.ttf"},
+        {"SGA", "sga-all-characters.otf"},
+        {"Harlow Solid Italic", "HARLOWSI.TTF"},
+    };
+    g_fonts.clear();
+    for (const FontChoice& c : candidates)
+        if (!font_path(c.file).empty()) g_fonts.push_back(c);
+
+    // Anything else the operator has dropped into the bundled folder, in
+    // whatever order the filesystem gives them, after the named list. The
+    // scan is what makes "add your own" mean anything: without it the
+    // entry would open a folder that no amount of copying into could
+    // change what the list offers.
+    //
+    // A face found this way is only offered with its licence beside it,
+    // named for the font: MyFont.ttf needs MyFont-license.txt. Every font
+    // worth having states terms, most of them require the licence to be
+    // distributed with the file, and a program that offered a face it had
+    // no licence for would be putting the operator in the wrong. The five
+    // named above are exempt because their licences ship with INOP.
+    g_unlicensed.clear();
+    std::error_code ec;
+    std::filesystem::directory_iterator it(kBundledFontsDir, ec);
+    if (ec) return;
+    for (const std::filesystem::directory_entry& e : it) {
+        if (!e.is_regular_file(ec)) continue;
+        const std::string file = e.path().filename().string();
+        if (!is_font_filename(file)) continue;
+        bool already = false;
+        for (const FontChoice& c : g_fonts)
+            if (c.file == file) already = true;
+        if (already) continue;
+        if (!readable(std::string(kBundledFontsDir) + licence_filename(file))) {
+            g_unlicensed.push_back(file);
+            continue;
+        }
+        g_fonts.push_back(FontChoice{name_from_filename(file), file});
+    }
+}
+
+const std::vector<std::string>& unlicensed_font_files() { return g_unlicensed; }
+
+std::string licence_filename(const std::string& font_file) {
+    return font_file.substr(0, font_file.find_last_of('.')) + "-license.txt";
+}
+
 const std::vector<FontChoice>& available_fonts() {
-    static const std::vector<FontChoice> found = [] {
-        // The operator list, in the operator order. The first two come
-        // with Windows and the next two come with INOP. Harlow is a
-        // Microsoft face, neither bundled nor guaranteed, so it appears
-        // only where it is installed. Grandview was asked for and then
-        // dropped: it is a Microsoft font that may not be redistributed,
-        // so bundling it was never open to us.
-        const FontChoice candidates[] = {
-            {"Courier New", "cour.ttf"},
-            {"Times New Roman", "times.ttf"},
-            {"Crimson Pro", "CrimsonPro.ttf"},
-            {"SGA", "sga-all-characters.otf"},
-            {"Harlow Solid Italic", "HARLOWSI.TTF"},
-        };
-        std::vector<FontChoice> out;
-        for (const FontChoice& c : candidates)
-            if (!font_path(c.file).empty()) out.push_back(c);
-        return out;
-    }();
-    return found;
+    if (!g_fonts_scanned) {
+        g_fonts_scanned = true;
+        refresh_available_fonts();
+    }
+    return g_fonts;
+}
+
+void open_bundled_fonts_folder() {
+#if defined(_WIN32)
+    // The folder is opened, not a file run, so there is nothing here that
+    // could execute anything the operator put in it.
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::absolute(kBundledFontsDir, ec);
+    if (ec) return;
+    std::filesystem::create_directories(dir, ec);
+    ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
 }
 
 const std::vector<int>& zoom_steps() {

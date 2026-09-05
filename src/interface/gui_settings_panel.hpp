@@ -15,6 +15,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "gui_prefs.hpp"
 #include "gui_widgets.hpp"
@@ -80,6 +81,15 @@ private:
     int theme_idx_ = 0;
     int font_idx_ = 0;
     int zoom_idx_ = 0;
+
+    // The font row's own entries, held rather than built where they are
+    // needed, because the dropdown keeps a pointer to the list it was
+    // given and reads it again when the open popup draws later in the
+    // frame. Rebuilt only when the folder is rescanned.
+    std::vector<std::string> font_options_;
+    // Whether the font list was open on the previous frame, so the folder
+    // is rescanned once as it opens and not once per frame while it is up.
+    bool font_list_open_ = false;
 
     // Locked rows still need somewhere for the widget to write, since the
     // widget set takes a reference. Nothing reads these.

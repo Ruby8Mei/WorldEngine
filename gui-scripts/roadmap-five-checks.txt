@@ -1,0 +1,54 @@
+# Everything landed in this pass, in one run.
+#
+# 1. Maintenance now arrives from the left where Setup arrives from the
+#    right, so the shot is taken part way through the slide.
+# 2. Control and F jumps into the settings search, replacing a bare k.
+# 3. A font file in fonts/ with no licence beside it is named on the font
+#    row rather than silently dropped. That line only appears while such a
+#    file is actually there: drop any .ttf in and take the shot again.
+#
+# The "Add your own..." entry at the end of the font list is not covered
+# here. Opening the list from the keyboard needs the focus on the font row,
+# and Down from there lands on Reset to default, because a disabled Apply
+# takes no focus. Open the list with the pointer instead.
+move -5000 -5000
+wait 0.6
+
+# Main menu order is Open INOP, Terminal, Maintenance, Settings, Exit.
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.09
+shot maintenance-arriving-from-left
+wait 0.6
+shot maintenance-settled
+key escape
+wait 0.09
+shot maintenance-leaving-to-right
+wait 0.6
+
+# Into Settings, then Control and F.
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.8
+shot settings-before-ctrl-f
+ctrl on
+key f
+wait 0.2
+ctrl off
+wait 0.3
+type font
+wait 0.4
+shot settings-ctrl-f-focused-and-typed
+quit

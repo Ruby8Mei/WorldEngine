@@ -65,6 +65,28 @@ std::string font_path(const std::string& file);
 // offer.
 const std::vector<FontChoice>& available_fonts();
 
+// Rebuilds that list from disk. Called when the font list is opened, so a
+// file dropped into the bundled folder while INOP is running is offered
+// without a restart.
+void refresh_available_fonts();
+
+// Shows the bundled fonts folder in the file manager, creating it if it is
+// not there. Does nothing off Windows.
+void open_bundled_fonts_folder();
+
+// The licence a font added to the bundled folder has to come with, named
+// for the font itself: MyFont.ttf asks for MyFont-license.txt. Without it
+// the face is not offered, because most font licences require the terms to
+// travel with the file and INOP has no way to agree to terms it cannot
+// read.
+std::string licence_filename(const std::string& font_file);
+
+// Font files in the bundled folder that were turned away for having no
+// licence beside them, filled by the last scan. Named so the settings row
+// can say which file needs what rather than staying silent about a file
+// the operator can plainly see is there.
+const std::vector<std::string>& unlicensed_font_files();
+
 // The preferences that currently do something. Rows the settings screen
 // draws locked (arachnophobia mode, font size, audio, interface language)
 // are deliberately absent: nothing reads them, so nothing should store

@@ -125,14 +125,20 @@ const std::vector<std::string>& script_options() {
     return v;
 }
 
-const std::vector<std::string>& font_options() {
-    static const std::vector<std::string> v = [] {
-        std::vector<std::string> out;
-        for (const FontChoice& c : available_fonts()) out.push_back(c.name);
-        if (out.empty()) out.push_back("no system fonts found");
-        return out;
-    }();
-    return v;
+// The last entry, which is not a font. Picking it opens the folder and
+// puts the selection back where it was, so the list is one longer than
+// available_fonts() and only this index has no face behind it.
+const char* const kAddYourOwn = "Add your own...";
+
+// Rebuilt on every call rather than held in a static, because the list of
+// faces changes the moment the operator drops a file into the folder and
+// the row has to be able to say so without a restart.
+std::vector<std::string> font_options() {
+    std::vector<std::string> out;
+    for (const FontChoice& c : available_fonts()) out.push_back(c.name);
+    if (out.empty()) out.push_back("no system fonts found");
+    else out.push_back(kAddYourOwn);
+    return out;
 }
 
 int index_of_font(const std::string& file) {
@@ -242,18 +248,6 @@ std::string fold_lower(const std::string& s) {
     return out;
 }
 
-// Takes one typed character out of the frame and says whether it was
-// there. A shortcut that answers a letter has to take it, or the control
-// it jumps to types that same letter the moment it arrives.
-bool take_typed(GuiInput& in, unsigned int codepoint) {
-    for (std::size_t i = 0; i < in.typed.size(); ++i)
-        if (in.typed[i] == codepoint) {
-            in.typed.erase(in.typed.begin() + static_cast<std::ptrdiff_t>(i));
-            return true;
-        }
-    return false;
-}
-
 }  // namespace
 
 bool SettingsPanel::shown(const std::string& label) const {
@@ -345,14 +339,17 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     // The search row sits above everything it filters, and is never
     // filtered itself.
     const Rect search_r = control_rect(x, start);
-    // k jumps into the box. Once the box has the focus, k is a letter like
-    // any other, so the shortcut only fires while the box does not have
-    // it, and the keystroke that fired it is taken out of the frame rather
-    // than typed on arrival. An open list has first claim on the keyboard,
-    // so it is left alone.
-    if (open_dropdown_id_ < 0 && !has_keyboard_focus(search_r) &&
-        (take_typed(in, 'k') || take_typed(in, 'K')))
+    // Control and F together jump into the box, which is what the roadmap
+    // settled on. It replaces a bare k, which could only ever work while
+    // the box did not have the focus, since inside the box k is a letter
+    // like any other. A shortcut carrying Control has no such problem and
+    // fires wherever the focus happens to be. An open list still has first
+    // claim on the keyboard, so it is left alone.
+    if (open_dropdown_id_ < 0 && in.ctrl_held && in.key_letter == 'F') {
         set_keyboard_focus(search_r);
+        // Taken out of the frame so nothing further down answers it too.
+        in.key_letter = 0;
+    }
     row_label(x, start, "Search", false);
     // Filtering is a view and not a preference, so it never touches
     // pending_ and Apply stays as dark as it was. A changed search does
@@ -549,11 +546,39 @@ float SettingsPanel::draw_appearance(const GuiInput& in, float x, float y) {
     y = heading(x, y + kSectionGap, "Appearance");
 
     if (shown("Font family")) {
+        // Rescanned as the list opens, so a file copied into the folder a
+        // moment ago is in the list the operator is about to read. Once
+        // per opening and not per frame: it touches the disk.
+        if (open_dropdown_id_ != kIdFont) font_list_open_ = false;
+        else if (!font_list_open_) {
+            font_list_open_ = true;
+            refresh_available_fonts();
+            font_options_ = font_options();
+            font_idx_ = index_of_font(pending_.font_file);
+        }
+        if (font_options_.empty()) font_options_ = font_options();
         bool have_fonts = !available_fonts().empty();
         row_label(x, y, "Font family", !have_fonts);
-        dropdown(control_rect(x, y), font_options(), font_idx_, kIdFont, open_dropdown_id_, in,
+        dropdown(control_rect(x, y), font_options_, font_idx_, kIdFont, open_dropdown_id_, in,
                  have_fonts);
+        // The last entry is not a face. It shows the folder and hands the
+        // row straight back to whatever was selected before, so the pick
+        // never has to be undone by hand.
+        if (font_idx_ >= static_cast<int>(available_fonts().size())) {
+            open_bundled_fonts_folder();
+            font_idx_ = index_of_font(pending_.font_file);
+            set_status("Put a .ttf or .otf in that folder with its licence beside it, "
+                       "then open this list again.",
+                       false);
+        }
         if (!have_fonts) row_note(x, y, "no usable font file in the system font folder");
+        // A file turned away for having no licence is named here. Silence
+        // would read as the scan having missed it, and the operator would
+        // go looking for a fault instead of for a licence.
+        else if (!unlicensed_font_files().empty()) {
+            const std::string& f = unlicensed_font_files().front();
+            row_note(x, y, f + " needs " + licence_filename(f) + " beside it");
+        }
         y += kRowH + kRowGap;
     }
 

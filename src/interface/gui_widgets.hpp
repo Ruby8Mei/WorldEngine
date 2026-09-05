@@ -51,6 +51,13 @@ struct GuiInput {
     // than arriving as an event, since what matters is whether it is down
     // at the moment of the click or keypress.
     bool ctrl_held = false;
+    // The letter key pressed this frame, as an uppercase ASCII letter, or
+    // 0 for none. Separate from typed, because holding Control suppresses
+    // the character event on Windows: Control and F together produce no
+    // typed F at all, so a shortcut built on typed could never see one.
+    // One field rather than a bool per letter, since only one shortcut can
+    // fire in a frame and the roadmap asks for a whole row of them.
+    char key_letter = 0;
 };
 
 // Called once per frame by gui.cpp, before the screen draws, with the

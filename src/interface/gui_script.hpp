@@ -79,7 +79,10 @@ public:
 
 private:
     enum class Verb { Move, Click, Press, Release, Type, Key, Ctrl, Scroll, Wait, Shot, Quit };
-    enum class Key { Enter, Escape, Backspace, Up, Down, Left, Right };
+    // Letter is any of A to Z, carried in Step::letter. It is a key press
+    // and not a typed character, so it is the only way a script can reach
+    // a Control shortcut: holding Control produces no character event.
+    enum class Key { Enter, Escape, Backspace, Up, Down, Left, Right, Letter };
 
     struct Step {
         Verb verb = Verb::Wait;
@@ -88,6 +91,7 @@ private:
         float seconds = 0.0f;     // Wait
         bool flag = false;        // Ctrl
         Key key = Key::Enter;
+        char letter = 0;
     };
 
     std::vector<Step> steps_;

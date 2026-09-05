@@ -67,6 +67,11 @@ void key_callback(GLFWwindow*, int key, int /*scancode*/, int action, int /*mods
     if (key == GLFW_KEY_RIGHT) g_input.key_right = true;
     if (key == GLFW_KEY_UP) g_input.key_up = true;
     if (key == GLFW_KEY_DOWN) g_input.key_down = true;
+    // Recorded here rather than read out of the typed characters, because
+    // Windows sends no character event while Control is held. GLFW_KEY_A
+    // through GLFW_KEY_Z are the ASCII codes for the uppercase letters, so
+    // the key is already the letter it stands for.
+    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) g_input.key_letter = static_cast<char>(key);
 }
 
 void scroll_callback(GLFWwindow*, double /*xoffset*/, double yoffset) { g_input.scroll_y += yoffset; }
@@ -463,6 +468,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             screen_input.key_escape = false;
             screen_input.key_left = screen_input.key_right = false;
             screen_input.key_up = screen_input.key_down = false;
+            screen_input.key_letter = 0;
             screen_input.scroll_y = 0;
             // The pointer goes with the rest of it. Left in place, the
             // screen behind still reads as hovered under the dimming, so
@@ -591,13 +597,16 @@ GuiExit run_gui_settings(const std::string& script_path) {
             // nor the clipboard to do it.
             maintenance.frame(screen_input, lw, lh);
             if (maintenance.back_clicked() || maintenance.wordmark_clicked())
-                go_to(Screen::MainMenu, -1.0f, 0.0f);
+                go_to(Screen::MainMenu, 1.0f, 0.0f);
         } else {
             main_menu.frame(screen_input, lw, lh);
             if (main_menu.open_inop_requested()) go_to(Screen::Setup, 1.0f, 0.0f);
             if (main_menu.maintenance_requested()) {
                 maintenance.open();
-                go_to(Screen::Maintenance, 1.0f, 0.0f);
+                // Left, where Setup goes right. The two screens the menu
+                // opens sideways are told apart by which way they arrive,
+                // so a glance at the movement says which one this is.
+                go_to(Screen::Maintenance, -1.0f, 0.0f);
             }
             if (main_menu.settings_requested()) {
                 settings.open(prefs);
@@ -634,7 +643,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 // A sub-screen has somewhere to go back to, so Escape means
                 // up rather than out. Only the main menu, which has nothing
                 // above it, reads Escape as leaving.
+                // Each screen leaves the way its own Back button leaves, so
+                // Escape and Back are never two different journeys out of
+                // the same place.
                 if (screen == Screen::Settings) go_to(Screen::MainMenu, 0.0f, -1.0f);
+                else if (screen == Screen::Maintenance) go_to(Screen::MainMenu, 1.0f, 0.0f);
                 else go_to(Screen::MainMenu, -1.0f, 0.0f);
             } else {
                 modal = Modal::ConfirmQuit;
@@ -690,6 +703,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // frame — clear it before the next poll picks up new events.
         g_input.typed.clear();
         g_input.key_backspace = g_input.key_enter = g_input.key_escape = false;
+        g_input.key_letter = 0;
         g_input.key_left = g_input.key_right = g_input.key_up = g_input.key_down = false;
         g_input.scroll_y = 0;
     }
