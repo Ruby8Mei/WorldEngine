@@ -400,6 +400,16 @@ GuiExit run_gui_settings(const std::string& script_path) {
     enum class Modal { None, ConfirmQuit, ZoomUnsupported };
     Modal modal = Modal::None;
 
+    // Which modal was on screen when the previous frame finished. A modal
+    // raised by a key would otherwise be handed the very key that raised
+    // it, in the same frame, and answer it: Escape on the main menu opened
+    // the quit box and cancelled it again, and Enter on the focused Exit
+    // button opened it and confirmed it, quitting without ever showing the
+    // question. Same shape as the dropdown popup latch in gui_widgets.cpp,
+    // and the same rule — a thing has to have been drawn once before it is
+    // allowed to answer for itself.
+    Modal modal_shown_last = Modal::None;
+
     gui::set_ui_scale(static_cast<float>(prefs.zoom_percent) / 100.0f);
     gui::set_motion_enabled(!prefs.reduced_motion);
 
@@ -632,7 +642,18 @@ GuiExit run_gui_settings(const std::string& script_path) {
         }
 
         // Modals draw last so they sit over whichever screen is behind, and
-        // they get the real input that the screen was just denied.
+        // they get the real input that the screen was just denied — except
+        // on the frame one opens, where the keys that opened it are held
+        // back. It still draws, so the operator sees it immediately.
+        gui::GuiInput modal_input = g_input;
+        if (modal != modal_shown_last) {
+            modal_input.key_enter = false;
+            modal_input.key_escape = false;
+            modal_input.mouse_pressed = false;
+            modal_input.mouse_released = false;
+        }
+        modal_shown_last = modal;
+
         if (modal == Modal::ConfirmQuit) {
             // The settings screen holds an edit pending until Apply, and
             // leaving saves what is in force rather than what is pending,
@@ -646,7 +667,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 pending ? "Settings you have not applied will be lost, and so will an "
                           "unsaved setup."
                         : "Your settings are saved. An unsaved setup is not.",
-                pending ? "Quit anyway" : "Save & quit", "Cancel", g_input);
+                pending ? "Quit anyway" : "Save & quit", "Cancel", modal_input);
             if (choice == gui::ModalChoice::Confirm)
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
             else if (choice == gui::ModalChoice::Cancel)
@@ -656,7 +677,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
                                   "That zoom is not supported yet",
                                   "Above " + std::to_string(gui::kMaxSupportedZoom) +
                                       "% the panels do not fit the window. Zoom left unchanged.",
-                                  g_input))
+                                  modal_input))
                 modal = Modal::None;
         }
 

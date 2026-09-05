@@ -1,0 +1,37 @@
+# The quit box has to survive the very key that raises it.
+#
+# Escape on the main menu used to open the box and cancel it in the same
+# frame, and Enter on the focused Exit button used to open it and confirm
+# it, quitting without ever showing the question. Both shots below must
+# show the box on screen.
+#
+# The pointer is parked off screen throughout, so nothing here is a hover.
+move -5000 -5000
+wait 0.6
+shot menu-before-escape
+key escape
+wait 0.5
+shot menu-after-escape
+key escape
+wait 0.4
+shot menu-escape-cancelled
+
+# Now the other half. Arrow down to Exit and press Enter on it. INOP is
+# still running at this point only if the first half worked. Five presses:
+# the first lands on Open INOP and the rest walk down to Exit, which is the
+# last button on the menu.
+key down
+wait 0.3
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+shot menu-focus-on-exit
+key enter
+wait 0.5
+shot menu-enter-on-focused
+quit
