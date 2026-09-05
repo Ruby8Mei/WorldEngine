@@ -60,7 +60,9 @@ void draw_rect_outline(float x, float y, float w, float h, Color c, float thickn
 // partially off its own bounds by design — a dropdown popup scrolled by a
 // fraction of a row — since draw_rect/draw_text otherwise draw their full
 // extent with no cropping, bleeding into whatever sits just outside that
-// rect. Not nestable: only one scissor rect is active at a time.
+// rect. Nestable: an inner rect is intersected with the one already in
+// force, so a clip inside a clip means both, and end_scissor() puts the
+// outer one back rather than dropping the clip altogether.
 void begin_scissor(float x, float y, float w, float h);
 void end_scissor();
 

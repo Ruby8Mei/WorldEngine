@@ -1,0 +1,21 @@
+# Does the widest note stay inside the settings column in a wide typeface.
+# Run this with a wide face selected. The notes beside Font size, Interface
+# language and INOP script are the ones to look at: they must stop at the
+# right edge of the column and never reach the edge of the window.
+move -5000 -5000
+wait 0.6
+key down
+wait 0.3
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.8
+shot settings-wide-font-top
+scroll -6
+wait 0.5
+shot settings-wide-font-bottom
+quit

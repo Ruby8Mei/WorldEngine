@@ -127,6 +127,37 @@ float g_ui_scale = 1.0f;
 float g_offset_x = 0.0f;
 float g_offset_y = 0.0f;
 
+// One scissor rect in GL's bottom-left pixel space, ready for glScissor.
+struct ScissorRect {
+    int x, y, w, h;
+};
+
+// The scissor rects currently in force, innermost last. A stack rather
+// than a single rect so that a clip inside a clip means both: a settings
+// row that crops its own note is drawn inside the scroll region that crops
+// the whole page, and the note must not escape either of them.
+std::vector<ScissorRect> g_scissor_stack;
+
+// Not every typeface draws the same point size at the same width. SGA is
+// three times wider per letter than Courier at 18 pixels, which makes a
+// panel laid out for Courier look shouted rather than typed, so it is
+// baked smaller. Only faces that need it are listed; anything absent is
+// baked at the size the layout was drawn for.
+float typeface_size_scale(const std::string& font_file) {
+    if (font_file == "sga-all-characters.otf") return 0.6f;
+    return 1.0f;
+}
+
+void apply_top_scissor() {
+    if (g_scissor_stack.empty()) {
+        glDisable(GL_SCISSOR_TEST);
+        return;
+    }
+    const ScissorRect& r = g_scissor_stack.back();
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(r.x, r.y, r.w, r.h);
+}
+
 }  // namespace
 
 bool render_init() {
@@ -178,7 +209,6 @@ void set_ui_scale(float scale) {
 float ui_scale() { return g_ui_scale; }
 
 void begin_scissor(float x, float y, float w, float h) {
-    glEnable(GL_SCISSOR_TEST);
     // glScissor is bottom-left-origin regardless of the glOrtho we set up,
     // so flip y here rather than asking every caller to think in GL's
     // coordinate space. It also speaks pixels while callers speak logical
@@ -189,11 +219,37 @@ void begin_scissor(float x, float y, float w, float h) {
     // added by hand here.
     const float px = (x + g_offset_x) * s, py = (y + g_offset_y) * s;
     const float pw = w * s, ph = h * s;
-    glScissor(static_cast<int>(px), static_cast<int>(static_cast<float>(g_viewport_h) - (py + ph)),
-              static_cast<int>(pw), static_cast<int>(ph));
+    ScissorRect r;
+    r.x = static_cast<int>(px);
+    r.y = static_cast<int>(static_cast<float>(g_viewport_h) - (py + ph));
+    r.w = static_cast<int>(pw);
+    r.h = static_cast<int>(ph);
+
+    // Nested, so the inner rect can only ever take space away. Overlapping
+    // an outer rect from outside leaves a width or height of zero, which
+    // draws nothing — which is right, since nothing of it was visible.
+    if (!g_scissor_stack.empty()) {
+        const ScissorRect& o = g_scissor_stack.back();
+        const int x0 = r.x > o.x ? r.x : o.x;
+        const int y0 = r.y > o.y ? r.y : o.y;
+        const int x1r = r.x + r.w, x1o = o.x + o.w;
+        const int y1r = r.y + r.h, y1o = o.y + o.h;
+        const int x1 = x1r < x1o ? x1r : x1o;
+        const int y1 = y1r < y1o ? y1r : y1o;
+        r.x = x0;
+        r.y = y0;
+        r.w = x1 > x0 ? x1 - x0 : 0;
+        r.h = y1 > y0 ? y1 - y0 : 0;
+    }
+
+    g_scissor_stack.push_back(r);
+    apply_top_scissor();
 }
 
-void end_scissor() { glDisable(GL_SCISSOR_TEST); }
+void end_scissor() {
+    if (!g_scissor_stack.empty()) g_scissor_stack.pop_back();
+    apply_top_scissor();
+}
 
 void clear(Color background) {
     glClearColor(background.r, background.g, background.b, background.a);
@@ -238,9 +294,10 @@ bool load_fonts(const std::string& font_file) {
     // across the whole panel. Which one it is became a preference; that it
     // is the same one in all three sizes did not.
     free_atlases();
-    bool ok_body = bake_font(path, 18.0f, g_body);
-    bool ok_word = bake_font(path, 44.0f, g_wordmark);
-    bool ok_large = bake_font(path, 28.0f, g_body_large);
+    const float k = typeface_size_scale(font_file);
+    bool ok_body = bake_font(path, 18.0f * k, g_body);
+    bool ok_word = bake_font(path, 44.0f * k, g_wordmark);
+    bool ok_large = bake_font(path, 28.0f * k, g_body_large);
     if (!(ok_body && ok_word && ok_large)) {
         free_atlases();
         return false;
