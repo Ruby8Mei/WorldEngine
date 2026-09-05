@@ -33,8 +33,6 @@ public:
     // width/height are the current framebuffer size in pixels.
     void frame(const GuiInput& in, int width, int height);
 
-    // True the frame Back was clicked — caller returns to the main menu.
-    bool back_clicked() const { return back_clicked_; }
     // True the frame the INOP wordmark was clicked — caller returns to the
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
@@ -114,7 +112,6 @@ private:
     std::string status_;
     bool status_error_ = false;
     bool apply_pending_ = false;
-    bool back_clicked_ = false;
     bool wordmark_clicked_ = false;
 };
 

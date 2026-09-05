@@ -1,0 +1,33 @@
+# Both screens after they were put on one shared row layout.
+#
+# Settings should carry no Back button: the wordmark went to the same
+# place, so the screen had two controls that meant one thing. Its title
+# recentres in the space that leaves.
+#
+# Maintenance keeps its Back button and should now use the same growing
+# column as Settings, where it was stuck at a fixed 840 before.
+move -5000 -5000
+wait 0.6
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.9
+shot form-maintenance
+key escape
+wait 0.9
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.9
+shot form-settings
+quit

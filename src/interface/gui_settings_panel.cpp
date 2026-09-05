@@ -1,5 +1,7 @@
 #include "gui_settings_panel.hpp"
 
+#include "gui_form.hpp"
+
 #include <algorithm>
 #include <vector>
 
@@ -8,31 +10,26 @@ namespace gui {
 
 namespace {
 
-constexpr float kMargin = 16.0f;
-constexpr float kBtnW = 150.0f;
+// Row metrics, headings and the screen header live in gui_form.hpp now,
+// shared with the maintenance screen, which drew the same rows from its
+// own identical copies until they drifted. Only the three widths that are
+// a real difference between the two screens are named below.
 constexpr float kWideBtnW = 200.0f;
-constexpr float kBtnH = 30.0f;
-constexpr float kRowH = 30.0f;
-constexpr float kRowGap = 8.0f;
-constexpr float kSectionGap = 18.0f;
-constexpr float kHeadingH = 30.0f;
-// The column the whole page is laid out in. It grows with the window
-// between these two, because the note beside a locked row is the one thing
-// here whose length is not the layouts to choose: the longest of them
-// needs 524 pixels in Courier and 362 in Times, against the 250 the
-// original fixed 840 column left for it, so every note ran past its own
-// box in every typeface. The upper bound keeps the page from stretching
-// into a line too long to read on a wide monitor.
-constexpr float kColWMin = 840.0f;
-constexpr float kColWMax = 1150.0f;
+constexpr float kMargin = kFormMargin;
+constexpr float kBtnW = kFormBtnW;
+constexpr float kBtnH = kFormBtnH;
+constexpr float kRowH = kFormRowH;
+constexpr float kRowGap = kFormRowGap;
+constexpr float kSectionGap = kFormSectionGap;
+constexpr float kHeadingH = kFormHeadingH;
 constexpr float kLabelW = 250.0f;
 constexpr float kCtrlW = 300.0f;
 constexpr float kGap = 20.0f;
 
-// Set once at the top of frame() from the real window width, so the
-// helpers below can lay a row out without every one of them taking a
-// width it would only pass along.
-float g_col_w = kColWMin;
+// Filled at the top of frame() from the real window width, so the helpers
+// below can lay a row out without every one of them taking a width it
+// would only pass along.
+FormMetrics g_form{kLabelW, kCtrlW, kGap, kFormColWMin};
 
 // What the pinned footer reserves at the bottom of the screen: the gap
 // above the button row, the row itself, the status line under it, the link
@@ -203,37 +200,19 @@ int index_of_theme(Theme t) {
     }
 }
 
-// One section heading with the rule under it. Returns the y where the
-// first row of the section starts.
+// Thin names over the shared layout, so the forty call sites below read
+// the way they always did and only one file knows the geometry.
 float heading(float x, float y, const std::string& text) {
-    label(Rect{x, y, g_col_w, kHeadingH}, text, false, Font::BodyLarge);
-    float rule_y = y + kHeadingH - 2.0f;
-    draw_rect(x, rule_y, g_col_w, 1.0f, palette::border());
-    return y + kHeadingH + kRowGap;
+    return form_heading(g_form, x, y, text);
 }
 
-// The left-hand caption every row carries, dimmed when the row is locked.
 void row_label(float x, float y, const std::string& text, bool locked) {
-    label(Rect{x, y, kLabelW, kRowH}, text, locked);
+    form_row_label(g_form, x, y, text, locked);
 }
 
-// The dim explanation to the right of a locked control, saying why it is
-// locked rather than leaving the operator to guess.
-void row_note(float x, float y, const std::string& text) {
-    const Rect r{x + kLabelW + kGap + kCtrlW + kGap, y, g_col_w - kLabelW - kCtrlW - 2 * kGap,
-                 kRowH};
-    // label() draws its text whatever the rect says, and a wide typeface
-    // makes these notes longer than any column could reasonably be: SGA
-    // draws the longest of them at over 1600 pixels even after its own
-    // size reduction. Clipped rather than shortened, because every other
-    // typeface fits inside the widened column and clipping costs those
-    // nothing.
-    begin_scissor(r.x, r.y, r.w, r.h);
-    label(r, text, true);
-    end_scissor();
-}
+void row_note(float x, float y, const std::string& text) { form_row_note(g_form, x, y, text); }
 
-Rect control_rect(float x, float y) { return Rect{x + kLabelW + kGap, y, kCtrlW, kRowH}; }
+Rect control_rect(float x, float y) { return form_control_rect(g_form, x, y); }
 
 // What the search row accepts. Every label on this screen is letters and
 // spaces; the digits and the two marks are here so that a label added
@@ -290,14 +269,11 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     // A copy, because the k shortcut has to take its own keystroke out of
     // the frame before the box it jumps to could type it.
     GuiInput in = real_in;
-    back_clicked_ = false;
     wordmark_clicked_ = false;
 
     // Set before anything lays a row out, because every helper below reads
     // it rather than being handed the width.
-    g_col_w = static_cast<float>(width) - 2.0f * kMargin;
-    if (g_col_w < kColWMin) g_col_w = kColWMin;
-    if (g_col_w > kColWMax) g_col_w = kColWMax;
+    g_form.col_w = form_col_w(static_cast<float>(width));
 
     float w = static_cast<float>(width), h = static_cast<float>(height);
     begin_widget_frame();
@@ -315,7 +291,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     if (pending_ != applied_) status_.clear();
 
     float top = draw_header(in, w);
-    float x = std::max(kMargin, (w - g_col_w) * 0.5f);
+    float x = form_col_x(w);
 
     // The footer is pinned to the bottom of the screen and sits outside the
     // scroll region, so Apply, Reset and the status line stay reachable
@@ -371,7 +347,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     // Nothing drew, so the operator is looking at an empty page and is
     // owed a reason for it.
     if (y == after_search) {
-        label(Rect{x, y + kSectionGap, g_col_w, kRowH}, "No setting has that in its name.", true);
+        label(Rect{x, y + kSectionGap, g_form.col_w, kRowH}, "No setting has that in its name.", true);
         y += kSectionGap + kRowH;
     }
 
@@ -410,9 +386,9 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     }
 
     if (!status_.empty()) {
-        Rect status_r{x, by + kBtnH + 6.0f, g_col_w, kRowH};
+        Rect status_r{x, by + kBtnH + 6.0f, g_form.col_w, kRowH};
         if (status_error_) {
-            draw_rect(status_r.x, status_r.y, g_col_w, kRowH, palette::error_bg());
+            draw_rect(status_r.x, status_r.y, g_form.col_w, kRowH, palette::error_bg());
             draw_text(Font::Body, status_r.x + 6.0f,
                       status_r.y + (kRowH + text_line_height(Font::Body) * 0.7f) * 0.5f, status_,
                       palette::error_text());
@@ -420,7 +396,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
             label(status_r, status_, true);
         }
     } else if (dirty) {
-        label(Rect{x, by + kBtnH + 6.0f, g_col_w, kRowH}, "Not applied yet.", true);
+        label(Rect{x, by + kBtnH + 6.0f, g_form.col_w, kRowH}, "Not applied yet.", true);
     }
 
     // Footer. Plain text and nothing else for now, drawn as four separate
@@ -454,24 +430,12 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
 }
 
 float SettingsPanel::draw_header(const GuiInput& in, float width) {
-    const float pad = 6.0f;
-    // Same shape as every other screen: the way back on the left, the
-    // wordmark on the right, what this screen is in between.
-    Rect back_r{kMargin, pad, kBtnW, kBtnH};
-    if (button(back_r, "Back", in, true)) back_clicked_ = true;
-
-    float word_tw = text_width(Font::Wordmark, "INOP");
-    float word_th = text_line_height(Font::Wordmark);
-    Rect wordmark_r{width - kMargin - (word_tw + 24.0f), pad, word_tw + 24.0f, word_th + 12.0f};
-    if (wordmark_button(wordmark_r, in)) wordmark_clicked_ = true;
-
-    float gap_x0 = back_r.x + back_r.w + 20.0f;
-    float gap_x1 = wordmark_r.x - 20.0f;
-    float title_tw = text_width(Font::BodyLarge, "Settings");
-    float title_x = gap_x0 + std::max(0.0f, (gap_x1 - gap_x0 - title_tw) * 0.5f);
-    label(Rect{title_x, pad, title_tw, word_th + 12.0f}, "Settings", false, Font::BodyLarge);
-
-    return pad + word_th + 12.0f + 10.0f;
+    // No Back button here. Back and the wordmark both left this screen for
+    // the main menu, so the screen carried two controls that did the same
+    // thing. The wordmark is the one that keeps it, because it means the
+    // same on every screen.
+    return form_screen_header(in, width, "Settings", /*with_back=*/false, nullptr,
+                              &wordmark_clicked_);
 }
 
 // Every section takes the same shape now: nothing at all when the search
@@ -598,7 +562,7 @@ float SettingsPanel::draw_audio(float x, float y) {
     // looking for.
     if (!search_.empty()) return y;
     y = heading(x, y + kSectionGap, "Audio");
-    label(Rect{x, y, g_col_w, kRowH}, "The application makes no sound yet, so there is nothing here.",
+    label(Rect{x, y, g_form.col_w, kRowH}, "The application makes no sound yet, so there is nothing here.",
           true);
     return y + kRowH;
 }

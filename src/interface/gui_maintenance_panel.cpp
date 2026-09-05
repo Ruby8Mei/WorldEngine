@@ -1,5 +1,7 @@
 #include "gui_maintenance_panel.hpp"
 
+#include "gui_form.hpp"
+
 #include <algorithm>
 #include <fstream>
 #include <string>
@@ -14,19 +16,25 @@ namespace gui {
 
 namespace {
 
-constexpr float kMargin = 16.0f;
-constexpr float kBtnW = 150.0f;
+// Row metrics, headings and the screen header come from gui_form.hpp,
+// shared with the settings screen. This file used to hold its own
+// byte-identical copies, and they drifted: the settings column learned to
+// grow with the window while this one stayed at a fixed 840.
 constexpr float kWideBtnW = 320.0f;
-constexpr float kBtnH = 30.0f;
-constexpr float kRowH = 30.0f;
-constexpr float kRowGap = 8.0f;
-constexpr float kSectionGap = 18.0f;
-constexpr float kHeadingH = 30.0f;
-constexpr float kColW = 840.0f;
+constexpr float kPathW = 396.0f;
+constexpr float kMargin = kFormMargin;
+constexpr float kBtnW = kFormBtnW;
+constexpr float kBtnH = kFormBtnH;
+constexpr float kRowH = kFormRowH;
+constexpr float kRowGap = kFormRowGap;
+constexpr float kSectionGap = kFormSectionGap;
+constexpr float kHeadingH = kFormHeadingH;
 constexpr float kLabelW = 200.0f;
 constexpr float kCtrlW = 180.0f;
-constexpr float kPathW = 396.0f;
 constexpr float kGap = 16.0f;
+
+// Filled at the top of frame() from the real window width.
+FormMetrics g_form{kLabelW, kCtrlW, kGap, kFormColWMin};
 // Two label+control pairs fit across one row; this is the step from the
 // first pair to the second, which lands the second control at 832 of the
 // 840 the column has.
@@ -82,33 +90,26 @@ bool file_exists(const std::string& path) {
     return f.good();
 }
 
-// One section heading with the rule under it. Returns the y where the
-// first row of the section starts.
+// Thin names over the shared layout, so the call sites below read the way
+// they always did and only one file knows the geometry.
 float heading(float x, float y, const std::string& text) {
-    label(Rect{x, y, kColW, kHeadingH}, text, false, Font::BodyLarge);
-    draw_rect(x, y + kHeadingH - 2.0f, kColW, 1.0f, palette::border());
-    return y + kHeadingH + kRowGap;
+    return form_heading(g_form, x, y, text);
 }
 
 void row_label(float x, float y, const std::string& text, bool locked = false) {
-    label(Rect{x, y, kLabelW, kRowH}, text, locked);
+    form_row_label(g_form, x, y, text, locked);
 }
 
-// The dim explanation that follows a control, saying what a value means or
-// why a row is locked rather than leaving the operator to guess.
-void row_note(float x, float y, const std::string& text) {
-    label(Rect{x + kLabelW + kGap + kCtrlW + kGap, y, kColW - kLabelW - kCtrlW - 2 * kGap, kRowH},
-          text, true);
-}
+void row_note(float x, float y, const std::string& text) { form_row_note(g_form, x, y, text); }
 
-Rect ctrl_rect(float x, float y) { return Rect{x + kLabelW + kGap, y, kCtrlW, kRowH}; }
+Rect ctrl_rect(float x, float y) { return form_control_rect(g_form, x, y); }
 
 // The status a section reports under its own button, in the failure colour
 // when it failed. Drawn beside the button rather than under it so a
 // section keeps a fixed height whether or not it has run.
 void draw_status(float x, float y, const std::string& text, bool error) {
     if (text.empty()) return;
-    float w = kColW - (kWideBtnW + kGap);
+    float w = g_form.col_w - (kWideBtnW + kGap);
     if (error) {
         draw_rect(x, y, w, kRowH, palette::error_bg());
         draw_text(Font::Body, x + 6.0f, y + (kRowH + text_line_height(Font::Body) * 0.7f) * 0.5f,
@@ -156,7 +157,9 @@ void MaintenancePanel::frame(const GuiInput& in, int width, int height) {
     begin_widget_frame();
 
     float top = draw_header(in, w);
-    float x = std::max(kMargin, (w - kColW) * 0.5f);
+    // Set before anything lays a row out, the same as the settings screen.
+    g_form.col_w = form_col_w(static_cast<float>(w));
+    float x = form_col_x(w);
     float start = begin_scroll_region(top, w, h, scroll_, content_h_, in);
 
     float y = draw_wheels(in, x, start, true);
@@ -173,24 +176,11 @@ void MaintenancePanel::frame(const GuiInput& in, int width, int height) {
 }
 
 float MaintenancePanel::draw_header(const GuiInput& in, float width) {
-    const float pad = 6.0f;
-    // Same shape as every other screen: the way back on the left, the
-    // wordmark on the right, what this screen is in between.
-    Rect back_r{kMargin, pad, kBtnW, kBtnH};
-    if (button(back_r, "Back", in, true)) back_clicked_ = true;
-
-    float word_tw = text_width(Font::Wordmark, "INOP");
-    float word_th = text_line_height(Font::Wordmark);
-    Rect wordmark_r{width - kMargin - (word_tw + 24.0f), pad, word_tw + 24.0f, word_th + 12.0f};
-    if (wordmark_button(wordmark_r, in)) wordmark_clicked_ = true;
-
-    float gap_x0 = back_r.x + back_r.w + 20.0f;
-    float gap_x1 = wordmark_r.x - 20.0f;
-    float title_tw = text_width(Font::BodyLarge, "Maintenance");
-    float title_x = gap_x0 + std::max(0.0f, (gap_x1 - gap_x0 - title_tw) * 0.5f);
-    label(Rect{title_x, pad, title_tw, word_th + 12.0f}, "Maintenance", false, Font::BodyLarge);
-
-    return pad + word_th + 12.0f + 10.0f;
+    // Back stays here. Unlike the settings screen it is not a duplicate of
+    // the wordmark yet: it will matter the moment this screen gains a
+    // second level, and removing it now would have to be undone then.
+    return form_screen_header(in, width, "Maintenance", /*with_back=*/true, &back_clicked_,
+                              &wordmark_clicked_);
 }
 
 float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool rotors) {

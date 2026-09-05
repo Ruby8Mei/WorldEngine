@@ -589,7 +589,9 @@ GuiExit run_gui_settings(const std::string& script_path) {
                     settings.set_status("Applied, and saved to inop.gui.json.", false);
             }
             // Down to reach the settings, so up to leave them.
-            if (settings.back_clicked() || settings.wordmark_clicked())
+            // The wordmark alone now; the Back button that meant the same
+            // thing on this one screen is gone.
+            if (settings.wordmark_clicked())
                 go_to(Screen::MainMenu, 0.0f, -1.0f);
         } else if (screen == Screen::Maintenance) {
             // Nothing to answer for this screen: it writes wheel files and
