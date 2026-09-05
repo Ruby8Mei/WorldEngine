@@ -71,7 +71,6 @@ o	Options to skip on first launch and replay later in Settings.
 •	Layout & Visual Adjustments:
 o	Encipher/Decipher containers shifted 20px right (fixes monospace clipping).
 o	Message and ciphertext containers expanded to two lines high.
-o	Focus ring shrinks exactly to container size (no over/under spill).
 o	Experimental: Encipher/Decipher as a single toggle button.
 2. Core Logic & Language Processing
 •	Language Overhaul: Replaced per-language tables with a unified, simple list transforming every character into parsable input for INOP (primary) and Enigma (experimental).
@@ -127,16 +126,13 @@ Rule: "Close marks stick alike." The first digit (0-9) represents the core shape
 3. Settings & Configuration
 •	Keybindings: Dedicated list and system-wide/panel keybinds to reduce mouse reliance.
 •	Interface Fonts: 
-o	Options: Courier (default), Times New Roman, Crimson Pro, SGA All Characters, Grandview, Harlow Italic.
 o	Asset Addition: "Fragment Core" (styled with "Elesh Norn, Mother of Machines").
 o	Display: Fonts in the selection menu preview in their actual format.
 •	Interface Language: Currently "English" (default).
 •	INOP Script: Latin (default), Greek, Cyrillic, Hebrew, Hangul.
 •	Arachnophobia Mode: "Sacred supreme setting." Default OFF. Warning: Removing this from the setting panel currently bricks the entire app.
-•	Navigation: "Back" button in settings removed; the main "INOP" button handles this.
 •	Legal & Licensing: Settings already contains a "Legal" placeholder. This will house the required credits and licenses for SGA and Fragment Core fonts.
 4. Utilities & Quality of Life
-•	Search Bar: Global or settings search functionality.
 •	Plaintext Buffer Clear: Dedicated "Clear" button and shortcut to wipe the input field.
 •	Composite Copy Utility: Single "Copy Ciphertext + Marker" button to push both to the clipboard simultaneously.
 5. Bug Fixes & Maintenance
