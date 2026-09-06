@@ -1,0 +1,35 @@
+# The two halves beside each other rather than stacked, each one heading,
+# then controls, then boxes. The cipher box has to hold four sixteen
+# character groups on a line before it wraps, which is what decides
+# whether the halves fit side by side at all.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+shot s1-side-by-side-empty
+
+move 300 245
+wait 0.3
+click
+wait 0.2
+type the quick brown fox jumps over the lazy dog while the sun goes down behind the hill and nobody says a word about any of it at all and then a second line begins
+wait 0.4
+move 178 172
+wait 0.3
+click
+wait 1.0
+shot s2-enciphered
+quit

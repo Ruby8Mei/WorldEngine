@@ -1,15 +1,20 @@
-// langprobe_main.cpp — offline dumper for the numeral-suffix diacritic
-// scheme.
+// langprobe_main.cpp - offline dumper for the diacritic scheme.
 //
 // Writes, per language, the exact symbol stream the live pipeline would
-// hand to the rotors: preprocess(fold_diacritics(mark_literal_digits(raw)))
-// over that language's benchmark corpus. Also writes the declared
-// (base letter, mark code) grammar the scheme is built on.
+// hand to the rotors: preprocess(transform(raw)) over that language
+// benchmark corpus. Also writes the (base letter, code) grammar the
+// scheme is built on.
 //
-// This target exists so the measurement runs against the real tables in
-// languages.cpp rather than a reimplementation of them in the analysis
-// script. It touches no key material, no cipher state and no message path,
-// and like inop_benchmark it is never linked into the live pipeline.
+// That grammar used to be written out once per language, because every
+// language had a table of its own and they disagreed with one another.
+// There is one transformer now, so there is one grammar, written once
+// under the name GLOBAL. The per-language rows are gone because there is
+// nothing left for them to differ about.
+//
+// This target exists so the measurement runs against the real transformer
+// rather than against a reimplementation of it in the analysis script. It
+// touches no key material, no cipher state and no message path, and like
+// inop_benchmark it is never linked into the live pipeline.
 //
 //   inop_langprobe [--corpus-dir benchmark/corpus] [--out probe_out]
 #include <cstdio>
@@ -23,6 +28,7 @@
 #include "languages.hpp"
 #include "pipeline.hpp"
 #include "registry.hpp"
+#include "transform.hpp"
 
 using namespace inop;
 
@@ -75,10 +81,7 @@ int main(int argc, char** argv) {
 
     std::ofstream marks(out_dir + "/marks.tsv");
     marks << "lang\tbase\tcode\n";
-    for (const auto& l : supported_languages())
-        for (const auto& [base, code] : declared_marks(l.code))
-            marks << l.code << '\t' << base << '\t' << code << '\n';
-    for (const auto& [base, code] : declared_marks(""))
+    for (const auto& [base, code] : declared_codes())
         marks << "GLOBAL" << '\t' << base << '\t' << code << '\n';
 
     int done = 0, missing = 0;
@@ -90,7 +93,7 @@ int main(int argc, char** argv) {
             continue;
         }
         std::string folded =
-            preprocess(fold_diacritics(mark_literal_digits(flatten_whitespace(raw)), l.code), alpha);
+            preprocess(transform(flatten_whitespace(raw)), alpha);
         std::ofstream f(out_dir + "/" + l.code + ".folded", std::ios::binary);
         f << folded;
         manifest << l.code << '\t' << raw.size() << '\t' << folded.size() << '\n';

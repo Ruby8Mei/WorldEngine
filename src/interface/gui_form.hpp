@@ -70,15 +70,15 @@ void form_row_note(const FormMetrics& m, float x, float y, const std::string& te
 // Where a row's control goes.
 Rect form_control_rect(const FormMetrics& m, float x, float y);
 
-// The bar every screen wears: the way back on the left, the wordmark on
-// the right, what this screen is in between. Returns the y where the
-// content below it starts.
+// The bar every screen wears: the wordmark on the left, what this screen
+// is beside it. Returns the y where the content below it starts.
 //
-// with_back is false where Back would go exactly where the wordmark goes.
-// The settings screen is that case, so it carries the wordmark alone
-// rather than two buttons that mean the same thing.
-float form_screen_header(const GuiInput& in, float width, const std::string& title, bool with_back,
-                         bool* back_clicked, bool* wordmark_clicked);
+// There is no Back button. It went where the wordmark goes and meant what
+// the wordmark means, so both screens carried two controls doing one job.
+// The wordmark keeps it, because it means the same on every screen, and
+// Escape does the same thing from the keyboard.
+float form_screen_header(const GuiInput& in, float width, const std::string& title,
+                         bool* wordmark_clicked);
 
 }  // namespace gui
 }  // namespace inop

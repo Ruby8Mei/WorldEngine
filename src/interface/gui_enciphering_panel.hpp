@@ -46,10 +46,13 @@ private:
 
     // Returns the y where the sections below the header begin.
     float draw_header(const GuiInput& in, float width);
-    // Each draws one section downward from `y` and returns the y just
-    // past it, so the sections stack instead of splitting the window.
-    float draw_encipher(const GuiInput& in, float x, float y, float field_w);
-    float draw_decipher(const GuiInput& in, float x, float y, float field_w);
+    // Each draws one section downward from `y` and returns the y just past
+    // it. Side by side the two are called with the same y and different x,
+    // and on a window too narrow for that they stack, which is what the
+    // returned y is for. `ctrl_h` is the height of the button block both
+    // reserve, the taller of the two, so the boxes line up across the gap.
+    float draw_encipher(const GuiInput& in, float x, float y, float field_w, float ctrl_h);
+    float draw_decipher(const GuiInput& in, float x, float y, float field_w, float ctrl_h);
     void on_encipher();
     void on_decipher();
 
@@ -83,9 +86,11 @@ private:
     // this is the one copy that carries a whole dispatch.
     void copy_both();
     // The Clear button both sections carry. Draws at bx,by and empties
-    // whichever writable box has the focus. No keyboard shortcut yet: the
-    // roadmap named Shift and C, which is how a capital C is typed, so it
-    // would eat the keystroke inside every box it is meant to serve.
+    // whichever writable box has the focus. It sits in the button block
+    // with the rest now, rather than in a title row on its own. No
+    // keyboard shortcut: the roadmap named Shift and C, which is how a
+    // capital C is typed, so it would eat the keystroke inside every box
+    // it is meant to serve.
     void draw_clear_button(const GuiInput& in, float bx, float by);
     static const char* kBothSeparator;
 

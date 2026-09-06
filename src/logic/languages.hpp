@@ -1,26 +1,17 @@
-// languages.hpp — numeral-suffix diacritic scheme for the 48 officially
-// supported languages.
+// languages.hpp - the languages a message can be tagged as being in.
 //
-// Digits, not new symbols, carry the marks: INOP-38s alphabet already
-// includes 0-9, so reusing them avoids adding anything new to the machine
-// itself. Prep-layer only: nothing here touches inop.hpp/inop.cpp. Encoding
-// (fold_diacritics) is language-independent — a given accented character
-// always folds to the same base-letter-plus-digit pair, regardless of the
-// declared language — because the same digit is deliberately reused across
-// diacritic *classes* that never co-occur in one language's own alphabet
-// (caron and breve both land on digit 3, for instance). Decoding
-// (resubstitute) tries the declared language's own table first — it's what
-// resolves "a3" back to Romanian's ă versus Pinyin's ǎ, the one digit
-// genuinely shared between two languages that disagree on it — then falls
-// back to a table merged from every language for any other mark that's
-// valid Latin diacritic content but not one of the declared language's own
-// (a foreign name, a loanword). A repeated digit ("22", "33", Pinyin's
-// "61"-"64") chains a second mark on the first — see the digit table in
-// languages.cpp for the full assignment.
+// This used to hold the diacritic scheme as well: 48 hand written tables,
+// one per language, that said what each digit meant in that language.
+// They are gone. One universal transformer does that job now, for every
+// language at once and without being told which one it is reading, and it
+// lives in transform.hpp.
+//
+// What is left is the list itself, because the three letter tag is still
+// written on the end of a transmitted message so the reader knows what
+// they are looking at. That was never a folding matter.
 #pragma once
 
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace inop {
@@ -30,36 +21,9 @@ struct LanguageInfo {
     std::string name;
 };
 
-// The 48 officially supported languages, alphabetical by display name
-// (matching Google Translate's own ordering convention).
+// The 48 supported languages, alphabetical by display name, which is
+// Google Translate own ordering convention.
 const std::vector<LanguageInfo>& supported_languages();
 bool is_supported_language(const std::string& code);
-
-// Raw operator input (UTF-8) -> lowercase INOP-safe ASCII rendering, with
-// diacritics folded to base-letter+digit (or base-letter-only for Romanian's
-// comma-below, the one mark still dropped with no encoding at all — cedilla
-// and ring-above used to be dropped here too, but now have real digit
-// slots). Turkish gets dotted/dotless-aware casing ahead of the generic
-// fold when language == "tur". Does not touch digits already present in
-// the raw text — that's mark_literal_digits()'s job in pipeline.hpp, and
-// it must run BEFORE this, on the raw text, so digits this function
-// introduces are never mistaken for literal ones.
-std::string fold_diacritics(const std::string& text, const std::string& language);
-
-// Reverse of fold_diacritics, applied to decrypted (lowercase, space-
-// restored) text. A letter immediately followed by a digit is a diacritic
-// pair, resolved via `language`'s table. A letter followed by '/' then a
-// digit is a literal number — the '/' is stripped and both characters are
-// kept as-is. Unknown (letter, digit) pairs for the given language are left
-// untouched (best-effort — should not happen in normal operation).
-std::string resubstitute(const std::string& text, const std::string& language);
-
-// The (base letter, mark code) pairs a language declares — the same table
-// resubstitute() decodes with, exposed read-only. A `language` of "" gives
-// the merged global table, already minus the keys excluded for
-// cross-language collision. Offline measurement of the scheme needs the
-// declared grammar rather than one inferred from a sample of text; nothing
-// in the message path calls this.
-std::vector<std::pair<char, int>> declared_marks(const std::string& language);
 
 }  // namespace inop

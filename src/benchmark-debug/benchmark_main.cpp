@@ -25,6 +25,7 @@
 #include "pipeline.hpp"
 #include "registry.hpp"
 #include "settings.hpp"
+#include "transform.hpp"
 
 using namespace inop;
 
@@ -406,7 +407,7 @@ int main(int argc, char** argv) {
                     ++total;
 
                     try {
-                        std::string folded = fold_diacritics(mark_literal_digits(raw), lang);
+                        std::string folded = transform(raw);
 
                         auto t0 = std::chrono::steady_clock::now();
                         Encrypted e = pipe.encrypt(folded);
@@ -427,12 +428,12 @@ int main(int argc, char** argv) {
                         std::replace(expected.begin(), expected.end(), SPACE_SUB, ' ');
                         bool exact = back == expected;
 
-                        // resubstitute() strips literal-digit '/' markers for
-                        // human readability (by design — see README), so
-                        // reproducing `back` needs mark_literal_digits() run
-                        // again too, not just fold_diacritics() alone.
-                        std::string human = resubstitute(back, lang);
-                        bool roundtrip = fold_diacritics(mark_literal_digits(human), lang) == back;
+                        // Folding what untransform() hands back has to
+                        // reproduce exactly what went in. That is the one
+                        // property an operator depends on, and one call
+                        // each way is now the whole of it.
+                        std::string human = untransform(back);
+                        bool roundtrip = transform(human) == back;
 
                         r.success = exact && roundtrip;
                         if (!exact)
@@ -440,7 +441,7 @@ int main(int argc, char** argv) {
                                        std::to_string(expected.size()) + ", got len " +
                                        std::to_string(back.size());
                         else if (!roundtrip)
-                            r.detail = "resubstitute round-trip mismatch";
+                            r.detail = "untransform round trip mismatch";
                     } catch (const std::exception& ex) {
                         r.encrypt_us = r.decrypt_us = 0;
                         r.chars_processed = 0;
@@ -473,7 +474,7 @@ int main(int argc, char** argv) {
         GeneratedSettings g = random_settings(su, su.min_rotors, su.max_plug_pairs / 2, 1);
         Machine machine = machine_from_generated(g);
         Pipeline pipe(machine, cfg);
-        std::string folded = fold_diacritics(mark_literal_digits(text), "eng");
+        std::string folded = transform(text);
 
         auto t0 = std::chrono::steady_clock::now();
         Encrypted e = pipe.encrypt(folded);

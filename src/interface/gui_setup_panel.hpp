@@ -127,6 +127,10 @@ struct PanelUiState {
     bool show_save_chooser = false;
     bool show_overwrite_panel = false;
     bool show_create_name_modal = false;
+    // Set with the modal, cleared the first time it draws. The name box
+    // cannot be given the keyboard until there is a box to give it to, and
+    // its rectangle is only known at draw time.
+    bool create_name_focus_pending = false;
     std::string create_name_text;
     std::string create_name_error;
 
@@ -142,6 +146,17 @@ struct PanelUiState {
     // frame's measurement, which is what begin_scroll_region() asks for.
     float setup_scroll = 0.0f;
     float setup_content_h = 0.0f;
+
+    // The preset the screen is currently working on, as a filename, or
+    // empty for a setup that has never been saved or loaded. It is what
+    // Control and S writes over, and what the header names so the operator
+    // can see which one that is before pressing it.
+    std::string current_preset;
+    // What the last save said, and how long it has left on screen. A save
+    // that goes through changes nothing the operator can see, so without
+    // this the key would feel dead.
+    std::string save_note;
+    float save_note_left = 0.0f;
 };
 
 class SetupPanel {
@@ -180,6 +195,17 @@ private:
 
     void on_generate_clicked();
     void on_save_clicked();
+    // Control and S: writes over the preset named in the header. With no
+    // preset named there is nothing to write over, so it opens the naming
+    // modal instead, which is where Control and Shift and S goes straight.
+    void on_save_current();
+    // Puts a line under the wordmark for a few seconds. A save that works
+    // changes nothing on screen, so this is the only thing that says so.
+    void set_save_note(const std::string& text);
+    // Raises the name box with the next auto-numbered name already in it,
+    // whichever way it was asked for: the Create new button, or Control and
+    // Shift and S from the screen itself.
+    void open_create_name_modal();
     void on_load_tile_picked(const std::string& path);
     void on_overwrite_tile_picked(const std::string& path);
     void on_create_confirmed();

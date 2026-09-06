@@ -78,7 +78,9 @@ public:
     const std::string& pending_shot() const { return pending_shot_; }
 
 private:
-    enum class Verb { Move, Click, Press, Release, Type, Key, Ctrl, Shift, Scroll, Wait, Shot, Quit };
+    enum class Verb {
+        Move, Click, Press, Release, Type, Key, Ctrl, Shift, Alt, Scroll, Wait, Shot, Quit
+    };
     // Letter is any of A to Z, carried in Step::letter. It is a key press
     // and not a typed character, so it is the only way a script can reach
     // a Control shortcut: holding Control produces no character event.
@@ -110,6 +112,7 @@ private:
     bool held_ = false;
     bool ctrl_ = false;
     bool shift_ = false;
+    bool alt_ = false;
 
     std::string pending_shot_;
 };

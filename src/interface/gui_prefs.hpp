@@ -58,6 +58,11 @@ struct FontChoice {
 // back empty when neither holds it.
 std::string font_path(const std::string& file);
 
+// The folder INOP ships fonts in, with its trailing separator. Anything
+// bundled with the program is in here and nothing else is, which is what
+// makes it the answer to "which font licences do we have to show".
+const char* bundled_fonts_dir();
+
 // Every face this build knows how to offer, filtered down to the ones
 // font_path() can actually find — a machine missing Harlow should not be
 // shown Harlow. Courier New is first and is the default; if even that is

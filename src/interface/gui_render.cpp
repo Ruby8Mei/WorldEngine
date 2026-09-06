@@ -1,5 +1,7 @@
 #include "gui_render.hpp"
 
+#include <map>
+
 #include "gui_prefs.hpp"
 
 #include <cstdio>
@@ -47,6 +49,17 @@ FontAtlas g_body;
 FontAtlas g_wordmark;
 FontAtlas g_body_large;
 
+// One preview atlas per typeface, keyed by the same filename the settings
+// screen and font_path() use. Kept across a typeface change, unlike the
+// three above: a preview says what a face looks like, which does not
+// depend on which face the interface is currently wearing. Only shutdown
+// empties it.
+//
+// A file that could not be baked is remembered as an empty atlas rather
+// than retried, so a broken font in the folder costs one failed read and
+// not one per frame the list is open.
+std::map<std::string, FontAtlas> g_previews;
+
 // Bumped by every successful bake, never reset. Read by anything that
 // caches a width taken from the atlas, so a typeface change throws that
 // cache away instead of drawing with measurements from the old face.
@@ -64,13 +77,13 @@ bool read_file(const std::string& path, std::vector<unsigned char>& out) {
     return static_cast<bool>(f) || f.eof();
 }
 
-bool bake_font(const std::string& path, float pixel_height, FontAtlas& out) {
+bool bake_font(const std::string& path, float pixel_height, FontAtlas& out, int side = 1024) {
     std::vector<unsigned char> ttf;
     if (!read_file(path, ttf)) {
         std::cerr << "gui: could not read font file '" << path << "'\n";
         return false;
     }
-    const int bw = 1024, bh = 1024;
+    const int bw = side, bh = side;
     std::vector<unsigned char> bitmap(static_cast<size_t>(bw) * bh);
     out.chars.resize(96);
     int result = stbtt_BakeFontBitmap(ttf.data(), 0, pixel_height, bitmap.data(), bw, bh, 32, 96,
@@ -167,7 +180,12 @@ bool render_init() {
     return true;
 }
 
-void render_shutdown() { free_atlases(); }
+void render_shutdown() {
+    free_atlases();
+    for (std::pair<const std::string, FontAtlas>& e : g_previews)
+        if (e.second.texture) glDeleteTextures(1, &e.second.texture);
+    g_previews.clear();
+}
 
 void set_viewport(int width, int height) {
     if (width <= 0 || height <= 0) return;
@@ -307,6 +325,79 @@ bool load_fonts(const std::string& font_file) {
 }
 
 unsigned font_generation() { return g_font_generation; }
+
+bool typeface_draws_latin(const std::string& font_file) {
+    return font_file != "sga-all-characters.otf";
+}
+
+bool preview_font_ready(const std::string& font_file) {
+    std::map<std::string, FontAtlas>::iterator it = g_previews.find(font_file);
+    if (it != g_previews.end()) return it->second.texture != 0;
+
+    // The entry goes in whatever happens, so a failure is remembered as a
+    // failure and not asked again next frame.
+    FontAtlas& a = g_previews[font_file];
+    const std::string path = font_path(font_file);
+    if (path.empty()) return false;
+    // The same size the interface body text is baked at, and through the
+    // same per-face reduction, so a face that has to be shrunk to sit in a
+    // row is shrunk here too and the preview is honest about it.
+    if (!bake_font(path, 18.0f * typeface_size_scale(font_file), a, 256)) {
+        a = FontAtlas{};
+        return false;
+    }
+    return true;
+}
+
+// File-local: FontAtlas is a private type and never leaves this file.
+static const FontAtlas* preview_atlas(const std::string& font_file) {
+    std::map<std::string, FontAtlas>::const_iterator it = g_previews.find(font_file);
+    if (it == g_previews.end() || !it->second.texture) return nullptr;
+    return &it->second;
+}
+
+float preview_text_width(const std::string& font_file, const std::string& text) {
+    const FontAtlas* a = preview_atlas(font_file);
+    if (!a) return 0.0f;
+    float w = 0.0f;
+    for (unsigned char ch : text) {
+        if (ch < 32 || ch > 127) continue;
+        w += a->chars[static_cast<size_t>(ch - 32)].xadvance;
+    }
+    return w;
+}
+
+float preview_line_height(const std::string& font_file) {
+    const FontAtlas* a = preview_atlas(font_file);
+    return a ? a->pixel_height * 1.25f : 0.0f;
+}
+
+void draw_preview_text(const std::string& font_file, float x, float baseline_y,
+                       const std::string& text, Color c) {
+    const FontAtlas* a = preview_atlas(font_file);
+    if (!a) return;
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, a->texture);
+    glColor4f(c.r, c.g, c.b, c.a);
+    float xpos = x, ypos = baseline_y;
+    glBegin(GL_QUADS);
+    for (unsigned char ch : text) {
+        if (ch < 32 || ch > 127) continue;
+        stbtt_aligned_quad q;
+        stbtt_GetBakedQuad(const_cast<stbtt_bakedchar*>(a->chars.data()), a->bitmap_w,
+                           a->bitmap_h, ch - 32, &xpos, &ypos, &q, 1);
+        glTexCoord2f(q.s0, q.t0);
+        glVertex2f(q.x0, q.y0);
+        glTexCoord2f(q.s1, q.t0);
+        glVertex2f(q.x1, q.y0);
+        glTexCoord2f(q.s1, q.t1);
+        glVertex2f(q.x1, q.y1);
+        glTexCoord2f(q.s0, q.t1);
+        glVertex2f(q.x0, q.y1);
+    }
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+}
 
 float text_width(Font font, const std::string& text) {
     const FontAtlas& a = atlas_for(font);

@@ -1,0 +1,55 @@
+# The Keyboard section at the bottom of the settings screen.
+#
+# Four downs and Enter reach Settings from the main menu. The section is
+# the last one on the page, so it takes a long scroll to reach it. The
+# last two shots check the search finds a row by its key and by its
+# meaning, which is what the plus added to kSearchChars is there for.
+move -5000 -5000
+wait 0.6
+key down
+wait 0.3
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.9
+shot keybind-1-settings-top
+
+# The wheel only reaches a scroll region the pointer is actually over, so
+# the pointer has to come back onto the page before any of this scrolls.
+move 700 500
+wait 0.3
+scroll -14
+wait 0.5
+shot keybind-2-keyboard-section
+scroll -14
+wait 0.5
+shot keybind-3-keyboard-end
+
+# Search by the key itself. Ctrl+F is both the shortcut being tested and
+# the way into the box.
+scroll 40
+wait 0.5
+ctrl on
+key f
+wait 0.2
+ctrl off
+wait 0.4
+type ctrl+
+wait 0.6
+shot keybind-4-search-by-key
+
+# And by a word out of the meaning.
+key backspace
+key backspace
+key backspace
+key backspace
+key backspace
+wait 0.3
+type ciphertext
+wait 0.6
+shot keybind-5-search-by-meaning
+quit

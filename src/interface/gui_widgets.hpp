@@ -58,6 +58,10 @@ struct GuiInput {
     // whether it is down at the moment of the keypress, not that it
     // arrived as an event of its own.
     bool shift_held = false;
+    // Held, like the two above. Alt is the screen prefix: Alt and a letter
+    // goes straight to a screen from wherever the operator is, which is
+    // why it is the one modifier no control on any screen reads.
+    bool alt_held = false;
     // The letter key pressed this frame, as an uppercase ASCII letter, or
     // 0 for none. Separate from typed, because holding Control suppresses
     // the character event on Windows: Control and F together produce no
@@ -153,21 +157,32 @@ bool button(const Rect& r, const std::string& text, const GuiInput& in, bool ena
 // call. Returns true if clicked this frame.
 bool wordmark_button(const Rect& r, const GuiInput& in);
 
+// A word that behaves like a button and looks like the plain text beside
+// it: dim at rest, in the accent colour and underlined under the pointer.
+// For a footer of words where a box around each one would be four boxes
+// too many. Returns true on a click or on Enter while it holds the
+// keyboard focus.
+bool text_link(const Rect& r, const std::string& text, const GuiInput& in, bool enabled);
+
 // Read-only text wrapped to fit the width of `r`, drawn in a box like a
 // field. Breaks at spaces where it can and mid-word where it must, which
 // is what a block-grouped ciphertext needs. Content shorter than the box
 // is centred vertically; content taller than it scrolls, and `scroll` is
 // the caller-owned offset in pixels, moved only while the pointer is over
 // the box and clamped here. Returns the number of lines laid out.
+// `caption` names the box from inside it, drawn dim along the top and
+// never scrolling away, so a screen full of output still says which box is
+// which. The content starts below it. Give the Rect the matching height
+// from text_block_height().
 int text_block(const Rect& r, const std::string& text, const GuiInput& in, float& scroll,
-               bool dim = false);
+               bool dim = false, const std::string& caption = "");
 
 // How many lines `text` wraps to inside a box `box_w` wide, by the same
 // rule text_block lays out with, and the height a box needs to show that
 // many. Together they let a caller size a box to its content before
 // drawing it.
 int text_block_lines(float box_w, const std::string& text);
-float text_block_height(int lines);
+float text_block_height(int lines, bool with_caption = false);
 
 // Returns true if value changed this frame.
 bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput& in, bool enabled);
@@ -189,9 +204,21 @@ enum class CaseFold { None, ToLower, ToUpper };
 // fixed-width single-character boxes (plugboard pairs); leave false for
 // anything whose length changes a lot as the operator types, or the text
 // will visibly jump as it grows. Returns true if `value` changed.
+// `lines` is how many rows of text the box shows. At 1 the box is a single
+// line that scrolls sideways under the caret. Above 1 the text wraps at the
+// box width instead, the rows scroll vertically to follow the caret, and a
+// click lands on whichever row it was over. Give the Rect the matching
+// height from text_field_height(), or the rows will not fit inside it.
 bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold = CaseFold::None,
-                 const std::string& placeholder = "", bool center_text = false);
+                 const std::string& placeholder = "", bool center_text = false, int lines = 1,
+                 const std::string& caption = "");
+
+// The height a text_field needs to show `lines` rows. One line answers the
+// same 30 pixels every single-line field on every screen already uses, so
+// the number is unchanged for all of them and each extra row adds exactly
+// one row height on top.
+float text_field_height(int lines, bool with_caption = false);
 
 // Empties whichever writable field the operator is in, as one undo step,
 // and says whether it emptied anything. For a Clear button that sits away
@@ -214,8 +241,17 @@ bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t
 // not surface from here at all — it writes into `selected` later, from
 // draw_open_dropdown_popup(), since the popup draws after every dropdown()
 // call in the frame. That is why there is nothing to return.
+//
+// `item_fonts`, when given, is a font filename per option, and each row
+// draws its own name in that face rather than in the interface face. It
+// is what makes the font picker show what it is offering. Nullptr, an
+// entry that is empty, and a file that will not bake all fall back to the
+// interface face, so a shorter list than `options` is not allowed but a
+// blank entry is. The pointer is held until the popup draws later in the
+// frame, the same way `options` is, so it has to outlive the frame.
 void dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
-              int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid = false);
+              int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid = false,
+              const std::vector<std::string>* item_fonts = nullptr);
 
 // Whether a dropdown list is open on screen. gui.cpp asks so that Escape
 // closes the list rather than leaving the screen: with a list open the key

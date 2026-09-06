@@ -94,5 +94,38 @@ float text_width(Font font, const std::string& text);
 float text_line_height(Font font);
 void draw_text(Font font, float x, float baseline_y, const std::string& text, Color c);
 
+// -- preview faces -------------------------------------------------------
+//
+// A second, separate set of atlases, one per typeface rather than one per
+// size, so a list of font names can draw each name in the face it names.
+// The three atlases above are the interface itself and are all one face;
+// these exist only to be looked at.
+//
+// Baked on first ask and then kept, because the font list redraws every
+// frame it is open and a bake is a file read plus a texture upload. They
+// are small: body size only, and a bitmap a quarter the width of the ones
+// the interface uses, which is all 96 glyphs at that size need.
+//
+// Comes back false when the file cannot be found or cannot be baked -- a
+// caller that gets false must draw the name in the interface face
+// instead, since a preview that silently drew nothing would leave a blank
+// row where a font name should be.
+bool preview_font_ready(const std::string& font_file);
+
+// Whether this face draws the latin alphabet at all. SGA is a rune
+// alphabet with its runes sitting in the latin letter slots, so it bakes
+// and draws perfectly and still cannot spell its own name. That cannot be
+// detected from the baked atlas -- the glyphs are there and are not blank,
+// they are simply not letters -- so it is a short list of known faces,
+// the same way typeface_size_scale() is. Anything not on it draws latin.
+bool typeface_draws_latin(const std::string& font_file);
+
+// Both do nothing and return 0 unless preview_font_ready() has already
+// said yes for this file.
+float preview_text_width(const std::string& font_file, const std::string& text);
+float preview_line_height(const std::string& font_file);
+void draw_preview_text(const std::string& font_file, float x, float baseline_y,
+                       const std::string& text, Color c);
+
 }  // namespace gui
 }  // namespace inop

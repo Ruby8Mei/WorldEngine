@@ -74,6 +74,7 @@ set(INOP_CORE_SOURCES
   src/logic/rng.cpp
   src/logic/generator.cpp
   src/logic/languages.cpp
+  src/logic/transform.cpp
   src/settings/settings.cpp
   src/interface/batch.cpp
 )
@@ -97,6 +98,7 @@ if(INOP_WITH_GUI)
     src/interface/gui_enciphering_panel.cpp
     src/interface/gui_prefs.cpp
     src/interface/gui_settings_panel.cpp
+    src/interface/gui_legal_panel.cpp
     src/interface/gui_maintenance_panel.cpp
     src/interface/gui_self_test.cpp
   )

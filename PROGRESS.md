@@ -69,14 +69,7 @@ o	Design Philosophy: This is purely for visual "theater." The actual computation
 o	First launch tutorial with "Focus Mode" (restricts clicks/Enter to intended areas until finished).
 o	Options to skip on first launch and replay later in Settings.
 •	Layout & Visual Adjustments:
-o	Encipher/Decipher containers shifted 20px right (fixes monospace clipping).
-o	Message and ciphertext containers expanded to two lines high.
-o	Experimental: Encipher/Decipher as a single toggle button.
 2. Core Logic & Language Processing
-•	Language Overhaul: Replaced per-language tables with a unified, simple list transforming every character into parsable input for INOP (primary) and Enigma (experimental).
-•	Unicode Preprocessing & Sanitization: 
-o	Operators can input any Unicode character.
-o	A preprocessor silently trims characters that do not appear in the internal logic. This ensures the text remains strictly machine-parsable, prevents encoding mismatch crashes, and future-proofs against injection vulnerabilities (even without a current SQL backend).
 •	Code Hygiene: Strip all comments from the codebase at all times during build/compilation.
 🧩 The INOP Diacritic Mapping System (0-9 Base)
 Rule: "Close marks stick alike." The first digit (0-9) represents the core shape family. The second digit represents the variation (position, smoothness, quantity). Appended to the end of the message between the actual end and the marker.
@@ -124,14 +117,9 @@ Rule: "Close marks stick alike." The first digit (0-9) represents the core shape
 •	91: Ring (below)
 •	92: Overlay Circle (circle drawn around letter)
 3. Settings & Configuration
-•	Keybindings: Dedicated list and system-wide/panel keybinds to reduce mouse reliance.
-•	Interface Fonts: 
-o	Asset Addition: "Fragment Core" (styled with "Elesh Norn, Mother of Machines").
-o	Display: Fonts in the selection menu preview in their actual format.
 •	Interface Language: Currently "English" (default).
 •	INOP Script: Latin (default), Greek, Cyrillic, Hebrew, Hangul.
 •	Arachnophobia Mode: "Sacred supreme setting." Default OFF. Warning: Removing this from the setting panel currently bricks the entire app.
-•	Legal & Licensing: Settings already contains a "Legal" placeholder. This will house the required credits and licenses for SGA and Fragment Core fonts.
 4. Utilities & Quality of Life
 •	Plaintext Buffer Clear: Dedicated "Clear" button and shortcut to wipe the input field.
 •	Composite Copy Utility: Single "Copy Ciphertext + Marker" button to push both to the clipboard simultaneously.
@@ -165,10 +153,20 @@ ROADMAP APPENDIX: UI Logic & Quality of Life
     Deletion: Backspace / Delete removes selected text or the character at the cursor.
     Composite Copy Format: When copying ciphertext, the clipboard output is formatted as: [CIPHERTEXT]     [MARKER] (Ciphertext, exactly five spaces, then the marker).
 
-Ctrl+S overwrites the active preset.
-Ctrl+Shift+S prompts to create a new preset.
-the setup now shows the current loaded preset, ctrl shift s opens a modal to name the new preset (existing code, at least some of this already exists)
 
-legal panel to the left of settings panel (under maintenance panel technically lol) showing the text for all license files (inop, and currently the fonts in use, may grow in the future, top left inop logo, left side shows tabs of license files, centre and left side shows read only license files as they are currently)
-inop logo in settings moved to top left
 clicking in containers still doesnt work
+when super focused on a container operator must press escape to normal focus (use arrow keys as standard) other wise in superfocus arrowkeys move the "I" cursor around (left arrow one left, up arrow to beginning, right arrow to rightm down arrow to end)
+settings reordering
+tooltips: the mechanism ships and works, live only on the settings apply button. blocked on a list of which controls get one, operator to supply
+
+diacritic transformer decisions 2026-09-06:
+- one universal transformer replaces the 49 per language tables. the shape family code table above is unchanged
+- a run of digits after a letter is exactly one whole code, so no longest match rule is needed
+- a single slash between two codes stacks a second mark on the same letter. a1/12 is macron above plus stroke. this is what unblocks vietnamese
+- a double slash means the digits after it are a literal number. ma2//5 is a with acute then the number 5. this replaces the old single slash literal escape
+- capitals are now encoded. a0 is capital A. the case code always comes first, so a0/2 is capital A with acute
+- accepted tradeoff: a capital after a space marks a sentence start in the ciphertext. the old scheme threw case away and leaked nothing here
+- slot 31 bevel stays reserved and unused. unicode has one caron codepoint, so no character can decompose into a bevel
+- old ciphertext will not decode under the new scheme. accepted, nothing is public
+
+special characters BROKEN. these four are letters in their own right and not a base plus a mark, so the shape family table has no slot for them: ss-zet, ae, oe and turkish dotless i. today ae and oe are already spelled out and lost, while ss-zet is s0 and dotless i is i0, and the new table takes 0 for capitalise. under the transformer all four are spelled out, so they do not come back: strasse for the ss-zet word, and isik for the turkish one. turkish is the real casualty, it treats i and dotless i as different letters. the fix if wanted later is meta slots 02 to 05 beside capitalise, which would make all four round trip. parked on purpose 2026-09-06, operator to think about it

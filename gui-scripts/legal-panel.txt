@@ -1,0 +1,36 @@
+# The legal screen: INOP's own licence and the licence of every font it
+# bundles, reached both ways it can be reached.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.6
+shot l1-main-menu
+
+# Alt and L, from the main menu, which is the shortcut doing the work.
+alt on
+key l
+wait 0.2
+alt off
+wait 1.2
+shot l2-legal-inop
+
+# The second tab: a font licence, read off the bundled folder.
+move 116 168
+wait 0.3
+click
+wait 0.6
+shot l3-legal-font
+
+# The third, which is the one with the curly quotes in it.
+move 116 206
+wait 0.3
+click
+wait 0.6
+shot l4-legal-sga
+
+# Escape retraces the way in, which from here is the main menu.
+key escape
+wait 1.2
+shot l5-back-at-menu
+quit

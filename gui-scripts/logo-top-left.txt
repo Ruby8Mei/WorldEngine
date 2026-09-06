@@ -1,0 +1,27 @@
+# The wordmark on the left of both form screens, and Maintenance without
+# its Back button. Both screens share one header, so this is one change
+# seen twice.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+alt on
+key m
+wait 0.2
+alt off
+wait 1.2
+shot h1-maintenance-no-back
+
+alt on
+key s
+wait 0.2
+alt off
+wait 1.2
+shot h2-settings
+
+# Escape still leaves, which is what the Back button used to be for.
+key escape
+wait 1.2
+shot h3-back-at-menu
+quit

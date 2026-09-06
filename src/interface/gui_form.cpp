@@ -41,26 +41,22 @@ Rect form_control_rect(const FormMetrics& m, float x, float y) {
     return Rect{x + m.label_w + m.gap, y, m.ctrl_w, kFormRowH};
 }
 
-float form_screen_header(const GuiInput& in, float width, const std::string& title, bool with_back,
-                         bool* back_clicked, bool* wordmark_clicked) {
+float form_screen_header(const GuiInput& in, float width, const std::string& title,
+                         bool* wordmark_clicked) {
     const float pad = 6.0f;
 
-    // Where the title may start. With no Back button the left edge is the
-    // margin, so the title stays centred in what is actually free rather
-    // than in the space a button used to take.
-    float gap_x0 = kFormMargin;
-    if (with_back) {
-        Rect back_r{kFormMargin, pad, kFormBtnW, kFormBtnH};
-        if (button(back_r, "Back", in, true) && back_clicked) *back_clicked = true;
-        gap_x0 = back_r.x + back_r.w + 20.0f;
-    }
-
+    // The wordmark on the left, where the eye starts, and where the legal
+    // screen already puts it.
     float word_tw = text_width(Font::Wordmark, "INOP");
     float word_th = text_line_height(Font::Wordmark);
-    Rect wordmark_r{width - kFormMargin - (word_tw + 24.0f), pad, word_tw + 24.0f, word_th + 12.0f};
+    Rect wordmark_r{kFormMargin, pad, word_tw + 24.0f, word_th + 12.0f};
     if (wordmark_button(wordmark_r, in) && wordmark_clicked) *wordmark_clicked = true;
 
-    float gap_x1 = wordmark_r.x - 20.0f;
+    // The title centred in what is left of the bar, rather than in the
+    // whole of it, so it does not drift under the wordmark on a narrow
+    // window.
+    float gap_x0 = wordmark_r.x + wordmark_r.w + 20.0f;
+    float gap_x1 = width - kFormMargin;
     float title_tw = text_width(Font::BodyLarge, title);
     float title_x = gap_x0 + std::max(0.0f, (gap_x1 - gap_x0 - title_tw) * 0.5f);
     label(Rect{title_x, pad, title_tw, word_th + 12.0f}, title, false, Font::BodyLarge);

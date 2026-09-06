@@ -1,0 +1,46 @@
+# The preset the setup screen is working on, named under the wordmark, and
+# the two keys that write it: Control and S over the named one, Control and
+# Shift and S to name a new one.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+alt on
+key q
+wait 0.2
+alt off
+wait 1.2
+
+# Generate fills a whole machine, which is the shortest way to a setup
+# complete enough to be worth saving.
+move 1654 57
+wait 0.3
+click
+wait 0.8
+shot p1-no-preset-yet
+
+# Control and Shift and S with nothing loaded: the naming modal.
+ctrl on
+shift on
+key s
+wait 0.2
+shift off
+ctrl off
+wait 0.6
+shot p2-name-modal
+
+# The box comes up with the next auto-numbered name already in it and
+# already holding the keyboard, so Enter alone is the whole thing.
+key enter
+wait 0.8
+shot p3-named-and-saved
+
+# Control and S now has something to write over, and says so.
+ctrl on
+key s
+wait 0.2
+ctrl off
+wait 0.5
+shot p4-overwritten
+quit

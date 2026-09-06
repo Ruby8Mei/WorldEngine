@@ -34,8 +34,12 @@ struct FieldEdit {
     size_t anchor = 0;
     bool dragging = false;
     // First character shown in the box, so that a caret pushed past either
-    // edge brings the text with it instead of going out of sight.
+    // edge brings the text with it instead of going out of sight. Single
+    // line boxes only: a box that wraps has no sideways travel to make.
     size_t view_start = 0;
+    // First row shown in a box that wraps, which is the same idea turned
+    // ninety degrees. Unused at one line.
+    size_t first_row = 0;
     // Five steps back, oldest first, per the roadmap. Each box keeps its
     // own; there is deliberately no shared history for the screen.
     std::vector<std::string> undo;
@@ -65,6 +69,9 @@ struct DropdownFace {
     bool dim = false;
     bool open = false;
     bool ring = false;
+    // The face of the currently picked row, so the closed box shows what
+    // was chosen in the typeface it names. Empty means the interface face.
+    std::string font_file;
 };
 
 struct PendingDropdown {
@@ -72,6 +79,7 @@ struct PendingDropdown {
     int id = -1;
     Rect box;
     const std::vector<std::string>* options = nullptr;
+    const std::vector<std::string>* item_fonts = nullptr;
     int* selected = nullptr;
     DropdownFace face;
 };
@@ -698,21 +706,85 @@ const std::vector<std::string>& wrap_lines(float box_w, const std::string& text)
 
 float block_line_height() { return text_line_height(Font::Body) * 1.3f; }
 
+// Every single line field on every screen is this tall, and was before
+// there was a second line to have.
+const float kOneLineFieldH = 30.0f;
+
+// A wrap that partitions the string exactly, which wrap_lines_uncached
+// above deliberately does not: it drops the space it breaks on. A box that
+// is only read can afford that, and an editable one cannot. Every index
+// from 0 to size() has to sit on exactly one row, or a caret placed by a
+// click lands where the text is not. So the breaking space stays at the
+// end of the row it broke, drawn as trailing blank that nothing sees.
+struct FieldRow {
+    size_t begin, end;
+};
+
+std::vector<FieldRow> field_rows(float avail, const std::string& text) {
+    std::vector<FieldRow> rows;
+    size_t begin = 0, last_space = std::string::npos;
+    float w = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        const float cw = text_width(Font::Body, std::string(1, c));
+        // i > begin keeps a row from coming out empty when the box is
+        // narrower than one character, which would never end.
+        if (w + cw > avail && i > begin) {
+            const size_t brk = last_space == std::string::npos ? i : last_space + 1;
+            rows.push_back(FieldRow{begin, brk});
+            begin = brk;
+            last_space = std::string::npos;
+            w = text_width(Font::Body, text.substr(begin, i - begin));
+        }
+        if (c == ' ') last_space = i;
+        w += cw;
+    }
+    rows.push_back(FieldRow{begin, text.size()});
+    return rows;
+}
+
+}  // namespace
+
+float text_field_height(int lines, bool with_caption) {
+    if (lines < 1) lines = 1;
+    return kOneLineFieldH + static_cast<float>(lines - 1) * block_line_height() +
+           (with_caption ? block_line_height() : 0.0f);
+}
+
+namespace {
+
+// The caption strip along the top of a box, drawn once and left there
+// while the content scrolls underneath. Returns the height it took, so a
+// box with no caption pays nothing for the feature.
+float draw_caption(const Rect& r, const std::string& caption) {
+    if (caption.empty()) return 0.0f;
+    const float h = block_line_height();
+    draw_text(Font::Body, r.x + PAD, r.y + PAD + h * 0.7f, caption, palette::text_dim());
+    return h;
+}
+
 }  // namespace
 
 int text_block_lines(float box_w, const std::string& text) {
     return static_cast<int>(wrap_lines(box_w, text).size());
 }
 
-float text_block_height(int lines) {
+float text_block_height(int lines, bool with_caption) {
     if (lines < 1) lines = 1;
-    return static_cast<float>(lines) * block_line_height() + 2 * PAD;
+    return static_cast<float>(lines) * block_line_height() + 2 * PAD +
+           (with_caption ? block_line_height() : 0.0f);
 }
 
 int text_block(const Rect& r, const std::string& text, const GuiInput& in, float& scroll,
-               bool dim) {
+               bool dim, const std::string& caption) {
     draw_rect(r.x, r.y, r.w, r.h, palette::panel());
     draw_rect_outline(r.x, r.y, r.w, r.h, palette::border());
+
+    // Everything below is measured against the room left under the
+    // caption, so a captioned box centres and scrolls its content the same
+    // way an uncaptioned one does, just lower down.
+    const float cap_h = draw_caption(r, caption);
+    const Rect inner{r.x, r.y + cap_h, r.w, r.h - cap_h};
 
     const std::vector<std::string>& lines = wrap_lines(r.w, text);
     const float lh = block_line_height();
@@ -722,29 +794,49 @@ int text_block(const Rect& r, const std::string& text, const GuiInput& in, float
     // line in a field-height box is taller than the padded interior, and
     // treating that as overflow is what used to push it down far enough
     // for its descenders to touch the bottom edge.
-    const float overflow = content_h - r.h;
+    const float overflow = content_h - inner.h;
     float top;
     if (overflow <= 0) {
         scroll = 0;
-        top = r.y + (r.h - content_h) * 0.5f;
+        top = inner.y + (inner.h - content_h) * 0.5f;
     } else {
         if (in.scroll_y != 0 && rect_contains(r, in.mouse_x, in.mouse_y))
             scroll -= static_cast<float>(in.scroll_y) * lh;
         if (scroll < 0) scroll = 0;
         if (scroll > overflow + 2 * PAD) scroll = overflow + 2 * PAD;
-        top = r.y + PAD - scroll;
+        top = inner.y + PAD - scroll;
     }
 
-    begin_scissor(r.x, r.y, r.w, r.h);
+    begin_scissor(inner.x, inner.y, inner.w, inner.h);
     float y = top;
     for (const std::string& line : lines) {
-        if (y + lh > r.y && y < r.y + r.h)
+        if (y + lh > inner.y && y < inner.y + inner.h)
             draw_text(Font::Body, r.x + PAD, y + lh * 0.75f, line,
                       dim ? palette::text_dim() : palette::text());
         y += lh;
     }
     end_scissor();
     return static_cast<int>(lines.size());
+}
+
+bool text_link(const Rect& r, const std::string& text, const GuiInput& in, bool enabled) {
+    const bool kb = enabled && focus_register(r, in);
+    const bool hovered = enabled && rect_contains(r, in.mouse_x, in.mouse_y);
+    const bool lit = hovered || kb;
+    const float lh = text_line_height(Font::Body);
+    const float ty = r.y + (r.h + lh * 0.7f) * 0.5f;
+    draw_text(Font::Body, r.x, ty, text,
+              !enabled ? palette::disabled_text()
+                       : (lit ? palette::accent() : palette::text_dim()));
+    if (lit) {
+        // Under the baseline rather than on it, so descenders are not cut
+        // in half by their own underline.
+        draw_rect(r.x, ty + 3.0f, text_width(Font::Body, text), 1.0f, palette::accent());
+    }
+    if (kb) draw_focus_ring(r);
+    const bool clicked = hovered && in.mouse_pressed && !click_over_open_popup(in);
+    if (clicked) g_click_consumed_this_frame = true;
+    return clicked || (kb && in.key_enter);
 }
 
 bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput& in,
@@ -784,7 +876,8 @@ bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput&
 
 bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold,
-                 const std::string& placeholder, bool center_text) {
+                 const std::string& placeholder, bool center_text, int lines,
+                 const std::string& caption) {
     bool changed = false;
     // A keyboard focus on a field is the same thing as the field being the
     // one that types. Left and Right stay navigation between controls
@@ -838,14 +931,57 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
         return value.size();
     };
 
+    // A box of more than one line wraps rather than scrolling sideways.
+    // Centring is for the single character plugboard cells and means
+    // nothing here, so the two never combine.
+    const bool multiline = lines > 1 && !center_text;
+    const float row_h = block_line_height();
+    // The caption is drawn later, with the box, but its height is needed
+    // now: everything below measures against the room left under it.
+    const float cap_h = caption.empty() ? 0.0f : row_h;
+    const Rect inner{r.x, r.y + cap_h, r.w, r.h - cap_h};
+    // The rows sit as a block in the middle of that, so two lines with one
+    // line of text in them does not hang from the ceiling.
+    const float rows_top = inner.y + (inner.h - static_cast<float>(lines) * row_h) * 0.5f;
+    std::vector<FieldRow> rows;
+    if (multiline) rows = field_rows(avail, value);
+
+    // Which row an index falls on. An index sitting exactly on a row end
+    // belongs to the row after it, which is where a caret goes when typing
+    // has just pushed a word onto the next line.
+    auto row_of = [&](size_t idx) {
+        for (size_t i = 0; i + 1 < rows.size(); ++i)
+            if (idx < rows[i].end) return i;
+        return rows.empty() ? size_t(0) : rows.size() - 1;
+    };
+    auto index_at_xy = [&](double mx, double my) {
+        int vis = static_cast<int>((my - static_cast<double>(rows_top)) / row_h);
+        if (vis < 0) vis = 0;
+        if (vis > lines - 1) vis = lines - 1;
+        size_t ri = ed.first_row + static_cast<size_t>(vis);
+        if (ri >= rows.size()) ri = rows.size() - 1;
+        float x = r.x + PAD;
+        for (size_t i = rows[ri].begin; i < rows[ri].end; ++i) {
+            const float cw = text_width(Font::Body, std::string(1, value[i]));
+            if (mx < static_cast<double>(x) + cw * 0.5) return i;
+            x += cw;
+        }
+        return rows[ri].end;
+    };
+    // The rows here are the ones drawn last frame, which is exactly what
+    // the operator was aiming at when they clicked.
+    auto index_at_pointer = [&](double mx, double my) {
+        return multiline ? index_at_xy(mx, my) : index_at_x(mx);
+    };
+
     if (focused) {
         // Click places the caret, and holding and moving selects from
         // there. The press already took the focus above.
         if (hit && in.mouse_pressed) {
-            ed.caret = ed.anchor = index_at_x(in.mouse_x);
+            ed.caret = ed.anchor = index_at_pointer(in.mouse_x, in.mouse_y);
             ed.dragging = true;
         }
-        if (ed.dragging && in.mouse_held) ed.caret = index_at_x(in.mouse_x);
+        if (ed.dragging && in.mouse_held) ed.caret = index_at_pointer(in.mouse_x, in.mouse_y);
         if (!in.mouse_held) ed.dragging = false;
 
         auto sel_lo = [&]() { return ed.caret < ed.anchor ? ed.caret : ed.anchor; };
@@ -934,9 +1070,24 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
         if (ed.anchor > value.size()) ed.anchor = value.size();
     }
 
+    // The edit above moved the text out from under the rows worked out
+    // before it, so they are laid out again before anything draws.
+    if (multiline && changed) rows = field_rows(avail, value);
+
     // Scroll the window so the caret is inside it. Widths add up exactly:
     // the baked atlas has no kerning.
-    if (!center_text) {
+    if (multiline) {
+        ed.view_start = 0;
+        const size_t cr = row_of(ed.caret);
+        if (cr < ed.first_row) ed.first_row = cr;
+        if (cr >= ed.first_row + static_cast<size_t>(lines))
+            ed.first_row = cr - static_cast<size_t>(lines) + 1;
+        // And no blank rows under the text when the text would fit.
+        const size_t max_first = rows.size() > static_cast<size_t>(lines)
+                                     ? rows.size() - static_cast<size_t>(lines)
+                                     : 0;
+        if (ed.first_row > max_first) ed.first_row = max_first;
+    } else if (!center_text) {
         if (ed.view_start > ed.caret) ed.view_start = ed.caret;
         while (ed.view_start < ed.caret &&
                text_width(Font::Body, value.substr(ed.view_start, ed.caret - ed.view_start)) >
@@ -960,14 +1111,50 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
                            : (focused ? palette::accent() : hover_border(m.hover));
     draw_rect_outline(r.x, r.y, r.w, r.h, border, focused ? 2.0f : 1.0f);
     if (kb) draw_focus_ring(r);
+    draw_caption(r, caption);
 
     if (value.empty() && !focused && !placeholder.empty()) {
         if (center_text) {
             float tw = text_width(Font::Body, placeholder);
-            label(Rect{r.x + (r.w - tw) * 0.5f, r.y, r.w, r.h}, placeholder, true);
+            label(Rect{r.x + (r.w - tw) * 0.5f, inner.y, r.w, inner.h}, placeholder, true);
         } else {
-            label(Rect{r.x + PAD, r.y, r.w - 2 * PAD, r.h}, placeholder, true);
+            label(Rect{r.x + PAD, inner.y, r.w - 2 * PAD, inner.h}, placeholder, true);
         }
+    } else if (multiline) {
+        // Clipped to the box: a row half scrolled off the top edge is cut
+        // rather than drawn over the label above it.
+        begin_scissor(inner.x, inner.y, inner.w, inner.h);
+        const size_t lo = ed.caret < ed.anchor ? ed.caret : ed.anchor;
+        const size_t hi = ed.caret < ed.anchor ? ed.anchor : ed.caret;
+        for (int v = 0; v < lines; ++v) {
+            const size_t ri = ed.first_row + static_cast<size_t>(v);
+            if (ri >= rows.size()) break;
+            const float ry = rows_top + static_cast<float>(v) * row_h;
+            const std::string line = value.substr(rows[ri].begin, rows[ri].end - rows[ri].begin);
+            // A selection is drawn once per row it covers, clipped to the
+            // part of the row inside it.
+            if (focused && lo != hi && hi > rows[ri].begin && lo < rows[ri].end) {
+                const size_t a = (lo > rows[ri].begin ? lo : rows[ri].begin) - rows[ri].begin;
+                const size_t b = (hi < rows[ri].end ? hi : rows[ri].end) - rows[ri].begin;
+                Color hl = palette::accent();
+                hl.a = 0.35f;
+                draw_rect(r.x + PAD + text_width(Font::Body, line.substr(0, a)), ry,
+                          text_width(Font::Body, line.substr(a, b - a)), row_h, hl);
+            }
+            draw_text(Font::Body, r.x + PAD, ry + row_h * 0.75f, line,
+                      enabled ? palette::text() : palette::text_dim());
+        }
+        if (focused) {
+            const size_t cr = row_of(ed.caret);
+            if (cr >= ed.first_row && cr < ed.first_row + static_cast<size_t>(lines)) {
+                const size_t off = ed.caret > rows[cr].begin ? ed.caret - rows[cr].begin : 0;
+                const float cy = rows_top + static_cast<float>(cr - ed.first_row) * row_h;
+                draw_rect(r.x + PAD +
+                              text_width(Font::Body, value.substr(rows[cr].begin, off)),
+                          cy + 2.0f, 1.5f, row_h - 4.0f, palette::text());
+            }
+        }
+        end_scissor();
     } else {
         std::string shown = shown_text();
         // Trim what runs off the right, so a long value does not draw over
@@ -997,15 +1184,15 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
                 float sw = text_width(Font::Body, shown.substr(ac, bc - ac));
                 Color hl = palette::accent();
                 hl.a = 0.35f;
-                draw_rect(sx, r.y + 3.0f, sw, r.h - 6.0f, hl);
+                draw_rect(sx, inner.y + 3.0f, sw, inner.h - 6.0f, hl);
             }
         }
-        label(Rect{tx, r.y, r.w, r.h}, shown, !enabled);
+        label(Rect{tx, inner.y, r.w, inner.h}, shown, !enabled);
         if (focused) {
             const size_t c = ed.caret > ed.view_start ? ed.caret - ed.view_start : 0;
             const size_t cc = c < shown.size() ? c : shown.size();
             float cx = tx + text_width(Font::Body, shown.substr(0, cc));
-            draw_rect(cx, r.y + 4.0f, 1.5f, r.h - 8.0f, palette::text());
+            draw_rect(cx, inner.y + 4.0f, 1.5f, inner.h - 8.0f, palette::text());
         }
     }
     return changed;
@@ -1016,7 +1203,7 @@ bool clear_focused_field() {
     FieldEdit& e = g_edits[g_focus_field];
     push_undo(e, *g_focus_field);
     g_focus_field->clear();
-    e.caret = e.anchor = e.view_start = 0;
+    e.caret = e.anchor = e.view_start = e.first_row = 0;
     return true;
 }
 
@@ -1030,18 +1217,47 @@ bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t
 
 namespace {
 
+// The name of a row, in its own typeface where it has one and will bake,
+// and in the interface face otherwise. Vertically centred off whichever
+// face actually draws, since two faces at the same pixel height do not
+// share a line height.
+void label_in_face(const Rect& r, const std::string& text, const std::string& font_file,
+                   bool dim) {
+    if (font_file.empty() || !preview_font_ready(font_file)) {
+        label(r, text, dim);
+        return;
+    }
+    const Color c = dim ? palette::text_dim() : palette::text();
+    const float ty = r.y + (r.h + preview_line_height(font_file) * 0.7f) * 0.5f;
+    draw_preview_text(font_file, r.x, ty, text, c);
+    if (typeface_draws_latin(font_file)) return;
+
+    // A face that cannot spell its own name gets the name again after it,
+    // in the interface face and in brackets, so the row both shows what
+    // the face looks like and says what it is. Two typefaces on one line
+    // is nothing special here: each draw binds its own atlas.
+    const std::string plain = " (" + text + ")";
+    const float x = r.x + preview_text_width(font_file, text);
+    // Dropped rather than drawn past the end of the row. A name clipped
+    // mid-bracket reads as a fault instead of as a name.
+    if (x + text_width(Font::Body, plain) > r.x + r.w) return;
+    label(Rect{x, r.y, r.x + r.w - x, r.h}, plain, dim);
+}
+
 void draw_dropdown_face(const DropdownFace& f) {
     draw_rect(f.box.x, f.box.y, f.box.w, f.box.h, f.bg);
     draw_rect_outline(f.box.x, f.box.y, f.box.w, f.box.h, f.border);
     if (f.ring) draw_focus_ring(f.box);
-    label(Rect{f.box.x + PAD, f.box.y, f.box.w - 2 * PAD - 14, f.box.h}, f.shown, f.dim);
+    label_in_face(Rect{f.box.x + PAD, f.box.y, f.box.w - 2 * PAD - 14, f.box.h}, f.shown,
+                  f.font_file, f.dim);
     label(Rect{f.box.x + f.box.w - 16, f.box.y, 14, f.box.h}, f.open ? "^" : "v", f.dim);
 }
 
 }  // namespace
 
 void dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
-              int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid) {
+              int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid,
+              const std::vector<std::string>* item_fonts) {
     bool is_open = enabled && open_dropdown_id == id;
 
     WidgetMotion m = enabled ? widget_motion(r, in) : WidgetMotion{};
@@ -1068,6 +1284,11 @@ void dropdown(const Rect& r, const std::vector<std::string>& options, int& selec
     face.dim = !enabled;
     face.open = is_open;
     face.ring = kb;
+    // A list shorter than its options is a caller mistake rather than a
+    // case to handle, so the index is checked against both.
+    if (item_fonts && selected >= 0 && selected < static_cast<int>(options.size()) &&
+        selected < static_cast<int>(item_fonts->size()))
+        face.font_file = (*item_fonts)[static_cast<size_t>(selected)];
     // Drawn here as well as again over the open list. Drawing it twice
     // costs one box and two labels and means the face can never be missing
     // for a frame, however a screen manages to change while a list is up.
@@ -1091,6 +1312,7 @@ void dropdown(const Rect& r, const std::vector<std::string>& options, int& selec
         g_pending.id = id;
         g_pending.box = r;
         g_pending.options = &options;
+        g_pending.item_fonts = item_fonts;
         g_pending.selected = &selected;
         g_pending.face = face;
     }
@@ -1181,7 +1403,11 @@ void draw_open_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
         if (hovered) draw_rect(row.x, row.y, row.w, row.h, palette::border());
         else if (static_cast<int>(i) == *g_pending.selected)
             draw_rect(row.x, row.y, row.w, row.h, mix(palette::panel(), palette::border(), 0.5f));
-        label(Rect{row.x + PAD, row.y, row.w - 2 * PAD, row.h}, options[i]);
+        std::string row_font;
+        if (g_pending.item_fonts && i < g_pending.item_fonts->size())
+            row_font = (*g_pending.item_fonts)[i];
+        label_in_face(Rect{row.x + PAD, row.y, row.w - 2 * PAD, row.h}, options[i], row_font,
+                      false);
         if (hovered && in.mouse_pressed) {
             *g_pending.selected = static_cast<int>(i);
             open_dropdown_id = -1;

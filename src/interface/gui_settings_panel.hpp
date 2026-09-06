@@ -37,6 +37,11 @@ public:
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
 
+    // True the frame the footer word "License" was clicked — caller opens
+    // the legal screen. The other three footer words are still plain text
+    // with nothing behind them.
+    bool license_clicked() const { return license_clicked_; }
+
     // True the frame Apply was clicked, handing over the preferences to
     // put in force and store. Consumed by the call, like the clipboard
     // requests on the enciphering screen.
@@ -62,6 +67,10 @@ private:
     float draw_appearance(const GuiInput& in, float x, float y);
     float draw_audio(float x, float y);
     float draw_interface(const GuiInput& in, float x, float y);
+    // Takes no input: every row is text and nothing on it can be
+    // clicked. It is the one section that reports the interface rather
+    // than changing it.
+    float draw_keyboard(float x, float y);
 
     // Whether a row carrying this label survives the current search.
     bool shown(const std::string& label) const;
@@ -85,6 +94,10 @@ private:
     // given and reads it again when the open popup draws later in the
     // frame. Rebuilt only when the folder is rescanned.
     std::vector<std::string> font_options_;
+    // The file behind each of those entries, held for the same reason and
+    // rebuilt at the same moments: the dropdown keeps the pointer and
+    // reads it again when the popup draws later in the frame.
+    std::vector<std::string> font_option_files_;
     // Whether the font list was open on the previous frame, so the folder
     // is rescanned once as it opens and not once per frame while it is up.
     bool font_list_open_ = false;
@@ -113,6 +126,7 @@ private:
     bool status_error_ = false;
     bool apply_pending_ = false;
     bool wordmark_clicked_ = false;
+    bool license_clicked_ = false;
 };
 
 }  // namespace gui

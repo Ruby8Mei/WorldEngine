@@ -19,6 +19,7 @@
 #include "registry.hpp"
 #include "rng.hpp"
 #include "settings.hpp"
+#include "transform.hpp"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -59,7 +60,7 @@ void enable_vt() {
     // or pasted accented characters are decoded on the way IN using the
     // console's separate input codepage, which defaults to the system
     // legacy codepage, not UTF-8 — without this, é/è/â/... arrive already
-    // mangled or dropped before fold_diacritics ever sees them.
+    // mangled or dropped before transform() ever sees them.
     SetConsoleCP(CP_UTF8);
 #endif
 }
@@ -691,306 +692,304 @@ int self_test() {
                   << static_cast<long>(text.size() / ms / 1000.0) << "M symbols/s\n";
     }
 
-    // 9. Numeral-suffix diacritic scheme: every worked example from the
-    //    README, fold_diacritics() must match exactly, and folding what
-    //    resubstitute() hands back must reproduce the same encoded form
-    //    (encode/decode are inverses on these fixtures).
+    // 9. One real sentence per language, through the transformer and back.
+    //
+    //    These are the worked examples the old per-language scheme was
+    //    tested against, kept because they are real text in 48 real
+    //    languages and no set of invented cases covers as much. What is
+    //    checked is different, though. The old test compared against a
+    //    hand written expected folding, one per language, which the new
+    //    scheme changes and which nobody could maintain by hand anyway.
+    //
+    //    What is checked here instead is stability: fold a sentence,
+    //    unfold it, fold it again, and the two foldings must be the same
+    //    string. That is the property an operator actually depends on --
+    //    decode a message, encode it again, get the same ciphertext -- and
+    //    it fails loudly on any disagreement between the two directions.
+    //    It is not circular: nothing here is generated from the
+    //    transformer, and a decoder that guessed wrong would produce a
+    //    different second folding.
+    //
+    //    The character level correctness is section 10s job, where every
+    //    one of the 480 carried characters is compared against the real
+    //    unicode character rather than against the transformer.
     {
-        struct Row { const char* lang; const char* plain; const char* encoded; };
+        struct Row { const char* lang; const char* plain; };
         static const Row rows[] = {
-            {"sqi", "Unë flas shqip dhe pi çaj.", "une6 flas shqip dhe pi c8aj"},
-            {"eus", "Kaixo, zer moduz zaude?", "kaixo zer moduz zaude"},
-            {"bos", "Ćao, Đorđe voli čokoladu i čaj.",
-             "c2ao d0ord0e voli c3okoladu i c3aj"},
-            {"yue", "Néih hóu, ngóh dōu hóu.", "ne2ih ho2u ngo2h do1u ho2u"},
-            {"cat", "El parallel és clar.", "el parallel e2s clar"},
-            {"cpf", "Li fò, li gen kè kontan, e li rete bò lanmè a.",
-             "li fo4 li gen ke4 kontan e li rete bo4 lanme4 a"},
-            {"hrv", "Ćao, Đorđe voli čokoladu i čaj.",
-             "c2ao d0ord0e voli c3okoladu i c3aj"},
-            {"czr", "Děkuji, můj přítel má nový dům.",
-             "de3kuji mu9j pr3i2tel ma2 novy2 du9m"},
-            {"dan", "Håper du får en fin dag på øya, kjære venn.",
-             "ha9per du fa9r en fin dag pa9 o0ya kjaere venn"},
-            {"nld", "De coördinatie was ideeën waard.",
-             "de coo6rdinatie was ideee6n waard"},
-            {"eng", "The naïve café owner smiled.", "the nai6ve cafe2 owner smiled"},
-            {"est", "Söödav õunapuu on hea.", "so6o6dav o7unapuu on hea"},
-            {"fin", "Hän on täällä.", "ha6n on ta6a6lla6"},
-            {"fra", "Le café est très cher.", "le cafe2 est tre4s cher"},
-            {"deu", "Möchten Sie ein großes Käsebrötchen?",
-             "mo6chten sie ein gros0es ka6sebro6tchen"},
-            {"hin", "Maiṃ Kṛṣṇa kī gītā paṛhtā hūṃ.",
-             "maim88 kr88s88n88a ki1 gi1ta1 par88hta1 hu1m88"},
-            {"hun", "Ő szereti a gyümölcsöt és a tűzhelyet.",
-             "o22 szereti a gyu6mo6lcso6t e2s a tu22zhelyet"},
-            {"ibo", "Ị bụ ezigbo ụmụ nwoke.", "i88 bu88 ezigbo u88mu88 nwoke"},
-            {"ind", "Selamat pagi, apa kabar?", "selamat pagi apa kabar"},
-            {"gle", "Tá mo mháthair ag ithe úll sa ghairdín.",
-             "ta2 mo mha2thair ag ithe u2ll sa ghairdi2n"},
-            {"ita", "Perché è così città?", "perche2 e4 cosi4 citta4"},
-            {"kor", "Annyeonghaseyo, jal jinaeseyo?", "annyeonghaseyo jal jinaeseyo"},
-            {"kmr", "Ez kurdî me û ji çayê hez dikim, ne ji şerî.",
-             "ez kurdi5 me u5 ji c8aye5 hez dikim ne ji s8eri5"},
-            {"lat", "Vēnī, vīdī, vīcī", "ve1ni1 vi1di1 vi1ci1"},
-            {"lit", "Ėjau prie ąžuolo su ūkininku.",
-             "e33jau prie a8z3uolo su u1kininku"},
-            {"ltz", "Lëtzebuerg ass e schéint Land.",
-             "le6tzebuerg ass e sche2int land"},
-            {"mly", "Selamat pagi, apa khabar?", "selamat pagi apa khabar"},
-            {"mlt", "Ġorġ jiekol ċerasa, u żmien huwa sabiħ.",
-             "g33org33 jiekol c33erasa u z33mien huwa sabih0"},
-            {"cmn", "Wǒ hěn xǐhuān zhège dìfāng.", "wo3 he3n xi3hua1n zhe4ge di4fa1ng"},
-            {"mri", "Kei te pai te rā, e hoa mā.", "kei te pai te ra1 e hoa ma1"},
-            {"cnr", "Śever i źenica su śutra.", "s2ever i z2enica su s2utra"},
-            {"nor", "Håper du får en fin dag på øya, kjære venn.",
-             "ha9per du fa9r en fin dag pa9 o0ya kjaere venn"},
-            {"pol", "Dziękuję, mój wujek ma ładny dom. Ćma i źrebię śpią, a łąka pachnie różą.",
-             "dzie8kuje8 mo2j wujek ma l0adny dom c2ma i z2rebie8 s2pia8 a l0a8ka pachnie ro2z33a8"},
-            {"por", "O irmão comeu pão com maçã.", "o irma7o comeu pa7o com mac8a7"},
-            {"ron", "Câinele meu aleargă în grădină.",
-             "ca5inele meu alearga3 i5n gra3dina3"},
-            {"gla", "Chì mi bàta ùr agus tha e math.", "chi4 mi ba4ta u4r agus tha e math"},
-            {"srp", "Ćao, Đorđe voli čokoladu i čaj.",
-             "c2ao d0ord0e voli c3okoladu i c3aj"},
-            {"svk", "Môj priateľ má nový dom v meste.",
-             "mo5j priatel3 ma2 novy2 dom v meste"},
-            {"slv", "Šla sem v Ljubljano videti čudovito reko.",
-             "s3la sem v ljubljano videti c3udovito reko"},
-            {"som", "Nabad, sidee tahay?", "nabad sidee tahay"},
-            {"spa", "El niño comió piña en España.", "el nin7o comio2 pin7a en espan7a"},
-            {"swa", "Habari, unaendeleaje?", "habari unaendeleaje"},
-            {"swe", "Åsa äter äpplen och dricker öl.", "a9sa a6ter a6pplen och dricker o6l"},
-            {"tgl", "Pinuntahan namin ang Peñafrancia.",
-             "pinuntahan namin ang pen7afrancia"},
-            {"tur", "Güzel bir gün, değil mi? Işık çok parlak.",
-             "gu6zel bir gu6n deg3il mi i0s8i0k c8ok parlak"},
-            {"cym", "Mae'r tŷ'n hardd a'r cŵn yn hapus.",
-             "maer ty5n hardd ar cw5n yn hapus"},
-            {"yor", "Ẹ ṣeun, ọmọ mi dára.", "e88 s88eun o88mo88 mi da2ra"},
-            {"zul", "Sawubona, unjani?", "sawubona unjani"},
+            {"sqi", "\x55\x6e\xc3\xab\x20\x66\x6c\x61\x73\x20\x73\x68\x71\x69\x70\x20\x64\x68\x65\x20\x70\x69\x20\xc3\xa7\x61\x6a\x2e"},
+            {"eus", "\x4b\x61\x69\x78\x6f\x2c\x20\x7a\x65\x72\x20\x6d\x6f\x64\x75\x7a\x20\x7a\x61\x75\x64\x65\x3f"},
+            {"bos", "\xc4\x86\x61\x6f\x2c\x20\xc4\x90\x6f\x72\xc4\x91\x65\x20\x76\x6f\x6c\x69\x20\xc4\x8d\x6f\x6b\x6f\x6c\x61\x64\x75\x20\x69\x20\xc4\x8d\x61\x6a\x2e"},
+            {"yue", "\x4e\xc3\xa9\x69\x68\x20\x68\xc3\xb3\x75\x2c\x20\x6e\x67\xc3\xb3\x68\x20\x64\xc5\x8d\x75\x20\x68\xc3\xb3\x75\x2e"},
+            {"cat", "\x45\x6c\x20\x70\x61\x72\x61\x6c\x6c\x65\x6c\x20\xc3\xa9\x73\x20\x63\x6c\x61\x72\x2e"},
+            {"cpf", "\x4c\x69\x20\x66\xc3\xb2\x2c\x20\x6c\x69\x20\x67\x65\x6e\x20\x6b\xc3\xa8\x20\x6b\x6f\x6e\x74\x61\x6e\x2c\x20\x65\x20\x6c\x69\x20\x72\x65\x74\x65\x20\x62\xc3\xb2\x20\x6c\x61\x6e\x6d\xc3\xa8\x20\x61\x2e"},
+            {"hrv", "\xc4\x86\x61\x6f\x2c\x20\xc4\x90\x6f\x72\xc4\x91\x65\x20\x76\x6f\x6c\x69\x20\xc4\x8d\x6f\x6b\x6f\x6c\x61\x64\x75\x20\x69\x20\xc4\x8d\x61\x6a\x2e"},
+            {"czr", "\x44\xc4\x9b\x6b\x75\x6a\x69\x2c\x20\x6d\xc5\xaf\x6a\x20\x70\xc5\x99\xc3\xad\x74\x65\x6c\x20\x6d\xc3\xa1\x20\x6e\x6f\x76\xc3\xbd\x20\x64\xc5\xaf\x6d\x2e"},
+            {"dan", "\x48\xc3\xa5\x70\x65\x72\x20\x64\x75\x20\x66\xc3\xa5\x72\x20\x65\x6e\x20\x66\x69\x6e\x20\x64\x61\x67\x20\x70\xc3\xa5\x20\xc3\xb8\x79\x61\x2c\x20\x6b\x6a\xc3\xa6\x72\x65\x20\x76\x65\x6e\x6e\x2e"},
+            {"nld", "\x44\x65\x20\x63\x6f\xc3\xb6\x72\x64\x69\x6e\x61\x74\x69\x65\x20\x77\x61\x73\x20\x69\x64\x65\x65\xc3\xab\x6e\x20\x77\x61\x61\x72\x64\x2e"},
+            {"eng", "\x54\x68\x65\x20\x6e\x61\xc3\xaf\x76\x65\x20\x63\x61\x66\xc3\xa9\x20\x6f\x77\x6e\x65\x72\x20\x73\x6d\x69\x6c\x65\x64\x2e"},
+            {"est", "\x53\xc3\xb6\xc3\xb6\x64\x61\x76\x20\xc3\xb5\x75\x6e\x61\x70\x75\x75\x20\x6f\x6e\x20\x68\x65\x61\x2e"},
+            {"fin", "\x48\xc3\xa4\x6e\x20\x6f\x6e\x20\x74\xc3\xa4\xc3\xa4\x6c\x6c\xc3\xa4\x2e"},
+            {"fra", "\x4c\x65\x20\x63\x61\x66\xc3\xa9\x20\x65\x73\x74\x20\x74\x72\xc3\xa8\x73\x20\x63\x68\x65\x72\x2e"},
+            {"deu", "\x4d\xc3\xb6\x63\x68\x74\x65\x6e\x20\x53\x69\x65\x20\x65\x69\x6e\x20\x67\x72\x6f\xc3\x9f\x65\x73\x20\x4b\xc3\xa4\x73\x65\x62\x72\xc3\xb6\x74\x63\x68\x65\x6e\x3f"},
+            {"hin", "\x4d\x61\x69\xe1\xb9\x83\x20\x4b\xe1\xb9\x9b\xe1\xb9\xa3\xe1\xb9\x87\x61\x20\x6b\xc4\xab\x20\x67\xc4\xab\x74\xc4\x81\x20\x70\x61\xe1\xb9\x9b\x68\x74\xc4\x81\x20\x68\xc5\xab\xe1\xb9\x83\x2e"},
+            {"hun", "\xc5\x90\x20\x73\x7a\x65\x72\x65\x74\x69\x20\x61\x20\x67\x79\xc3\xbc\x6d\xc3\xb6\x6c\x63\x73\xc3\xb6\x74\x20\xc3\xa9\x73\x20\x61\x20\x74\xc5\xb1\x7a\x68\x65\x6c\x79\x65\x74\x2e"},
+            {"ibo", "\xe1\xbb\x8a\x20\x62\xe1\xbb\xa5\x20\x65\x7a\x69\x67\x62\x6f\x20\xe1\xbb\xa5\x6d\xe1\xbb\xa5\x20\x6e\x77\x6f\x6b\x65\x2e"},
+            {"ind", "\x53\x65\x6c\x61\x6d\x61\x74\x20\x70\x61\x67\x69\x2c\x20\x61\x70\x61\x20\x6b\x61\x62\x61\x72\x3f"},
+            {"gle", "\x54\xc3\xa1\x20\x6d\x6f\x20\x6d\x68\xc3\xa1\x74\x68\x61\x69\x72\x20\x61\x67\x20\x69\x74\x68\x65\x20\xc3\xba\x6c\x6c\x20\x73\x61\x20\x67\x68\x61\x69\x72\x64\xc3\xad\x6e\x2e"},
+            {"ita", "\x50\x65\x72\x63\x68\xc3\xa9\x20\xc3\xa8\x20\x63\x6f\x73\xc3\xac\x20\x63\x69\x74\x74\xc3\xa0\x3f"},
+            {"kor", "\x41\x6e\x6e\x79\x65\x6f\x6e\x67\x68\x61\x73\x65\x79\x6f\x2c\x20\x6a\x61\x6c\x20\x6a\x69\x6e\x61\x65\x73\x65\x79\x6f\x3f"},
+            {"kmr", "\x45\x7a\x20\x6b\x75\x72\x64\xc3\xae\x20\x6d\x65\x20\xc3\xbb\x20\x6a\x69\x20\xc3\xa7\x61\x79\xc3\xaa\x20\x68\x65\x7a\x20\x64\x69\x6b\x69\x6d\x2c\x20\x6e\x65\x20\x6a\x69\x20\xc5\x9f\x65\x72\xc3\xae\x2e"},
+            {"lat", "\x56\xc4\x93\x6e\xc4\xab\x2c\x20\x76\xc4\xab\x64\xc4\xab\x2c\x20\x76\xc4\xab\x63\xc4\xab"},
+            {"lit", "\xc4\x96\x6a\x61\x75\x20\x70\x72\x69\x65\x20\xc4\x85\xc5\xbe\x75\x6f\x6c\x6f\x20\x73\x75\x20\xc5\xab\x6b\x69\x6e\x69\x6e\x6b\x75\x2e"},
+            {"ltz", "\x4c\xc3\xab\x74\x7a\x65\x62\x75\x65\x72\x67\x20\x61\x73\x73\x20\x65\x20\x73\x63\x68\xc3\xa9\x69\x6e\x74\x20\x4c\x61\x6e\x64\x2e"},
+            {"mly", "\x53\x65\x6c\x61\x6d\x61\x74\x20\x70\x61\x67\x69\x2c\x20\x61\x70\x61\x20\x6b\x68\x61\x62\x61\x72\x3f"},
+            {"mlt", "\xc4\xa0\x6f\x72\xc4\xa1\x20\x6a\x69\x65\x6b\x6f\x6c\x20\xc4\x8b\x65\x72\x61\x73\x61\x2c\x20\x75\x20\xc5\xbc\x6d\x69\x65\x6e\x20\x68\x75\x77\x61\x20\x73\x61\x62\x69\xc4\xa7\x2e"},
+            {"cmn", "\x57\xc7\x92\x20\x68\xc4\x9b\x6e\x20\x78\xc7\x90\x68\x75\xc4\x81\x6e\x20\x7a\x68\xc3\xa8\x67\x65\x20\x64\xc3\xac\x66\xc4\x81\x6e\x67\x2e"},
+            {"mri", "\x4b\x65\x69\x20\x74\x65\x20\x70\x61\x69\x20\x74\x65\x20\x72\xc4\x81\x2c\x20\x65\x20\x68\x6f\x61\x20\x6d\xc4\x81\x2e"},
+            {"cnr", "\xc5\x9a\x65\x76\x65\x72\x20\x69\x20\xc5\xba\x65\x6e\x69\x63\x61\x20\x73\x75\x20\xc5\x9b\x75\x74\x72\x61\x2e"},
+            {"nor", "\x48\xc3\xa5\x70\x65\x72\x20\x64\x75\x20\x66\xc3\xa5\x72\x20\x65\x6e\x20\x66\x69\x6e\x20\x64\x61\x67\x20\x70\xc3\xa5\x20\xc3\xb8\x79\x61\x2c\x20\x6b\x6a\xc3\xa6\x72\x65\x20\x76\x65\x6e\x6e\x2e"},
+            {"pol", "\x44\x7a\x69\xc4\x99\x6b\x75\x6a\xc4\x99\x2c\x20\x6d\xc3\xb3\x6a\x20\x77\x75\x6a\x65\x6b\x20\x6d\x61\x20\xc5\x82\x61\x64\x6e\x79\x20\x64\x6f\x6d\x2e\x20\xc4\x86\x6d\x61\x20\x69\x20\xc5\xba\x72\x65\x62\x69\xc4\x99\x20\xc5\x9b\x70\x69\xc4\x85\x2c\x20\x61\x20\xc5\x82\xc4\x85\x6b\x61\x20\x70\x61\x63\x68\x6e\x69\x65\x20\x72\xc3\xb3\xc5\xbc\xc4\x85\x2e"},
+            {"por", "\x4f\x20\x69\x72\x6d\xc3\xa3\x6f\x20\x63\x6f\x6d\x65\x75\x20\x70\xc3\xa3\x6f\x20\x63\x6f\x6d\x20\x6d\x61\xc3\xa7\xc3\xa3\x2e"},
+            {"ron", "\x43\xc3\xa2\x69\x6e\x65\x6c\x65\x20\x6d\x65\x75\x20\x61\x6c\x65\x61\x72\x67\xc4\x83\x20\xc3\xae\x6e\x20\x67\x72\xc4\x83\x64\x69\x6e\xc4\x83\x2e"},
+            {"gla", "\x43\x68\xc3\xac\x20\x6d\x69\x20\x62\xc3\xa0\x74\x61\x20\xc3\xb9\x72\x20\x61\x67\x75\x73\x20\x74\x68\x61\x20\x65\x20\x6d\x61\x74\x68\x2e"},
+            {"srp", "\xc4\x86\x61\x6f\x2c\x20\xc4\x90\x6f\x72\xc4\x91\x65\x20\x76\x6f\x6c\x69\x20\xc4\x8d\x6f\x6b\x6f\x6c\x61\x64\x75\x20\x69\x20\xc4\x8d\x61\x6a\x2e"},
+            {"svk", "\x4d\xc3\xb4\x6a\x20\x70\x72\x69\x61\x74\x65\xc4\xbe\x20\x6d\xc3\xa1\x20\x6e\x6f\x76\xc3\xbd\x20\x64\x6f\x6d\x20\x76\x20\x6d\x65\x73\x74\x65\x2e"},
+            {"slv", "\xc5\xa0\x6c\x61\x20\x73\x65\x6d\x20\x76\x20\x4c\x6a\x75\x62\x6c\x6a\x61\x6e\x6f\x20\x76\x69\x64\x65\x74\x69\x20\xc4\x8d\x75\x64\x6f\x76\x69\x74\x6f\x20\x72\x65\x6b\x6f\x2e"},
+            {"som", "\x4e\x61\x62\x61\x64\x2c\x20\x73\x69\x64\x65\x65\x20\x74\x61\x68\x61\x79\x3f"},
+            {"spa", "\x45\x6c\x20\x6e\x69\xc3\xb1\x6f\x20\x63\x6f\x6d\x69\xc3\xb3\x20\x70\x69\xc3\xb1\x61\x20\x65\x6e\x20\x45\x73\x70\x61\xc3\xb1\x61\x2e"},
+            {"swa", "\x48\x61\x62\x61\x72\x69\x2c\x20\x75\x6e\x61\x65\x6e\x64\x65\x6c\x65\x61\x6a\x65\x3f"},
+            {"swe", "\xc3\x85\x73\x61\x20\xc3\xa4\x74\x65\x72\x20\xc3\xa4\x70\x70\x6c\x65\x6e\x20\x6f\x63\x68\x20\x64\x72\x69\x63\x6b\x65\x72\x20\xc3\xb6\x6c\x2e"},
+            {"tgl", "\x50\x69\x6e\x75\x6e\x74\x61\x68\x61\x6e\x20\x6e\x61\x6d\x69\x6e\x20\x61\x6e\x67\x20\x50\x65\xc3\xb1\x61\x66\x72\x61\x6e\x63\x69\x61\x2e"},
+            {"tur", "\x47\xc3\xbc\x7a\x65\x6c\x20\x62\x69\x72\x20\x67\xc3\xbc\x6e\x2c\x20\x64\x65\xc4\x9f\x69\x6c\x20\x6d\x69\x3f\x20\x49\xc5\x9f\xc4\xb1\x6b\x20\xc3\xa7\x6f\x6b\x20\x70\x61\x72\x6c\x61\x6b\x2e"},
+            {"cym", "\x4d\x61\x65\x27\x72\x20\x74\xc5\xb7\x27\x6e\x20\x68\x61\x72\x64\x64\x20\x61\x27\x72\x20\x63\xc5\xb5\x6e\x20\x79\x6e\x20\x68\x61\x70\x75\x73\x2e"},
+            {"yor", "\xe1\xba\xb8\x20\xe1\xb9\xa3\x65\x75\x6e\x2c\x20\xe1\xbb\x8d\x6d\xe1\xbb\x8d\x20\x6d\x69\x20\x64\xc3\xa1\x72\x61\x2e"},
+            {"zul", "\x53\x61\x77\x75\x62\x6f\x6e\x61\x2c\x20\x75\x6e\x6a\x61\x6e\x69\x3f"},
         };
-        for (const auto& r : rows) {
-            std::string got = fold_diacritics(r.plain, r.lang);
-            check(got == r.encoded, std::string("fold[") + r.lang + "] -> " + got);
-            std::string roundtrip = fold_diacritics(resubstitute(r.encoded, r.lang), r.lang);
-            check(roundtrip == r.encoded,
-                  std::string("resubstitute/fold round trip[") + r.lang + "] -> " + roundtrip);
-        }
-    }
-
-    // 10. Digit-collision fix: a literal digit right after a letter gets a
-    //     separating '/'; a diacritic-introduced digit never does.
-    {
-        auto encode = [](const std::string& raw, const std::string& lang) {
-            return fold_diacritics(mark_literal_digits(raw), lang);
-        };
-        check(encode("Room A2", "eng") == "room a/2", "digit collision: Room A2");
-        check(encode("Château Latour 1964", "fra") == "cha5teau latour 1964",
-              "digit collision: Chateau Latour 1964 (no false slash on a bare number)");
-        check(encode("Côte d'Ivoire", "fra") == "co5te divoire",
-              "digit collision: apostrophe dropped, no space inserted");
-
-        // A literal digit directly after an ACCENTED letter. The separator
-        // lands after the mark digit rather than after a bare letter, and
-        // resubstitute() used to arrive at it with a digit behind it
-        // instead of a letter, so the branch that strips it never fired
-        // and the '/' survived into human-readable output. Covered here
-        // across the four shapes a mark can take: one digit, the 0 slot
-        // for a genuinely distinct letter, a doubled slot, and a chain.
-        auto full = [&](const std::string& raw, const std::string& lang) {
-            return resubstitute(encode(raw, lang), lang);
-        };
-        struct LitRow { const char* lang; const char* raw; const char* folded; };
-        static const LitRow lit_rows[] = {
-            {"svk", "má5",       "ma2/5"},
-            {"fra", "café2",     "cafe2/2"},
-            {"pol", "łódź9", "l0o2dz2/9"},
-            {"yor", "ẹ2",        "e88/2"},
-            {"cmn", "lǜ4",       "lu64/4"},
-        };
-        for (const auto& r : lit_rows) {
-            std::string enc = encode(r.raw, r.lang);
-            check(enc == r.folded,
-                  std::string("literal digit after diacritic folds[") + r.lang + "] -> " + enc);
-            std::string back = full(r.raw, r.lang);
-            check(back == r.raw,
-                  std::string("literal digit after diacritic round trip[") + r.lang + "] -> " + back);
-        }
-    }
-
-    // 11. Exhaustive per-language diacritic round trip: every (letter,
-    //     digit) pair each language's resubstitute() table supports, not
-    //     just the characters that happened to show up in a worked example
-    //     sentence. Catches table gaps a natural-language sentence might
-    //     never exercise (this is exactly what caught src/languages.cpp
-    //     missing Catalan i6/u6 and Dutch u6 during a manual audit).
-    {
-        struct DiacRow { const char* lang; char base; int digit; const char* ch; };
-        static const DiacRow rows[] = {
-            {"sqi",'c',8,"ç"},{"sqi",'e',6,"ë"},
-
-            {"bos",'c',3,"č"},{"bos",'s',3,"š"},{"bos",'z',3,"ž"},{"bos",'c',2,"ć"},{"bos",'d',0,"đ"},
-
-            {"yue",'a',1,"ā"},{"yue",'e',1,"ē"},{"yue",'i',1,"ī"},{"yue",'o',1,"ō"},{"yue",'u',1,"ū"},
-            {"yue",'a',2,"á"},{"yue",'e',2,"é"},{"yue",'i',2,"í"},{"yue",'o',2,"ó"},{"yue",'u',2,"ú"},
-            {"yue",'a',3,"ǎ"},{"yue",'e',3,"ě"},{"yue",'i',3,"ǐ"},{"yue",'o',3,"ǒ"},{"yue",'u',3,"ǔ"},
-            {"yue",'a',4,"à"},{"yue",'e',4,"è"},{"yue",'i',4,"ì"},{"yue",'o',4,"ò"},{"yue",'u',4,"ù"},
-            {"yue",'a',5,"â"},{"yue",'e',5,"ê"},{"yue",'i',5,"î"},{"yue",'o',5,"ô"},{"yue",'u',5,"û"},
-            {"yue",'a',7,"ã"},{"yue",'e',7,"ẽ"},{"yue",'i',7,"ĩ"},{"yue",'o',7,"õ"},{"yue",'u',7,"ũ"},
-
-            {"cpf",'a',4,"à"},{"cpf",'e',4,"è"},{"cpf",'o',4,"ò"},
-
-            {"hrv",'c',3,"č"},{"hrv",'s',3,"š"},{"hrv",'z',3,"ž"},{"hrv",'c',2,"ć"},{"hrv",'d',0,"đ"},
-
-            {"lat",'a',1,"ā"},{"lat",'e',1,"ē"},{"lat",'i',1,"ī"},{"lat",'o',1,"ō"},{"lat",'u',1,"ū"},
-
-            {"eng",'a',2,"á"},{"eng",'e',2,"é"},{"eng",'i',2,"í"},{"eng",'o',2,"ó"},{"eng",'u',2,"ú"},
-            {"eng",'a',4,"à"},{"eng",'e',4,"è"},
-            {"eng",'a',5,"â"},{"eng",'e',5,"ê"},{"eng",'i',5,"î"},{"eng",'o',5,"ô"},{"eng",'u',5,"û"},
-            {"eng",'a',6,"ä"},{"eng",'e',6,"ë"},{"eng",'i',6,"ï"},{"eng",'o',6,"ö"},{"eng",'u',6,"ü"},
-            {"eng",'n',7,"ñ"},
-
-            {"spa",'a',2,"á"},{"spa",'e',2,"é"},{"spa",'i',2,"í"},{"spa",'o',2,"ó"},{"spa",'u',2,"ú"},
-            {"spa",'n',7,"ñ"},{"spa",'u',6,"ü"},
-
-            {"cat",'a',4,"à"},{"cat",'e',4,"è"},{"cat",'o',4,"ò"},
-            {"cat",'e',2,"é"},{"cat",'i',2,"í"},{"cat",'o',2,"ó"},{"cat",'u',2,"ú"},
-            {"cat",'i',6,"ï"},{"cat",'u',6,"ü"},{"cat",'c',8,"ç"},
-
-            {"nld",'e',6,"ë"},{"nld",'i',6,"ï"},{"nld",'o',6,"ö"},{"nld",'u',6,"ü"},{"nld",'e',2,"é"},
-
-            {"dan",'o',0,"ø"},{"dan",'a',9,"å"},
-
-            {"czr",'a',2,"á"},{"czr",'e',2,"é"},{"czr",'i',2,"í"},{"czr",'o',2,"ó"},{"czr",'u',2,"ú"},
-            {"czr",'y',2,"ý"},
-            {"czr",'e',3,"ě"},{"czr",'s',3,"š"},{"czr",'c',3,"č"},{"czr",'r',3,"ř"},{"czr",'z',3,"ž"},
-            {"czr",'d',3,"ď"},{"czr",'t',3,"ť"},{"czr",'n',3,"ň"},{"czr",'u',9,"ů"},
-
-            {"por",'a',7,"ã"},{"por",'o',7,"õ"},
-            {"por",'a',2,"á"},{"por",'e',2,"é"},{"por",'i',2,"í"},{"por",'o',2,"ó"},{"por",'u',2,"ú"},
-            {"por",'a',5,"â"},{"por",'e',5,"ê"},{"por",'o',5,"ô"},{"por",'a',4,"à"},{"por",'c',8,"ç"},
-
-            {"fra",'e',2,"é"},
-            {"fra",'a',4,"à"},{"fra",'e',4,"è"},{"fra",'u',4,"ù"},
-            {"fra",'a',5,"â"},{"fra",'e',5,"ê"},{"fra",'i',5,"î"},{"fra",'o',5,"ô"},{"fra",'u',5,"û"},
-            {"fra",'e',6,"ë"},{"fra",'i',6,"ï"},{"fra",'u',6,"ü"},{"fra",'y',6,"ÿ"},{"fra",'c',8,"ç"},
-
-            {"ita",'a',4,"à"},{"ita",'e',4,"è"},{"ita",'i',4,"ì"},{"ita",'o',4,"ò"},{"ita",'u',4,"ù"},
-            {"ita",'e',2,"é"},
-
-            {"deu",'a',6,"ä"},{"deu",'o',6,"ö"},{"deu",'u',6,"ü"},{"deu",'s',0,"ß"},
-
-            {"hin",'a',1,"ā"},{"hin",'i',1,"ī"},{"hin",'u',1,"ū"},
-            {"hin",'t',88,"ṭ"},{"hin",'d',88,"ḍ"},{"hin",'n',88,"ṇ"},{"hin",'s',88,"ṣ"},
-            {"hin",'h',88,"ḥ"},{"hin",'m',88,"ṃ"},{"hin",'r',88,"ṛ"},{"hin",'l',88,"ḷ"},
-            {"hin",'n',33,"ṅ"},{"hin",'n',7,"ñ"},{"hin",'s',2,"ś"},
-
-            {"hun",'a',2,"á"},{"hun",'e',2,"é"},{"hun",'i',2,"í"},{"hun",'o',2,"ó"},{"hun",'u',2,"ú"},
-            {"hun",'o',6,"ö"},{"hun",'u',6,"ü"},{"hun",'o',22,"ő"},{"hun",'u',22,"ű"},
-
-            {"ibo",'i',88,"ị"},{"ibo",'o',88,"ọ"},{"ibo",'u',88,"ụ"},
-
-            {"gle",'a',2,"á"},{"gle",'e',2,"é"},{"gle",'i',2,"í"},{"gle",'o',2,"ó"},{"gle",'u',2,"ú"},
-
-            {"kmr",'c',8,"ç"},{"kmr",'e',5,"ê"},{"kmr",'i',5,"î"},{"kmr",'u',5,"û"},{"kmr",'s',8,"ş"},
-
-            {"lit",'a',8,"ą"},{"lit",'e',8,"ę"},{"lit",'i',8,"į"},{"lit",'u',8,"ų"},
-            {"lit",'c',3,"č"},{"lit",'s',3,"š"},{"lit",'z',3,"ž"},{"lit",'u',1,"ū"},{"lit",'e',33,"ė"},
-
-            {"ltz",'e',6,"ë"},{"ltz",'e',2,"é"},
-
-            {"mlt",'c',33,"ċ"},{"mlt",'g',33,"ġ"},{"mlt",'h',0,"ħ"},{"mlt",'z',33,"ż"},
-
-            {"cmn",'a',1,"ā"},{"cmn",'e',1,"ē"},{"cmn",'i',1,"ī"},{"cmn",'o',1,"ō"},{"cmn",'u',1,"ū"},
-            {"cmn",'a',2,"á"},{"cmn",'e',2,"é"},{"cmn",'i',2,"í"},{"cmn",'o',2,"ó"},{"cmn",'u',2,"ú"},
-            {"cmn",'a',3,"ǎ"},{"cmn",'e',3,"ě"},{"cmn",'i',3,"ǐ"},{"cmn",'o',3,"ǒ"},{"cmn",'u',3,"ǔ"},
-            {"cmn",'a',4,"à"},{"cmn",'e',4,"è"},{"cmn",'i',4,"ì"},{"cmn",'o',4,"ò"},{"cmn",'u',4,"ù"},
-            {"cmn",'u',6,"ü"},{"cmn",'u',61,"ǖ"},{"cmn",'u',62,"ǘ"},{"cmn",'u',63,"ǚ"},{"cmn",'u',64,"ǜ"},
-
-            {"mri",'a',1,"ā"},{"mri",'e',1,"ē"},{"mri",'i',1,"ī"},{"mri",'o',1,"ō"},{"mri",'u',1,"ū"},
-
-            {"cnr",'c',3,"č"},{"cnr",'s',3,"š"},{"cnr",'z',3,"ž"},{"cnr",'c',2,"ć"},{"cnr",'d',0,"đ"},
-            {"cnr",'s',2,"ś"},{"cnr",'z',2,"ź"},
-
-            {"nor",'o',0,"ø"},{"nor",'a',9,"å"},
-
-            {"pol",'a',8,"ą"},{"pol",'e',8,"ę"},
-            {"pol",'c',2,"ć"},{"pol",'n',2,"ń"},{"pol",'s',2,"ś"},{"pol",'z',2,"ź"},{"pol",'o',2,"ó"},
-            {"pol",'l',0,"ł"},{"pol",'z',33,"ż"},
-
-            {"ron",'a',5,"â"},{"ron",'i',5,"î"},{"ron",'a',3,"ă"},
-
-            {"gla",'a',4,"à"},{"gla",'e',4,"è"},{"gla",'i',4,"ì"},{"gla",'o',4,"ò"},{"gla",'u',4,"ù"},
-
-            {"srp",'c',3,"č"},{"srp",'s',3,"š"},{"srp",'z',3,"ž"},{"srp",'c',2,"ć"},{"srp",'d',0,"đ"},
-
-            {"svk",'a',2,"á"},{"svk",'e',2,"é"},{"svk",'i',2,"í"},{"svk",'o',2,"ó"},{"svk",'u',2,"ú"},
-            {"svk",'y',2,"ý"},{"svk",'a',6,"ä"},{"svk",'o',5,"ô"},{"svk",'l',2,"ĺ"},{"svk",'r',2,"ŕ"},
-            {"svk",'l',3,"ľ"},{"svk",'n',3,"ň"},{"svk",'s',3,"š"},{"svk",'c',3,"č"},{"svk",'z',3,"ž"},
-            {"svk",'t',3,"ť"},{"svk",'d',3,"ď"},
-
-            {"slv",'s',3,"š"},{"slv",'c',3,"č"},{"slv",'z',3,"ž"},
-
-            {"swe",'a',9,"å"},{"swe",'a',6,"ä"},{"swe",'o',6,"ö"},
-
-            {"tgl",'n',7,"ñ"},
-            {"tgl",'a',2,"á"},{"tgl",'e',2,"é"},{"tgl",'i',2,"í"},{"tgl",'o',2,"ó"},{"tgl",'u',2,"ú"},
-
-            {"tur",'g',3,"ğ"},{"tur",'o',6,"ö"},{"tur",'u',6,"ü"},{"tur",'i',0,"ı"},{"tur",'c',8,"ç"},
-            {"tur",'s',8,"ş"},
-
-            {"cym",'a',5,"â"},{"cym",'e',5,"ê"},{"cym",'i',5,"î"},{"cym",'o',5,"ô"},{"cym",'u',5,"û"},
-            {"cym",'w',5,"ŵ"},{"cym",'y',5,"ŷ"},{"cym",'i',6,"ï"},
-
-            {"yor",'e',88,"ẹ"},{"yor",'o',88,"ọ"},{"yor",'s',88,"ṣ"},
-
-            {"fin",'a',6,"ä"},{"fin",'o',6,"ö"},
-
-            {"est",'a',6,"ä"},{"est",'o',6,"ö"},{"est",'u',6,"ü"},{"est",'o',7,"õ"},
-            {"est",'s',3,"š"},{"est",'z',3,"ž"},
-        };
-        int rows_checked = 0, rows_failed = 0;
-        for (const auto& r : rows) {
-            std::string encoded = std::string(1, r.base) + std::to_string(r.digit);
-            std::string human = resubstitute(encoded, r.lang);
-            bool decode_ok = human == r.ch;
-            std::string back = fold_diacritics(human, r.lang);
-            bool encode_ok = back == encoded;
-            ++rows_checked;
-            if (!decode_ok || !encode_ok) {
-                ++rows_failed;
-                check(false, std::string(r.lang) + " " + encoded + " <-> " + r.ch +
-                                 (decode_ok ? "" : " (decode mismatch: got " + human + ")") +
-                                 (encode_ok ? "" : " (re-encode mismatch: got " + back + ")"));
+        int unstable = 0, leftover = 0;
+        for (const Row& r : rows) {
+            const std::string folded = transform(r.plain);
+            const std::string human = untransform(folded);
+            if (transform(human) != folded) {
+                ++unstable;
+                check(false, std::string("transformer not stable for ") + r.lang + ": " + folded +
+                                 " -> " + human + " -> " + transform(human));
+            }
+            // Nothing readable should still be carrying a mark digit. A
+            // code left behind means the decoder walked past one, which
+            // the stability check alone can miss when both directions are
+            // wrong in the same way.
+            for (std::size_t i = 1; i < human.size(); ++i) {
+                const char prev = human[i - 1];
+                const bool prev_is_letter = (prev >= 'a' && prev <= 'z') ||
+                                            (prev >= 'A' && prev <= 'Z');
+                if (prev_is_letter && human[i] >= '0' && human[i] <= '9') {
+                    ++leftover;
+                    check(false, std::string("undecoded mark digit left in ") + r.lang + ": " +
+                                     human);
+                    break;
+                }
             }
         }
-        check(rows_failed == 0, "exhaustive per-language diacritic round trip: " +
-                                     std::to_string(rows_checked) + " (letter,digit) pairs across "
-                                     "48 languages");
+        check(unstable == 0, "48 real sentences fold, unfold and fold again to the same string");
+        check(leftover == 0, "no mark digit survives into readable text");
 
-        // Pinyin ü + tone: the one case where two diacritic digits chain on
-        // a single letter. Verified against the exact examples from the
-        // audit that requested this feature.
-        auto check_chain = [&](const std::string& word, const std::string& expected_folded) {
-            std::string folded = fold_diacritics(word, "cmn");
-            check(folded == expected_folded,
-                  "pinyin u-tone chain " + word + " -> " + folded);
-            std::string back = fold_diacritics(resubstitute(folded, "cmn"), "cmn");
-            check(back == folded, "pinyin u-tone chain round trip " + word);
+        // Four of those sentences with the answer written out by hand, so
+        // that the stability check above is anchored to something a person
+        // read rather than only to itself. Punctuation is gone because the
+        // machine cannot carry it, and the case is back because the new
+        // scheme carries it.
+        struct Fixed { const char* folded_from; const char* human; };
+        static const Fixed fixed[] = {
+            // Albanian: e with diaeresis, c with cedilla.
+            {"\x55\x6e\xc3\xab\x20\x66\x6c\x61\x73\x20\x73\x68\x71\x69\x70\x2e",
+             "\x55\x6e\xc3\xab\x20\x66\x6c\x61\x73\x20\x73\x68\x71\x69\x70"},
+            // German: three umlauts and a sharp s, which is the one that
+            // does not come back.
+            {"\x47\x72\x6f\xc3\x9f\x65\x73\x20\x4b\xc3\xa4\x73\x65\x62\x72\xc3\xb6\x74\x63\x68\x65\x6e\x21",
+             "\x47\x72\x6f\x73\x73\x65\x73\x20\x4b\xc3\xa4\x73\x65\x62\x72\xc3\xb6\x74\x63\x68\x65\x6e"},
+            // Polish: l with stroke, and a with ogonek.
+            {"\x4c\xc4\x85\x6b\x61\x20\x69\x20\xc5\x82\xc4\x85\x6b\x61",
+             "\x4c\xc4\x85\x6b\x61\x20\x69\x20\xc5\x82\xc4\x85\x6b\x61"},
+            // Romanian: the comma below that the old scheme deleted.
+            {"\xc8\x98\x69\x20\xc8\x9b\x61\x72\x61",
+             "\xc8\x98\x69\x20\xc8\x9b\x61\x72\x61"},
         };
-        check_chain("lǜ", "lu64");
-        check_chain("nǚ", "nu63");
-        check_chain("lǖ", "lu61");
-        check_chain("lǘ", "lu62");
-        // No non-Chinese language should ever produce a two-digit chain —
-        // ü alone (no tone) must stay a plain single-digit "u6" everywhere
-        // else.
-        check(fold_diacritics("über", "deu") == "u6ber",
-              "German u with diaeresis does not chain (no tone system)");
+        for (const Fixed& f : fixed) {
+            const std::string got = untransform(transform(f.folded_from));
+            check(got == f.human, std::string("hand checked round trip -> ") + got);
+        }
     }
 
-    // 12. One test per guard in DESIGN section 6. The governing rule is
+
+    // 10. The universal transformer, which is what replaced the 48
+    //     per-language tables. Two halves: the classic cases every
+    //      language actually needs, and a set built to break it.
+    //
+    //      It takes no language. That is the point of it, and it is also
+    //      what makes this shorter than the old per-language tests: one answer per
+    //      character, rather than one per language per character.
+    {
+        // -- the classic cases -------------------------------------------
+        struct Row { const char* plain; const char* folded; };
+        static const Row rows[] = {
+            {"The naive cafe owner smiled.", "t0he naive cafe owner smiled"},
+            {"El nino comio pina en Espana.", "e0l nino comio pina en e0spana"},
+
+            // The nine shape families, one letter each, lowercase so the
+            // case code stays out of the way.
+            {"\xc4\x81", "a1"},                  // macron
+            {"\xc3\xa1", "a2"},                  // acute
+            {"\xc7\x8e", "a3"},                  // caron
+            {"\xc3\xa0", "a4"},                  // grave
+            {"\xc3\xa2", "a5"},                  // circumflex
+            {"\xc3\xa3", "a6"},                  // tilde
+            {"\xc4\x83", "a7"},                  // breve
+            {"\xc4\x8b", "c8"},                  // dot above
+            {"\xc5\xaf", "u9"},                  // ring above
+
+            // The second digit of a family: the variations.
+            {"\xc5\x91", "o21"},                 // double acute
+            {"\xc3\xa7", "c73"},                 // cedilla
+            {"\xc4\x85", "a74"},                 // ogonek
+            {"\xe1\xba\xb9", "e81"},             // dot below
+            {"\xc3\xbc", "u82"},                 // diaeresis
+            {"\xc3\xb8", "o12"},                 // stroke, which does not decompose
+            {"\xc5\x82", "l12"},                 // the same stroke on another letter
+
+            // Romanian comma-below, which the old scheme deleted outright
+            // and this one carries.
+            {"\xc8\x99", "s42"},
+            {"\xc8\x9b", "t42"},
+
+            // Two marks on one letter. Mandarin needs it, and Vietnamese
+            // needs it on a letter the old scheme could not write at all.
+            {"\xc7\x96", "u82/1"},               // u diaeresis + macron
+            {"\xc7\x9c", "u82/4"},               // u diaeresis + grave
+            {"\xe1\xba\xbf", "e5/2"},            // e circumflex + acute
+            {"\xe1\xbb\x9d", "o75/4"},           // o horn + grave
+            {"\xe1\xbb\xb1", "u75/81"},          // u horn + dot below
+
+            // Case, which the old scheme threw away entirely. The code
+            // always sits directly behind the letter it belongs to.
+            {"A", "a0"},
+            {"\xc3\x81", "a0/2"},                // A with acute
+            {"\xc7\x95", "u0/82/1"},             // capital U diaeresis + macron
+            {"INOP", "i0n0o0p0"},
+
+            // Literal digits, and the double slash that keeps them apart
+            // from a mark.
+            {"Room A2", "r0oom a0//2"},
+            {"Chateau Latour 1964", "c0hateau l0atour 1964"},
+            {"m\xc3\xa1" "5", "ma2//5"},         // a mark and then a number
+            {"a12", "a//12"},
+            {"1964 and 1918", "1964 and 1918"},
+        };
+        int classic_failed = 0;
+        for (const Row& r : rows) {
+            const std::string got = transform(r.plain);
+            if (got != r.folded) {
+                ++classic_failed;
+                check(false, std::string("transform(") + r.plain + ") -> " + got + ", wanted " +
+                                 r.folded);
+            }
+        }
+        check(classic_failed == 0,
+              "transformer classic cases: " + std::to_string(sizeof(rows) / sizeof(rows[0])) +
+                  " rows");
+
+        // -- the adversarial cases ---------------------------------------
+        //
+        // Nothing here is a plausible message. That is the point of it.
+        struct Bad { const char* in; const char* out; const char* why; };
+        static const Bad bad[] = {
+            {"", "", "empty input"},
+            {"   ", "", "nothing but spaces"},
+            {"\xc3\xa9", "e2", "one accented letter and nothing else"},
+            {"a\xc3\xa9", "ae2", "a bare letter touching an accented one"},
+            {"\xc3\xa9" "9", "e2//9", "a number right behind a mark"},
+            {"9\xc3\xa9", "9e2", "a number right in front of one"},
+            {"a//b", "ab", "a double slash typed by hand is dropped as punctuation"},
+            {"a/b", "ab", "and so is a single one"},
+            {"!@#$%^&*()", "", "punctuation only, all of it dropped"},
+            {"\xe4\xbd\xa0\xe5\xa5\xbd", "", "chinese characters, none of them latin"},
+            {"\xd0\xbf\xd1\x80\xd0\xb8", "", "cyrillic, likewise"},
+            {"a\xf0\x9f\x98\x80" "b", "ab", "an emoji between two letters"},
+            {"a\xc3", "a", "a lead byte with its tail cut off"},
+            {"a\xbf" "b", "ab", "a continuation byte with no lead"},
+            {"\xff\xfe", "", "bytes that are not utf-8 at all"},
+            {"a\n\nb", "a b", "two newlines read as one space"},
+            {"a \t b", "a b", "mixed whitespace reads as one space"},
+            {" a ", "a", "leading and trailing space trimmed"},
+            {"\xc3\x9f", "ss", "sharp s spelled out, and lost"},
+            {"\xc3\xa6", "ae", "ae spelled out, and lost"},
+            {"\xc4\xb1", "i", "turkish dotless i, flattened to a plain i"},
+            {"\xc4\xb0", "i0/8", "turkish capital i with a dot survives whole"},
+            {"I", "i0", "a plain capital I is not the turkish one"},
+        };
+        int bad_failed = 0;
+        for (const Bad& b : bad) {
+            const std::string got = transform(b.in);
+            if (got != b.out) {
+                ++bad_failed;
+                check(false, std::string("transform edge case (") + b.why + ") -> " + got +
+                                 ", wanted " + b.out);
+            }
+        }
+        check(bad_failed == 0, "transformer adversarial cases: " +
+                                   std::to_string(sizeof(bad) / sizeof(bad[0])) + " rows");
+
+        // -- the round trip ----------------------------------------------
+        //
+        // Every character the table carries, taken back the other way.
+        // Exhaustive rather than a sample: this is the check that says the
+        // scheme is reversible at all.
+        int trip_checked = 0, trip_failed = 0;
+        for (unsigned cp = 0x00C0; cp <= 0x1EFF; ++cp) {
+            std::string ch;
+            if (cp < 0x800) {
+                ch += static_cast<char>(0xC0 | (cp >> 6));
+                ch += static_cast<char>(0x80 | (cp & 0x3F));
+            } else {
+                ch += static_cast<char>(0xE0 | (cp >> 12));
+                ch += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                ch += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            const std::string folded = transform(ch);
+            if (folded.empty()) continue;  // not a character this scheme carries
+            // The four spelled out ones are known not to come back. Naming
+            // them here is what stops this test quietly growing more.
+            if (folded == "ss" || folded == "s0s0" || folded == "ae" || folded == "a0e0" ||
+                folded == "oe" || folded == "o0e0" || folded == "i")
+                continue;
+            ++trip_checked;
+            const std::string back = untransform(folded);
+            if (back != ch || transform(back) != folded) {
+                ++trip_failed;
+                if (trip_failed <= 5)
+                    check(false, "transformer round trip failed at codepoint " +
+                                     std::to_string(cp) + ", folded " + folded);
+            }
+        }
+        check(trip_failed == 0, "transformer round trip: every one of " +
+                                    std::to_string(trip_checked) +
+                                    " carried characters comes back whole");
+
+        // Whole sentences, which are the only thing that exercises the
+        // case code, the marks, the double slash and the spaces at once.
+        auto trip = [&](const std::string& text, const std::string& expected) {
+            const std::string folded = transform(text);
+            const std::string back = untransform(folded);
+            check(back == expected, "sentence round trip: " + text + " -> " + folded + " -> " +
+                                        back);
+        };
+        trip("The naive cafe owner smiled.", "The naive cafe owner smiled");
+        trip("Room A2 costs 1964 crowns.", "Room A2 costs 1964 crowns");
+        trip("\xc4\x90or\xc4\x91" "e voli \xc4\x8dokoladu.",
+             "\xc4\x90or\xc4\x91" "e voli \xc4\x8dokoladu");
+        trip("Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t", "Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t");
+    }
+
+    // 11. One test per guard in DESIGN section 6. The governing rule is
     //     that for every "do not remove" there must be a check that fails
     //     when it is removed, and every check below has been verified by
     //     deleting or inverting the thing it protects and watching it fail
@@ -1167,7 +1166,7 @@ int self_test() {
                               : "KEY MATERIAL IS TRACKED BY GIT: " + tracked.front());
     }
 
-    // 13. The interface layer. Everything above this point is the logic
+    // 12. The interface layer. Everything above this point is the logic
     //     layer, which was the whole of the suite until now. These are the
     //     pieces sitting between that logic and a terminal or a window,
     //     and they were covered by nothing.
@@ -1288,7 +1287,7 @@ int self_test() {
               "an old plain text settings file migrates to JSON intact");
     }
 
-    // 14. Whatever the GUI can be asked without opening a window. Silent
+    // 13. Whatever the GUI can be asked without opening a window. Silent
     //     in a build with no GUI compiled into it, because none of the
     //     files those checks cover are there to pass or fail.
     gui_self_test(check);
@@ -1407,7 +1406,7 @@ void run_batch_mode(const PipelineConfig& cfg) {
         if (!su.historic_lock) {
             lang = ask_language(last_lang);
             last_lang = lang;
-            to_send = fold_diacritics(mark_literal_digits(messages[i]), lang);
+            to_send = transform(messages[i]);
         }
 
         try {
@@ -1420,7 +1419,7 @@ void run_batch_mode(const PipelineConfig& cfg) {
             std::string back = pipe.decrypt(e.ciphertext, e.marker);
             std::cout << GREEN << "  check  " << RST << back << "\n";
             if (!lang.empty())
-                std::cout << GREEN << "  human  " << RST << resubstitute(back, lang) << "\n";
+                std::cout << GREEN << "  human  " << RST << untransform(back) << "\n";
             ++processed;
         } catch (const std::exception& ex) { fail(ex.what()); }
     }
@@ -1707,7 +1706,7 @@ int main(int argc, char** argv) {
                 std::string plain = pipe.decrypt(clean, marker);
                 std::cout << GREEN << "  plain  " << RST << plain << "\n";
                 if (!lang.empty())
-                    std::cout << GREEN << "  human  " << RST << resubstitute(plain, lang)
+                    std::cout << GREEN << "  human  " << RST << untransform(plain)
                               << DIM << "  (" << lang << ")" << RST << "\n";
                 std::cout << "\n";
             } catch (const std::exception& e) { fail(e.what()); }
@@ -1719,7 +1718,7 @@ int main(int argc, char** argv) {
         if (!active.historic_lock) {
             lang = ask_language(last_lang);
             last_lang = lang;
-            to_send = fold_diacritics(mark_literal_digits(line), lang);
+            to_send = transform(line);
         }
 
         try {
@@ -1733,7 +1732,7 @@ int main(int argc, char** argv) {
             std::string back = pipe.decrypt(e.ciphertext, e.marker);
             std::cout << GREEN << "  check  " << RST << back << "\n";
             if (!lang.empty())
-                std::cout << GREEN << "  human  " << RST << resubstitute(back, lang) << "\n\n";
+                std::cout << GREEN << "  human  " << RST << untransform(back) << "\n\n";
             else
                 std::cout << "\n";
         } catch (const std::exception& e) { fail(e.what()); }

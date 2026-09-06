@@ -88,6 +88,13 @@ bool InputScript::load(const std::string& path, std::string* error) {
             else if (which == "off") s.flag = false;
             else return fail(line_no, "shift takes on or off, not '" + which + "'");
             s.verb = Verb::Shift;
+        } else if (verb == "alt") {
+            std::string which;
+            if (!(ls >> which)) return fail(line_no, "alt needs on or off");
+            if (which == "on") s.flag = true;
+            else if (which == "off") s.flag = false;
+            else return fail(line_no, "alt takes on or off, not '" + which + "'");
+            s.verb = Verb::Alt;
         } else if (verb == "ctrl") {
             std::string which;
             if (!(ls >> which)) return fail(line_no, "ctrl needs on or off");
@@ -139,6 +146,7 @@ bool InputScript::fill(GuiInput& out, float dt) {
     out.mouse_held = held_;
     out.ctrl_held = ctrl_;
     out.shift_held = shift_;
+    out.alt_held = alt_;
 
     if (done_ || at_ >= steps_.size()) return false;
 
@@ -214,6 +222,12 @@ bool InputScript::fill(GuiInput& out, float dt) {
         case Verb::Shift:
             shift_ = s.flag;
             out.shift_held = shift_;
+            ++at_;
+            break;
+
+        case Verb::Alt:
+            alt_ = s.flag;
+            out.alt_held = alt_;
             ++at_;
             break;
 

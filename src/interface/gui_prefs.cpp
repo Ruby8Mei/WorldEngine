@@ -115,6 +115,8 @@ std::string font_path(const std::string& file) {
     return std::string();
 }
 
+const char* bundled_fonts_dir() { return kBundledFontsDir; }
+
 Theme effective_theme(Theme t) {
     if (t != Theme::System) return t;
 #if defined(_WIN32)

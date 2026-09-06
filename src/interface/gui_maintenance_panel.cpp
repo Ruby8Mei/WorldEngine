@@ -150,7 +150,6 @@ bool MaintenancePanel::wheels_need_confirm(const WheelForm& f) {
 }
 
 void MaintenancePanel::frame(const GuiInput& in, int width, int height) {
-    back_clicked_ = false;
     wordmark_clicked_ = false;
 
     float w = static_cast<float>(width), h = static_cast<float>(height);
@@ -176,11 +175,7 @@ void MaintenancePanel::frame(const GuiInput& in, int width, int height) {
 }
 
 float MaintenancePanel::draw_header(const GuiInput& in, float width) {
-    // Back stays here. Unlike the settings screen it is not a duplicate of
-    // the wordmark yet: it will matter the moment this screen gains a
-    // second level, and removing it now would have to be undone then.
-    return form_screen_header(in, width, "Maintenance", /*with_back=*/true, &back_clicked_,
-                              &wordmark_clicked_);
+    return form_screen_header(in, width, "Maintenance", &wordmark_clicked_);
 }
 
 float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool rotors) {

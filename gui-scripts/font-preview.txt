@@ -1,0 +1,41 @@
+# Does each name in the font list draw in the face it names.
+#
+# Four downs and Enter reach Settings. The Font family row is under
+# Appearance, so the page has to be scrolled a little before the list can
+# be opened. The shot to look at is the open list: every row should be a
+# different typeface, and "Add your own..." should stay in the interface
+# face because it is not a font.
+move -5000 -5000
+wait 0.6
+key down
+wait 0.3
+key down
+wait 0.2
+key down
+wait 0.2
+key down
+wait 0.3
+key enter
+wait 0.9
+move 700 500
+wait 0.3
+shot font-1-settings-top
+
+# Open the Font family list. These are logical units, not the pixels in
+# the screenshot: at the 110% zoom in inop.gui.json the 1920 wide
+# framebuffer is 1745 logical units across, so a coordinate read off a
+# screenshot has to be divided by 1.1 before it is used here.
+move 718 511
+wait 0.4
+click
+wait 0.9
+shot font-2-list-open
+
+# Pick the second face. The rows are one box height each, measured down
+# from the bottom of the closed box.
+move 718 568
+wait 0.4
+click
+wait 0.8
+shot font-3-picked
+quit

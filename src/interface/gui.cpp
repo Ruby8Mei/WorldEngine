@@ -46,6 +46,7 @@
 #include "gui_prefs.hpp"
 #include "gui_render.hpp"
 #include "gui_script.hpp"
+#include "gui_legal_panel.hpp"
 #include "gui_settings_panel.hpp"
 #include "gui_setup_panel.hpp"
 #include "gui_widgets.hpp"
@@ -106,6 +107,8 @@ void fill_input_from_glfw(GLFWwindow* window, gui::GuiInput& in, float scale,
                    glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
     in.shift_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                     glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    in.alt_held = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                  glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
 }
 
 // A picture of the frame that has just been drawn, read out of the back
@@ -336,14 +339,19 @@ GuiExit run_gui_settings(const std::string& script_path) {
     gui::EncipheringPanel enciphering;
     gui::SettingsPanel settings;
     gui::MaintenancePanel maintenance;
+    gui::LegalPanel legal;
     // Owned here, not by any screen — a screen only knows how to signal
     // "the operator picked me" (open_inop_requested()/wordmark_clicked()/
     // next_clicked()/back_clicked()/exit_requested()), not what that means
     // for what gets shown next. See the header comment of
     // gui_setup_panel.hpp for why the screens themselves stay this narrow.
     // The GUI opens on MainMenu, not Setup directly.
-    enum class Screen { MainMenu, Setup, Enciphering, Settings, Maintenance };
+    enum class Screen { MainMenu, Setup, Enciphering, Settings, Maintenance, Legal };
     Screen screen = Screen::MainMenu;
+    // Legal is the one screen with more than one way in — the Settings
+    // footer and Alt and L from anywhere — so it remembers where it came
+    // from rather than always dropping the operator back into Settings.
+    Screen legal_from = Screen::Settings;
 
     // Draws one screen and nothing else -- no acting on what it reports,
     // because during a slide both screens draw and neither is being
@@ -355,6 +363,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             case Screen::Enciphering: enciphering.frame(in, w, h); break;
             case Screen::Settings: settings.frame(in, w, h); break;
             case Screen::Maintenance: maintenance.frame(in, w, h); break;
+            case Screen::Legal: legal.frame(in, w, h); break;
             default: main_menu.frame(in, w, h); break;
         }
     };
@@ -598,14 +607,30 @@ GuiExit run_gui_settings(const std::string& script_path) {
             // Down to reach the settings, so up to leave them.
             // The wordmark alone now; the Back button that meant the same
             // thing on this one screen is gone.
+            if (settings.license_clicked()) {
+                legal.open();
+                legal_from = Screen::Settings;
+                // In from the left, which is how Maintenance arrives from
+                // the main menu. Legal sits below Maintenance on the same
+                // side of the map, so it travels the same way.
+                go_to(Screen::Legal, -1.0f, 0.0f);
+            }
             if (settings.wordmark_clicked())
                 go_to(Screen::MainMenu, 0.0f, -1.0f);
+        } else if (screen == Screen::Legal) {
+            legal.frame(screen_input, lw, lh);
+            // The wordmark means the main menu on every screen, and this
+            // one is no exception. Escape is what goes back to the settings
+            // this was opened from.
+            if (legal.wordmark_clicked()) go_to(Screen::MainMenu, 1.0f, 0.0f);
         } else if (screen == Screen::Maintenance) {
             // Nothing to answer for this screen: it writes wheel files and
             // key sheets itself, and needs neither the window, the fonts
             // nor the clipboard to do it.
             maintenance.frame(screen_input, lw, lh);
-            if (maintenance.back_clicked() || maintenance.wordmark_clicked())
+            // The wordmark alone now, the way the settings screen already
+            // works. The Back button beside it meant the same thing.
+            if (maintenance.wordmark_clicked())
                 go_to(Screen::MainMenu, 1.0f, 0.0f);
         } else {
             main_menu.frame(screen_input, lw, lh);
@@ -634,6 +659,32 @@ GuiExit run_gui_settings(const std::string& script_path) {
             if (main_menu.exit_requested()) {
                 if (g_input.ctrl_held) glfwSetWindowShouldClose(window, GLFW_TRUE);
                 else modal = Modal::ConfirmQuit;
+            }
+        }
+
+        // Alt and a letter goes straight to a screen from wherever the
+        // operator is. Alt is the one modifier no control on any screen
+        // reads, which is what makes it safe to claim inside a text box:
+        // Control is already the skip-the-warning prefix and Shift is how
+        // a capital is typed. Each screen arrives the way the main menu
+        // would have brought it, so the movement still says which one it
+        // is. A modal or an open list holds the keyboard and these wait.
+        if (modal == Modal::None && g_input.alt_held && !gui::dropdown_popup_open() &&
+            !gui::modal_layer_open()) {
+            const char k = g_input.key_letter;
+            if (k == 'Q' && screen != Screen::Setup) {
+                panel.open();
+                go_to(Screen::Setup, 1.0f, 0.0f);
+            } else if (k == 'M' && screen != Screen::Maintenance) {
+                maintenance.open();
+                go_to(Screen::Maintenance, -1.0f, 0.0f);
+            } else if (k == 'S' && screen != Screen::Settings) {
+                settings.open(prefs);
+                go_to(Screen::Settings, 0.0f, 1.0f);
+            } else if (k == 'L' && screen != Screen::Legal) {
+                legal.open();
+                legal_from = screen;
+                go_to(Screen::Legal, -1.0f, 0.0f);
             }
         }
 
@@ -667,6 +718,9 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 // the same place.
                 if (screen == Screen::Settings) go_to(Screen::MainMenu, 0.0f, -1.0f);
                 else if (screen == Screen::Maintenance) go_to(Screen::MainMenu, 1.0f, 0.0f);
+                // Legal was opened from the settings and goes back to them
+                // rather than all the way out, reversing the way it came.
+                else if (screen == Screen::Legal) go_to(legal_from, 1.0f, 0.0f);
                 else go_to(Screen::MainMenu, -1.0f, 0.0f);
             } else {
                 modal = Modal::ConfirmQuit;

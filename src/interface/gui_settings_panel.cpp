@@ -138,6 +138,17 @@ std::vector<std::string> font_options() {
     return out;
 }
 
+// One font filename per entry of font_options(), so the picker can draw
+// each name in the face it names. The trailing "Add your own..." row and
+// the "no system fonts found" row are not faces, and get an empty entry,
+// which the dropdown reads as "use the interface face".
+std::vector<std::string> font_option_files() {
+    std::vector<std::string> out;
+    for (const FontChoice& c : available_fonts()) out.push_back(c.file);
+    out.push_back(std::string());
+    return out;
+}
+
 int index_of_font(const std::string& file) {
     const std::vector<FontChoice>& fonts = available_fonts();
     for (size_t i = 0; i < fonts.size(); ++i)
@@ -214,11 +225,50 @@ void row_note(float x, float y, const std::string& text) { form_row_note(g_form,
 
 Rect control_rect(float x, float y) { return form_control_rect(g_form, x, y); }
 
+struct KeybindRow {
+    const char* key;
+    const char* meaning;
+};
+// Every shortcut the interface actually answers, read off the code that
+// answers it rather than off the roadmap. Four of the roadmap row --
+// Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A -- have nothing built for them yet and
+// are left out rather than listed as coming: a list of shortcuts is only
+// worth reading if pressing what it names does what it says.
+//
+// Grouped the way an operator meets them: moving about first, then
+// jumping straight to a screen, then the ones that only mean something
+// inside a box, then the modifier that is held rather than pressed.
+const KeybindRow kKeybinds[] = {
+    {"Arrow keys", "Move between the controls on the screen. An open list takes them for itself."},
+    {"Enter", "Press whichever control has the focus."},
+    {"Escape", "Go back one screen. An open list or a message box closes first."},
+    {"Ctrl+Escape", "Leave INOP at once, with nothing asked."},
+
+    {"Alt+Q", "Go straight to the setup screen, from anywhere."},
+    {"Alt+M", "Go straight to maintenance."},
+    {"Alt+S", "Go straight to settings."},
+    {"Alt+L", "Go straight to the licences."},
+
+    {"Ctrl+F", "Jump to the search box at the top of this screen."},
+    {"Ctrl+S", "On the setup screen, save over the preset named in the header."},
+    {"Ctrl+Shift+S", "On the setup screen, save the setup as a new preset."},
+    {"Ctrl+Shift+C", "On the enciphering screen, copy the ciphertext and the marker together."},
+
+    {"Ctrl+Z", "Undo, inside a text box."},
+    {"Ctrl+Y", "Redo, inside a text box."},
+    {"Backspace", "Rub out the character before the caret, or the selection."},
+    {"Delete", "Rub out the character after the caret, or the selection."},
+
+    {"Ctrl and click", "Skip the warning on Exit, on Generate wheels and on saving over a file."},
+};
+
 // What the search row accepts. Every label on this screen is letters and
-// spaces; the digits and the two marks are here so that a label added
-// later does not need this widened before it can be found.
+// spaces; the digits and the three marks are here so that a label added
+// later does not need this widened before it can be found. The plus is
+// what the keyboard section writes a shortcut with, so without it the one
+// row an operator is most likely to search for by name could not be typed.
 const char* const kSearchChars =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -/";
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -/+";
 
 std::string fold_lower(const std::string& s) {
     std::string out = s;
@@ -270,6 +320,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     // the frame before the box it jumps to could type it.
     GuiInput in = real_in;
     wordmark_clicked_ = false;
+    license_clicked_ = false;
 
     // Set before anything lays a row out, because every helper below reads
     // it rather than being handed the width.
@@ -343,6 +394,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     y = draw_appearance(in, x, y);
     y = draw_audio(x, y);
     y = draw_interface(in, x, y);
+    y = draw_keyboard(x, y);
 
     // Nothing drew, so the operator is looking at an empty page and is
     // owed a reason for it.
@@ -399,16 +451,24 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
         label(Rect{x, by + kBtnH + 6.0f, g_form.col_w, kRowH}, "Not applied yet.", true);
     }
 
-    // Footer. Plain text and nothing else for now, drawn as four separate
-    // labels rather than one string so each can become a link later
-    // without the row having to be laid out again.
+    // Footer. Drawn as four separate words rather than one string so that
+    // each can carry something of its own. License is the first to: it
+    // opens the licences INOP has to show. Legal is waiting on a privacy
+    // policy and the rest of what an application is expected to state, and
+    // the last two on there being anything to donate to or support, so
+    // those three stay plain text with nothing behind them.
     {
         const char* const items[] = {"License", "Legal", "Donate", "Support"};
         float fy = by + kBtnH + 6.0f + kRowH + 4.0f;
         float fx = x;
         for (const char* item : items) {
             float w_item = text_width(Font::Body, item);
-            label(Rect{fx, fy, w_item, kRowH}, item, true);
+            Rect r{fx, fy, w_item, kRowH};
+            if (std::string(item) == "License") {
+                if (text_link(r, item, in, true)) license_clicked_ = true;
+            } else {
+                label(r, item, true);
+            }
             fx += w_item + 28.0f;
         }
     }
@@ -430,12 +490,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
 }
 
 float SettingsPanel::draw_header(const GuiInput& in, float width) {
-    // No Back button here. Back and the wordmark both left this screen for
-    // the main menu, so the screen carried two controls that did the same
-    // thing. The wordmark is the one that keeps it, because it means the
-    // same on every screen.
-    return form_screen_header(in, width, "Settings", /*with_back=*/false, nullptr,
-                              &wordmark_clicked_);
+    return form_screen_header(in, width, "Settings", &wordmark_clicked_);
 }
 
 // Every section takes the same shape now: nothing at all when the search
@@ -518,13 +573,17 @@ float SettingsPanel::draw_appearance(const GuiInput& in, float x, float y) {
             font_list_open_ = true;
             refresh_available_fonts();
             font_options_ = font_options();
+            font_option_files_ = font_option_files();
             font_idx_ = index_of_font(pending_.font_file);
         }
-        if (font_options_.empty()) font_options_ = font_options();
+        if (font_options_.empty()) {
+            font_options_ = font_options();
+            font_option_files_ = font_option_files();
+        }
         bool have_fonts = !available_fonts().empty();
         row_label(x, y, "Font family", !have_fonts);
         dropdown(control_rect(x, y), font_options_, font_idx_, kIdFont, open_dropdown_id_, in,
-                 have_fonts);
+                 have_fonts, /*invalid=*/false, &font_option_files_);
         // The last entry is not a face. It shows the folder and hands the
         // row straight back to whatever was selected before, so the pick
         // never has to be undone by hand.
@@ -591,6 +650,38 @@ float SettingsPanel::draw_interface(const GuiInput& in, float x, float y) {
         y += kRowH + kRowGap;
     }
 
+    return y - kRowGap;
+}
+
+
+// One row of the keyboard list. The key goes in the label column, where
+// every other row on the screen puts the thing being named, and the
+// meaning takes the whole rest of the width: these are sentences, and the
+// 300 pixel control column was cut for dropdowns. Clipped like a note is,
+// since a wide face can outrun any column.
+// Not a member: it needs nothing the panel holds.
+static void keybind_row(float x, float y, const char* key, const char* meaning) {
+    row_label(x, y, key, false);
+    const Rect r{x + kLabelW + kGap, y, g_form.col_w - kLabelW - kGap, kRowH};
+    begin_scissor(r.x, r.y, r.w, r.h);
+    label(r, meaning, false);
+    end_scissor();
+}
+
+float SettingsPanel::draw_keyboard(float x, float y) {
+    // The search matches the key or the meaning, so both "escape" and
+    // "ciphertext" find the row that carries them.
+    bool any = false;
+    for (const KeybindRow& k : kKeybinds)
+        if (shown(k.key) || shown(k.meaning)) any = true;
+    if (!any) return y;
+
+    y = heading(x, y + kSectionGap, "Keyboard");
+    for (const KeybindRow& k : kKeybinds) {
+        if (!shown(k.key) && !shown(k.meaning)) continue;
+        keybind_row(x, y, k.key, k.meaning);
+        y += kRowH + kRowGap;
+    }
     return y - kRowGap;
 }
 

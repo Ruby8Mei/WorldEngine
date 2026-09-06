@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "generator.hpp"
+#include "gui_anim.hpp"
 #include "gui_config_store.hpp"
 #include "gui_file_tile_panel.hpp"
 #include "inop.hpp"
@@ -340,6 +341,24 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
         in.scroll_y = 0;
     }
 
+    // Control and S writes over the preset named under the wordmark.
+    // Control and Shift and S asks for a new name instead. Both need a
+    // setup complete enough to be worth writing, which is the same test
+    // the Save Setup button uses. key_letter is already empty when a
+    // modal is up, so neither can fire behind one.
+    const bool savable = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
+    if (in.ctrl_held && in.key_letter == 'S' && savable) {
+        if (in.shift_held) {
+            open_create_name_modal();
+        } else {
+            on_save_current();
+        }
+    }
+    if (ui_.save_note_left > 0.0f) {
+        ui_.save_note_left -= frame_dt();
+        if (ui_.save_note_left <= 0.0f) ui_.save_note.clear();
+    }
+
     float w = static_cast<float>(width), h = static_cast<float>(height);
 
     const float header_h = 110.0f;
@@ -403,6 +422,19 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
     float word_th = text_line_height(Font::Wordmark);
     Rect wordmark_r{16, pad, word_tw + 24.0f, word_th + 12.0f};
     if (wordmark_button(wordmark_r, in)) wordmark_clicked_ = true;
+
+    // Which preset this setup came from, under the wordmark, so Control
+    // and S never writes over a file the operator cannot see the name of.
+    // The save note takes the same line for a few seconds afterwards,
+    // because a save that works changes nothing else on screen.
+    {
+        const std::string line =
+            !ui_.save_note.empty()
+                ? ui_.save_note
+                : (ui_.current_preset.empty() ? std::string("preset: none yet")
+                                              : "preset: " + ui_.current_preset);
+        label(Rect{16, pad + word_th + 6.0f, 400.0f, 18.0f}, line, true);
+    }
 
     bool next_enabled = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
     float btn_w = 150, btn_h = 30, gap = 6;
@@ -751,24 +783,7 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         }
         if (button(create_btn, "Create new", under_in, true)) {
             ui_.show_save_chooser = false;
-            ui_.show_create_name_modal = true;
-            // suggest_filename() returns a full "INOP-1.json" filename (it
-            // has to, to compare against files already on disk) — the field
-            // itself only ever holds the bare name, since ".json" is a
-            // fixed suffix appended once on confirm (see below); strip it
-            // here or the field would show "INOP-1.json" and end up saved
-            // as "INOP-1.json.json".
-            std::string suggested = suggest_filename(state_);
-            const std::string ext = ".json";
-            if (suggested.size() > ext.size() &&
-                suggested.compare(suggested.size() - ext.size(), ext.size(), ext) == 0)
-                suggested.resize(suggested.size() - ext.size());
-            ui_.create_name_text = suggested;
-            ui_.create_name_error = ui_.create_name_text.empty()
-                                         ? "no auto-numbered slot left (max " +
-                                               std::to_string(kMaxSavedPerSuite) +
-                                               " per machine), type a custom name"
-                                         : "";
+            open_create_name_modal();
         }
         if (under_in.mouse_pressed && !rect_contains(box, under_in.mouse_x, under_in.mouse_y))
             ui_.show_save_chooser = false;
@@ -784,6 +799,10 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "new setup file name");
         float ext_w = text_width(Font::Body, ".json") + 16.0f;
         Rect field_r{box.x + 16, box.y + 44, box.w - 32 - ext_w - 4, 32};
+        if (ui_.create_name_focus_pending) {
+            set_keyboard_focus(field_r);
+            ui_.create_name_focus_pending = false;
+        }
         text_field(field_r, ui_.create_name_text, under_in,
                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ", 64, true,
                    !ui_.create_name_error.empty());
@@ -799,6 +818,14 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         Rect cancel_r{box.x + box.w - 136, box.y + box.h - 44, 120, 32};
         if (button(confirm_r, "Confirm", under_in, true, true)) on_create_confirmed();
         if (button(cancel_r, "Cancel", under_in, true)) ui_.show_create_name_modal = false;
+        // Enter confirms from inside the name box, which is where the
+        // keyboard is when the modal opens. Unless the operator has walked
+        // the focus onto one of the buttons, in which case Enter is that
+        // button being pressed and answering it here as well would fire
+        // two things off one key.
+        if (under_in.key_enter && !has_keyboard_focus(confirm_r) &&
+            !has_keyboard_focus(cancel_r))
+            on_create_confirmed();
         if (esc && !alert_up) {
             ui_.show_create_name_modal = false;
             esc = false;
@@ -928,6 +955,20 @@ void SetupPanel::open() {
     ui_.open_dropdown_id = -1;
 }
 
+namespace {
+
+// How long the line under the wordmark stays up after a save.
+const float kSaveNoteSeconds = 3.0f;
+
+// The filename out of a path the file panel handed back, which is what a
+// preset is named by everywhere else in here.
+std::string basename_of(const std::string& path) {
+    const size_t slash = path.find_last_of("\\/");
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+}  // namespace
+
 void SetupPanel::on_save_clicked() { ui_.show_save_chooser = true; }
 
 void SetupPanel::on_load_tile_picked(const std::string& path) {
@@ -935,6 +976,7 @@ void SetupPanel::on_load_tile_picked(const std::string& path) {
     std::string err;
     if (load_config(path, loaded, &err)) {
         state_ = loaded;
+        ui_.current_preset = basename_of(path);
         // sync_state_from_indices() runs later this same frame and would
         // otherwise overwrite these freshly-loaded rotor/reflector names
         // right back to whatever the STALE (pre-load) index members held —
@@ -952,8 +994,12 @@ void SetupPanel::on_overwrite_tile_picked(const std::string& path) {
     size_t slash = filename.find_last_of("\\/");
     if (slash != std::string::npos) filename = filename.substr(slash + 1);
     std::string err;
-    if (!save_config(state_, filename, &err))
+    if (!save_config(state_, filename, &err)) {
         std::cout << "[gui] overwrite failed: " << err << "\n";
+    } else {
+        ui_.current_preset = filename;
+        set_save_note("saved " + filename);
+    }
     ui_.show_overwrite_panel = false;
 }
 
@@ -978,8 +1024,52 @@ void SetupPanel::on_create_confirmed() {
         ui_.create_name_error = err.empty() ? "save failed" : err;
         return;
     }
+    ui_.current_preset = name;
+    set_save_note("saved " + name);
     ui_.show_create_name_modal = false;
     ui_.create_name_error.clear();
+}
+
+void SetupPanel::on_save_current() {
+    if (ui_.current_preset.empty()) {
+        // Nothing to write over yet, so this asks for a name rather than
+        // being a key that does nothing.
+        ui_.show_create_name_modal = true;
+        ui_.create_name_text.clear();
+        ui_.create_name_error.clear();
+        return;
+    }
+    std::string err;
+    if (save_config(state_, ui_.current_preset, &err))
+        set_save_note("saved " + ui_.current_preset);
+    else
+        set_save_note(err.empty() ? "save failed" : err);
+}
+
+void SetupPanel::open_create_name_modal() {
+    ui_.show_create_name_modal = true;
+    ui_.create_name_focus_pending = true;
+    // suggest_filename() returns a full "INOP-1.json" filename (it has to,
+    // to compare against files already on disk) — the field itself only
+    // ever holds the bare name, since ".json" is a fixed suffix appended
+    // once on confirm; strip it here or the field would show "INOP-1.json"
+    // and end up saved as "INOP-1.json.json".
+    std::string suggested = suggest_filename(state_);
+    const std::string ext = ".json";
+    if (suggested.size() > ext.size() &&
+        suggested.compare(suggested.size() - ext.size(), ext.size(), ext) == 0)
+        suggested.resize(suggested.size() - ext.size());
+    ui_.create_name_text = suggested;
+    ui_.create_name_error = ui_.create_name_text.empty()
+                                ? "no auto-numbered slot left (max " +
+                                      std::to_string(kMaxSavedPerSuite) +
+                                      " per machine), type a custom name"
+                                : "";
+}
+
+void SetupPanel::set_save_note(const std::string& text) {
+    ui_.save_note = text;
+    ui_.save_note_left = kSaveNoteSeconds;
 }
 
 void SetupPanel::on_delete_tile_requested(const std::string& path) {
