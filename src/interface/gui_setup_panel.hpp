@@ -148,6 +148,13 @@ class SetupPanel {
 public:
     SetupPanel();
 
+    // Called every time the screen is entered, the way the other screens'
+    // open() is. It clears the overlays and the open dropdown and nothing
+    // else: a box left open is stale the moment the screen is left, but
+    // the setup being built is the whole point of the screen and has to
+    // survive a trip to the enciphering screen and back.
+    void open();
+
     // width/height are the current framebuffer size in pixels.
     void frame(const GuiInput& in, int width, int height);
 

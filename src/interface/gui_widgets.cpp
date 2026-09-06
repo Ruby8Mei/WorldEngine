@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include "gui_anim.hpp"
 
@@ -15,7 +16,42 @@ bool rect_contains(const Rect& r, double mx, double my) {
 namespace {
 
 const void* g_focus = nullptr;       // identity of the std::string* being edited
+// The same field again, writable, so that a Clear button somewhere else on
+// the screen can empty whichever box the operator is in without the panel
+// having to keep its own idea of which one that is.
+std::string* g_focus_field = nullptr;
 bool g_click_consumed_this_frame = false;
+
+// Per-field editing state. Keyed on the address of the std::string a field
+// edits, which is what focus is already keyed on, and which is stable: the
+// strings are members of panels that live as long as the application. An
+// entry is only made once a field is focused, so the disabled read-only
+// fields that hand text_field() a local never leave one behind.
+struct FieldEdit {
+    size_t caret = 0;
+    // Where a drag started. Equal to caret when nothing is selected, which
+    // is why there is no separate "has a selection" flag.
+    size_t anchor = 0;
+    bool dragging = false;
+    // First character shown in the box, so that a caret pushed past either
+    // edge brings the text with it instead of going out of sight.
+    size_t view_start = 0;
+    // Five steps back, oldest first, per the roadmap. Each box keeps its
+    // own; there is deliberately no shared history for the screen.
+    std::vector<std::string> undo;
+    std::vector<std::string> redo;
+};
+const size_t kUndoSteps = 5;
+std::map<const void*, FieldEdit> g_edits;
+
+FieldEdit& edit_state(const std::string& value) { return g_edits[&value]; }
+
+void push_undo(FieldEdit& e, const std::string& before) {
+    e.undo.push_back(before);
+    if (e.undo.size() > kUndoSteps) e.undo.erase(e.undo.begin());
+    // A fresh edit is a new branch, so whatever was undone is unreachable.
+    e.redo.clear();
+}
 
 // Everything needed to draw the closed face of a dropdown: the box, the
 // selected text and the little arrow. Kept rather than drawn once, because
@@ -78,12 +114,21 @@ Rect g_popup_rect_last{0, 0, 0, 0};
 bool g_popup_shown_last = false;
 bool g_popup_drawn_this_frame = false;
 
-// True only between the first and last draw call of a modal. The popup
-// guard below exists to stop a click landing on a control that happens to
-// sit under an open dropdown popup; a modal is drawn over everything
-// including that popup, so for its own buttons the guard is exactly wrong
-// and would swallow the click that dismisses it.
-bool g_in_modal = false;
+// Which modal layer is being drawn into right now, and how many have been
+// opened so far this frame. Layer numbers are handed out in the order the
+// layers open, never reused and never counted back down, so a bigger
+// number always means drawn later and therefore on top. That is what lets
+// a delete confirmation sitting over the load panel take the keyboard from
+// the load panel, and the quit modal take it from both.
+//
+// The popup guard below exists to stop a click landing on a control that
+// happens to sit under an open dropdown popup; a modal is drawn over
+// everything including that popup, so for its own buttons the guard is
+// exactly wrong and would swallow the click that dismisses it.
+int g_modal_seq = 0;
+std::vector<int> g_modal_stack;
+
+int current_modal_layer() { return g_modal_stack.empty() ? 0 : g_modal_stack.back(); }
 
 // The tooltip asked for this frame, if any. Deferred for the same reason
 // the dropdown popup is, so that it lands above whatever it overlaps.
@@ -98,7 +143,7 @@ struct PendingTooltip {
 PendingTooltip g_tooltip;
 
 bool click_over_open_popup(const GuiInput& in) {
-    if (g_in_modal) return false;
+    if (current_modal_layer() > 0) return false;
     return g_popup_shown_last && rect_contains(g_popup_rect_last, in.mouse_x, in.mouse_y);
 }
 
@@ -123,10 +168,10 @@ const float PAD = 6.0f;
 
 struct FocusRect {
     Rect r;
-    // Whether it was drawn as part of a modal. A modal owns the keyboard
-    // while it is up, and this is how that falls out without anything else
-    // having to know a modal is open.
-    bool in_modal = false;
+    // Which modal layer it was drawn into, 0 for the screen itself. The
+    // topmost layer on the frame owns the keyboard, and this is how that
+    // falls out without anything else having to know a modal is open.
+    int layer = 0;
 };
 
 std::vector<FocusRect> g_focus_filling;  // the frame being drawn now
@@ -147,7 +192,7 @@ bool same_rect(const Rect& a, const Rect& b) {
 // A click also moves the focus here, so the pointer and the keyboard share
 // one idea of where you are rather than each keeping their own.
 bool focus_register(const Rect& r, const GuiInput& in) {
-    g_focus_filling.push_back(FocusRect{r, g_in_modal});
+    g_focus_filling.push_back(FocusRect{r, current_modal_layer()});
     if (in.mouse_pressed && rect_contains(r, in.mouse_x, in.mouse_y) &&
         !click_over_open_popup(in)) {
         g_focused = r;
@@ -167,6 +212,9 @@ void draw_focus_ring(const Rect& r) {
 }  // namespace
 
 void begin_widget_frame() {
+    // Defensive: an unbalanced begin_modal_layer() in a screen would
+    // otherwise leak into the next screen drawn.
+    g_modal_stack.clear();
     anim_begin_frame();
     g_tooltip.active = false;
     g_click_consumed_this_frame = false;
@@ -176,7 +224,10 @@ void begin_widget_frame() {
 }
 
 void end_widget_frame(const GuiInput& in) {
-    if (in.mouse_pressed && !g_click_consumed_this_frame) g_focus = nullptr;
+    if (in.mouse_pressed && !g_click_consumed_this_frame) {
+        g_focus = nullptr;
+        g_focus_field = nullptr;
+    }
 }
 
 bool has_keyboard_focus(const Rect& r) { return g_has_focus && same_rect(g_focused, r); }
@@ -186,21 +237,31 @@ void set_keyboard_focus(const Rect& r) {
     g_has_focus = true;
 }
 
+void begin_modal_layer() { g_modal_stack.push_back(++g_modal_seq); }
+
+void end_modal_layer() {
+    if (!g_modal_stack.empty()) g_modal_stack.pop_back();
+}
+
+bool modal_layer_open() { return g_modal_seq > 0; }
+
 void resolve_focus(const GuiInput& in) {
     g_focus_ready.swap(g_focus_filling);
     g_focus_filling.clear();
+    // Called once per frame, before anything draws, so this is where the
+    // frames layer numbering starts over.
+    g_modal_seq = 0;
+    g_modal_stack.clear();
 
-    // A modal drew last frame, so it and nothing else is reachable.
-    bool modal = false;
+    // Whichever layer drew last frame sits on top, so it and nothing else
+    // is reachable. With no modal open that is layer 0, the screen itself.
+    int top_layer = 0;
     for (const FocusRect& c : g_focus_ready)
-        if (c.in_modal) {
-            modal = true;
-            break;
-        }
+        if (c.layer > top_layer) top_layer = c.layer;
 
     std::vector<Rect> pool;
     for (const FocusRect& c : g_focus_ready)
-        if (c.in_modal == modal) pool.push_back(c.r);
+        if (c.layer == top_layer) pool.push_back(c.r);
 
     // The focus dies with the control it was on. A screen change, or a
     // modal opening or closing, leaves it pointing at a rect nothing draws
@@ -726,35 +787,166 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
                  const std::string& placeholder, bool center_text) {
     bool changed = false;
     // A keyboard focus on a field is the same thing as the field being the
-    // one that types. There is no caret to move -- editing here is append
-    // and backspace only -- so Left and Right never have to mean anything
-    // inside a field, and the arrows stay navigation everywhere.
+    // one that types. Left and Right stay navigation between controls
+    // rather than moving the caret: the arrows are how a mouseless
+    // operator crosses the screen, and a field that swallowed two of them
+    // would be a trap. The caret is placed with the pointer.
     const bool kb = enabled && focus_register(r, in);
-    if (kb) g_focus = &value;
+    if (kb) {
+        g_focus = &value;
+        g_focus_field = &value;
+    }
     bool focused = enabled && g_focus == static_cast<const void*>(&value);
 
-    if (enabled && rect_contains(r, in.mouse_x, in.mouse_y) && in.mouse_pressed &&
-        !click_over_open_popup(in)) {
+    const bool hit =
+        enabled && rect_contains(r, in.mouse_x, in.mouse_y) && !click_over_open_popup(in);
+    if (hit && in.mouse_pressed) {
         g_focus = &value;
+        g_focus_field = &value;
         focused = true;
         g_click_consumed_this_frame = true;
     }
 
+    FieldEdit& ed = edit_state(value);
+    // The value can change under the caret without a keystroke -- a Load
+    // rewrites a whole panel, a Clear empties one box -- so every index is
+    // brought back inside the string before it is used for anything.
+    if (ed.caret > value.size()) ed.caret = value.size();
+    if (ed.anchor > value.size()) ed.anchor = value.size();
+    if (ed.view_start > value.size()) ed.view_start = value.size();
+
+    const float avail = r.w - 2 * PAD;
+    // Centred boxes are the single character plugboard cells, which never
+    // overflow, so their text begins wherever centring puts it and
+    // view_start stays at 0.
+    auto shown_text = [&]() { return value.substr(ed.view_start); };
+    auto text_origin = [&]() {
+        if (!center_text) return r.x + PAD;
+        return r.x + (r.w - text_width(Font::Body, shown_text())) * 0.5f;
+    };
+    // The character boundary nearest a given x, as an index into value.
+    auto index_at_x = [&](double mx) {
+        float x = text_origin();
+        size_t i = ed.view_start;
+        while (i < value.size()) {
+            float cw = text_width(Font::Body, std::string(1, value[i]));
+            if (mx < static_cast<double>(x) + cw * 0.5) return i;
+            x += cw;
+            if (x > r.x + r.w - PAD) return i + 1;
+            ++i;
+        }
+        return value.size();
+    };
+
     if (focused) {
-        if (in.key_backspace && !value.empty()) {
-            value.pop_back();
-            changed = true;
+        // Click places the caret, and holding and moving selects from
+        // there. The press already took the focus above.
+        if (hit && in.mouse_pressed) {
+            ed.caret = ed.anchor = index_at_x(in.mouse_x);
+            ed.dragging = true;
         }
-        for (unsigned int cp : in.typed) {
-            if (cp > 127) continue;
-            char c = static_cast<char>(cp);
-            if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-            else if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-            if (value.size() >= max_len) continue;
-            if (allowed.find(c) == std::string::npos) continue;
-            value.push_back(c);
-            changed = true;
+        if (ed.dragging && in.mouse_held) ed.caret = index_at_x(in.mouse_x);
+        if (!in.mouse_held) ed.dragging = false;
+
+        auto sel_lo = [&]() { return ed.caret < ed.anchor ? ed.caret : ed.anchor; };
+        auto sel_hi = [&]() { return ed.caret < ed.anchor ? ed.anchor : ed.caret; };
+
+        if (in.ctrl_held && in.key_letter == 'Z') {
+            if (!ed.undo.empty()) {
+                ed.redo.push_back(value);
+                if (ed.redo.size() > kUndoSteps) ed.redo.erase(ed.redo.begin());
+                value = ed.undo.back();
+                ed.undo.pop_back();
+                ed.caret = ed.anchor = value.size();
+                changed = true;
+            }
+        } else if (in.ctrl_held && in.key_letter == 'Y') {
+            if (!ed.redo.empty()) {
+                ed.undo.push_back(value);
+                if (ed.undo.size() > kUndoSteps) ed.undo.erase(ed.undo.begin());
+                value = ed.redo.back();
+                ed.redo.pop_back();
+                ed.caret = ed.anchor = value.size();
+                changed = true;
+            }
+        } else {
+            if (in.key_backspace) {
+                if (sel_lo() != sel_hi()) {
+                    push_undo(ed, value);
+                    const size_t lo = sel_lo();
+                    value.erase(lo, sel_hi() - lo);
+                    ed.caret = ed.anchor = lo;
+                    changed = true;
+                } else if (ed.caret > 0) {
+                    push_undo(ed, value);
+                    value.erase(ed.caret - 1, 1);
+                    --ed.caret;
+                    ed.anchor = ed.caret;
+                    changed = true;
+                }
+            }
+            if (in.key_delete) {
+                if (sel_lo() != sel_hi()) {
+                    push_undo(ed, value);
+                    const size_t lo = sel_lo();
+                    value.erase(lo, sel_hi() - lo);
+                    ed.caret = ed.anchor = lo;
+                    changed = true;
+                } else if (ed.caret < value.size()) {
+                    push_undo(ed, value);
+                    value.erase(ed.caret, 1);
+                    changed = true;
+                }
+            }
+            // Control is a shortcut prefix everywhere else in here, so a
+            // character that arrived with it held is not text.
+            if (!in.ctrl_held) {
+                bool first = true;
+                for (unsigned int cp : in.typed) {
+                    if (cp > 127 || cp < 32) continue;
+                    char c = static_cast<char>(cp);
+                    if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z')
+                        c = static_cast<char>(c - 'A' + 'a');
+                    else if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z')
+                        c = static_cast<char>(c - 'a' + 'A');
+                    if (allowed.find(c) == std::string::npos) continue;
+                    // One undo step for a burst of typing in the same
+                    // frame, not one per character.
+                    if (first) {
+                        push_undo(ed, value);
+                        if (sel_lo() != sel_hi()) {
+                            const size_t lo = sel_lo();
+                            value.erase(lo, sel_hi() - lo);
+                            ed.caret = ed.anchor = lo;
+                            changed = true;
+                        }
+                        first = false;
+                    }
+                    if (value.size() >= max_len) continue;
+                    value.insert(ed.caret, 1, c);
+                    ++ed.caret;
+                    ed.anchor = ed.caret;
+                    changed = true;
+                }
+            }
         }
+        if (ed.caret > value.size()) ed.caret = value.size();
+        if (ed.anchor > value.size()) ed.anchor = value.size();
+    }
+
+    // Scroll the window so the caret is inside it. Widths add up exactly:
+    // the baked atlas has no kerning.
+    if (!center_text) {
+        if (ed.view_start > ed.caret) ed.view_start = ed.caret;
+        while (ed.view_start < ed.caret &&
+               text_width(Font::Body, value.substr(ed.view_start, ed.caret - ed.view_start)) >
+                   avail)
+            ++ed.view_start;
+        // And no empty space on the right when the text would fit.
+        while (ed.view_start > 0 && text_width(Font::Body, value.substr(ed.view_start - 1)) <= avail)
+            --ed.view_start;
+    } else {
+        ed.view_start = 0;
     }
 
     // No dip here: a click places a caret rather than working a control,
@@ -768,6 +960,7 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
                            : (focused ? palette::accent() : hover_border(m.hover));
     draw_rect_outline(r.x, r.y, r.w, r.h, border, focused ? 2.0f : 1.0f);
     if (kb) draw_focus_ring(r);
+
     if (value.empty() && !focused && !placeholder.empty()) {
         if (center_text) {
             float tw = text_width(Font::Body, placeholder);
@@ -776,31 +969,58 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
             label(Rect{r.x + PAD, r.y, r.w - 2 * PAD, r.h}, placeholder, true);
         }
     } else {
-        std::string shown = value + (focused ? "|" : "");
+        std::string shown = shown_text();
+        // Trim what runs off the right, so a long value does not draw over
+        // whatever sits beside the box.
         if (!center_text) {
-            // Show the tail once the text outgrows the box, so what was
-            // just typed stays in view. Widths add up exactly: the baked
-            // atlas has no kerning.
-            float avail = r.w - 2 * PAD;
             float used = 0;
-            size_t start = shown.size();
-            while (start > 0) {
-                float cw = text_width(Font::Body, std::string(1, shown[start - 1]));
+            size_t fit = 0;
+            while (fit < shown.size()) {
+                float cw = text_width(Font::Body, std::string(1, shown[fit]));
                 if (used + cw > avail) break;
                 used += cw;
-                --start;
+                ++fit;
             }
-            if (start > 0) shown = shown.substr(start);
+            if (fit < shown.size()) shown.resize(fit);
         }
-        if (center_text) {
-            float tw = text_width(Font::Body, shown);
-            label(Rect{r.x + (r.w - tw) * 0.5f, r.y, r.w, r.h}, shown, !enabled);
-        } else {
-            label(Rect{r.x + PAD, r.y, r.w - 2 * PAD, r.h}, shown, !enabled);
+        const float tx =
+            center_text ? r.x + (r.w - text_width(Font::Body, shown)) * 0.5f : r.x + PAD;
+        if (focused) {
+            const size_t lo = ed.caret < ed.anchor ? ed.caret : ed.anchor;
+            const size_t hi = ed.caret < ed.anchor ? ed.anchor : ed.caret;
+            if (lo != hi) {
+                const size_t a = lo > ed.view_start ? lo - ed.view_start : 0;
+                const size_t b = hi > ed.view_start ? hi - ed.view_start : 0;
+                const size_t ac = a < shown.size() ? a : shown.size();
+                const size_t bc = b < shown.size() ? b : shown.size();
+                float sx = tx + text_width(Font::Body, shown.substr(0, ac));
+                float sw = text_width(Font::Body, shown.substr(ac, bc - ac));
+                Color hl = palette::accent();
+                hl.a = 0.35f;
+                draw_rect(sx, r.y + 3.0f, sw, r.h - 6.0f, hl);
+            }
+        }
+        label(Rect{tx, r.y, r.w, r.h}, shown, !enabled);
+        if (focused) {
+            const size_t c = ed.caret > ed.view_start ? ed.caret - ed.view_start : 0;
+            const size_t cc = c < shown.size() ? c : shown.size();
+            float cx = tx + text_width(Font::Body, shown.substr(0, cc));
+            draw_rect(cx, r.y + 4.0f, 1.5f, r.h - 8.0f, palette::text());
         }
     }
     return changed;
 }
+
+bool clear_focused_field() {
+    if (!g_focus_field || g_focus_field->empty()) return false;
+    FieldEdit& e = g_edits[g_focus_field];
+    push_undo(e, *g_focus_field);
+    g_focus_field->clear();
+    e.caret = e.anchor = e.view_start = 0;
+    return true;
+}
+
+bool a_field_has_focus() { return g_focus_field != nullptr; }
 
 bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t max_len,
                     bool enabled, bool invalid, bool center_text) {
@@ -1070,7 +1290,7 @@ float modal_box_height(int body_lines) {
 // box so the caller can lay its own contents out inside it.
 Rect draw_modal_frame(float screen_w, float screen_h, const std::string& title,
                       const std::vector<std::string>& body_lines, float box_h) {
-    g_in_modal = true;
+    begin_modal_layer();
     // The screen behind has already been drawn by the caller; this greys
     // it out so it reads as out of reach rather than merely unresponsive.
     draw_rect(0, 0, screen_w, screen_h, rgba(0.0f, 0.0f, 0.0f, 0.55f));
@@ -1106,7 +1326,7 @@ ModalChoice modal_question(float screen_w, float screen_h, const std::string& ti
 
     bool cancel = button(cancel_r, cancel_text, in, true);
     bool confirm = button(confirm_r, confirm_text, in, true, true);
-    g_in_modal = false;
+    end_modal_layer();
 
     if (in.key_enter) confirm = true;
     if (in.key_escape) cancel = true;
@@ -1125,7 +1345,7 @@ bool modal_notice(float screen_w, float screen_h, const std::string& title,
     float by = box.y + box_h - kModalPad - kModalBtnH;
     Rect ok_r{box.x + box.w - kModalPad - kModalBtnW, by, kModalBtnW, kModalBtnH};
     bool ok = button(ok_r, "OK", in, true, true);
-    g_in_modal = false;
+    end_modal_layer();
     return ok || in.key_enter || in.key_escape;
 }
 

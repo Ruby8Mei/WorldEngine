@@ -35,6 +35,9 @@ struct GuiInput {
     bool mouse_held = false;
     std::vector<unsigned int> typed;  // codepoints typed this frame
     bool key_backspace = false;
+    // Backspace eats the character before the caret, Delete the one after
+    // it. Both eat the selection instead when there is one.
+    bool key_delete = false;
     bool key_enter = false;
     bool key_escape = false;
     // The four arrows move the keyboard focus from control to control, by
@@ -51,6 +54,10 @@ struct GuiInput {
     // than arriving as an event, since what matters is whether it is down
     // at the moment of the click or keypress.
     bool ctrl_held = false;
+    // Held, like ctrl_held and for the same reason: what matters is
+    // whether it is down at the moment of the keypress, not that it
+    // arrived as an event of its own.
+    bool shift_held = false;
     // The letter key pressed this frame, as an uppercase ASCII letter, or
     // 0 for none. Separate from typed, because holding Control suppresses
     // the character event on Windows: Control and F together produce no
@@ -81,6 +88,26 @@ bool has_keyboard_focus(const Rect& r);
 // k this way. Takes a rect because that is what focus is keyed on
 // everywhere else in here.
 void set_keyboard_focus(const Rect& r);
+
+// -- modal layers --------------------------------------------------------
+//
+// A modal owns the keyboard while it is up. modal_question/modal_notice
+// below do this for themselves, but a screen that draws its own overlay by
+// hand has to say so, or the focus keeps walking around the screen behind
+// it and a mouseless operator can never reach the box.
+//
+// Wrap every draw call the overlay makes. Layers are numbered in the order
+// they open and the highest one on the frame takes the focus, so overlays
+// that stack -- a delete confirmation over the file list -- work out
+// without either of them knowing about the other. Numbering restarts every
+// frame, in resolve_focus().
+void begin_modal_layer();
+void end_modal_layer();
+
+// Whether any modal layer has been opened so far this frame. gui.cpp asks
+// after the screen has drawn, so that Escape closes an overlay the screen
+// put up rather than leaving the screen out from under it.
+bool modal_layer_open();
 
 // Call once at the very start of a frame, before any widget calls.
 void begin_widget_frame();
@@ -165,6 +192,16 @@ enum class CaseFold { None, ToLower, ToUpper };
 bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold = CaseFold::None,
                  const std::string& placeholder = "", bool center_text = false);
+
+// Empties whichever writable field the operator is in, as one undo step,
+// and says whether it emptied anything. For a Clear button that sits away
+// from the box it clears and so cannot name it. Nothing happens when no
+// field has the focus, or when the one that has it is already empty.
+bool clear_focused_field();
+
+// Whether any writable field has the focus. A Clear button asks so that it
+// can grey itself out rather than sitting there doing nothing.
+bool a_field_has_focus();
 
 // Digits-only convenience wrapper over text_field.
 bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t max_len,

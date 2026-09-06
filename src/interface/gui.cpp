@@ -61,6 +61,7 @@ void char_callback(GLFWwindow*, unsigned int codepoint) { g_input.typed.push_bac
 void key_callback(GLFWwindow*, int key, int /*scancode*/, int action, int /*mods*/) {
     if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
     if (key == GLFW_KEY_BACKSPACE) g_input.key_backspace = true;
+    if (key == GLFW_KEY_DELETE) g_input.key_delete = true;
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) g_input.key_enter = true;
     if (key == GLFW_KEY_ESCAPE) g_input.key_escape = true;
     if (key == GLFW_KEY_LEFT) g_input.key_left = true;
@@ -103,6 +104,8 @@ void fill_input_from_glfw(GLFWwindow* window, gui::GuiInput& in, float scale,
 
     in.ctrl_held = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
                    glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+    in.shift_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                    glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
 }
 
 // A picture of the frame that has just been drawn, read out of the back
@@ -464,6 +467,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             screen_input.mouse_released = false;
             screen_input.typed.clear();
             screen_input.key_backspace = false;
+            screen_input.key_delete = false;
             screen_input.key_enter = false;
             screen_input.key_escape = false;
             screen_input.key_left = screen_input.key_right = false;
@@ -534,7 +538,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 const char* pasted = glfwGetClipboardString(window);
                 enciphering.deliver_paste(pasted ? pasted : "");
             }
-            if (enciphering.back_clicked()) go_to(Screen::Setup, -1.0f, 0.0f);
+            if (enciphering.back_clicked()) {
+                panel.open();
+                go_to(Screen::Setup, -1.0f, 0.0f);
+            }
             if (enciphering.wordmark_clicked()) go_to(Screen::MainMenu, -1.0f, 0.0f);
         } else if (screen == Screen::Settings) {
             settings.frame(screen_input, lw, lh);
@@ -602,7 +609,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 go_to(Screen::MainMenu, 1.0f, 0.0f);
         } else {
             main_menu.frame(screen_input, lw, lh);
-            if (main_menu.open_inop_requested()) go_to(Screen::Setup, 1.0f, 0.0f);
+            if (main_menu.open_inop_requested()) {
+                panel.open();
+                go_to(Screen::Setup, 1.0f, 0.0f);
+            }
             if (main_menu.maintenance_requested()) {
                 maintenance.open();
                 // Left, where Setup goes right. The two screens the menu
@@ -638,7 +648,14 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // An open dropdown list has first claim on Escape, and closes
         // itself. Answering here as well would close the list and leave
         // the screen in the same keypress.
-        if (modal == Modal::None && g_input.key_escape && !gui::dropdown_popup_open()) {
+        //
+        // So does an overlay the screen drew itself, such as the setup
+        // screen's save and load boxes: the screen has already drawn by
+        // this line, so modal_layer_open() can say whether one is up, and
+        // the box answers the key rather than the screen leaving out from
+        // under it.
+        if (modal == Modal::None && g_input.key_escape && !gui::dropdown_popup_open() &&
+            !gui::modal_layer_open()) {
             if (g_input.ctrl_held) {
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
             } else if (screen != Screen::MainMenu) {
@@ -705,6 +722,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // frame — clear it before the next poll picks up new events.
         g_input.typed.clear();
         g_input.key_backspace = g_input.key_enter = g_input.key_escape = false;
+        g_input.key_delete = false;
         g_input.key_letter = 0;
         g_input.key_left = g_input.key_right = g_input.key_up = g_input.key_down = false;
         g_input.scroll_y = 0;

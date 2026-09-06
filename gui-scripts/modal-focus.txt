@@ -1,0 +1,48 @@
+# The save/load boxes on the setup screen, driven with no pointer.
+#
+# Before the modal-layer fix the focus ring stayed on the setup screen
+# behind the box, the arrows walked around back there, and Escape left the
+# screen entirely instead of closing the box. This script is the proof of
+# all three.
+#
+# The one click here is in LOGICAL units, which is what the script driver
+# writes into GuiInput -- not the pixel position in the screenshot, which
+# is the logical one multiplied by the zoom. At a borderless 1920x1080 and
+# the 110% zoom in inop.gui.json the screen is 1745x982 logical, which puts
+# the centre of Load Setup at 1654,129. Change the zoom and this line has
+# to move with it.
+#
+# Load Setup is used rather than Save Setup only because Save is disabled
+# until a setup is complete. Both raise the same kind of hand-drawn box, so
+# they stand or fall together.
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+shot m1-setup-screen
+key down
+wait 0.3
+shot m2-focus-on-setup
+move 1654 129
+wait 0.3
+click
+wait 0.3
+move -5000 -5000
+wait 0.5
+shot m3-load-box-open
+key down
+wait 0.4
+shot m4-focus-trapped-in-box
+key right
+wait 0.3
+key down
+wait 0.4
+shot m5-focus-still-in-box
+key escape
+wait 0.7
+shot m6-escape-closed-the-box
+key escape
+wait 1.2
+shot m7-escape-now-leaves-screen
+quit

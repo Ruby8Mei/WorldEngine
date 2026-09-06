@@ -77,6 +77,18 @@ private:
     float cipher_scroll_ = 0, marker_scroll_ = 0, check_scroll_ = 0, plain_scroll_ = 0;
     float h_cipher_ = 0, h_check_ = 0, h_plain_ = 0;
 
+    // The ciphertext and its marker as one clipboard paste: the
+    // ciphertext, exactly five spaces, then the marker. Both halves are
+    // needed to read the message back, and they are useless apart, so
+    // this is the one copy that carries a whole dispatch.
+    void copy_both();
+    // The Clear button both sections carry. Draws at bx,by and empties
+    // whichever writable box has the focus. No keyboard shortcut yet: the
+    // roadmap named Shift and C, which is how a capital C is typed, so it
+    // would eat the keystroke inside every box it is meant to serve.
+    void draw_clear_button(const GuiInput& in, float bx, float by);
+    static const char* kBothSeparator;
+
     PasteTarget paste_target_ = PasteTarget::None;
     std::string copy_text_;
     bool copy_pending_ = false;

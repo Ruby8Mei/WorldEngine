@@ -202,10 +202,30 @@ void EncipheringPanel::on_decipher() {
     }
 }
 
+const char* EncipheringPanel::kBothSeparator = "     ";
+
+void EncipheringPanel::draw_clear_button(const GuiInput& in, float bx, float by) {
+    if (button(Rect{bx, by, kBtnW, kBtnH}, "Clear", in, a_field_has_focus()))
+        clear_focused_field();
+}
+
+void EncipheringPanel::copy_both() {
+    copy_text_ = cipher_out_ + kBothSeparator + marker_out_;
+    copy_pending_ = true;
+}
+
 void EncipheringPanel::frame(const GuiInput& in, int width, int height) {
     begin_widget_frame();
     back_clicked_ = false;
     wordmark_clicked_ = false;
+
+    // Control and Shift and C, the combination the roadmap keybind list
+    // had reserved and unused. Control alone is already the "skip the
+    // warning" prefix everywhere in here, so it could not be Control and C
+    // on its own without meaning two things.
+    if (in.ctrl_held && in.shift_held && in.key_letter == 'C' && !cipher_out_.empty() &&
+        !marker_out_.empty())
+        copy_both();
 
     float w = static_cast<float>(width), h = static_cast<float>(height);
 
@@ -281,6 +301,17 @@ float EncipheringPanel::draw_header(const GuiInput& in, float width) {
 float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, float field_w) {
     const bool ready = pipeline_ != nullptr;
     label(Rect{x, y, 200, 26}, "Encipher", false, Font::BodyLarge);
+    // Clear goes directly above Paste, in the title row, whose button
+    // columns are empty. Placed here rather than beside the box it clears
+    // because there is no room on the row itself, and the roadmap has a
+    // layout change coming for both these sections -- when that lands this
+    // is the button to move first.
+    //
+    // It clears whichever writable box has the focus, which is why both
+    // sections carry one and both do the same thing. Clicking it does not
+    // take the focus off the box: a click on a control is consumed, and
+    // only a click that lands on nothing lets a field go.
+    draw_clear_button(in, x + kLabelW + field_w + kGap, y);
     y += kTitleH;
 
     const float paste_x = x + kLabelW + field_w + kGap;
@@ -301,6 +332,13 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
         copy_text_ = cipher_out_;
         copy_pending_ = true;
     }
+    // The action column is empty on this row, so the composite copy sits
+    // beside the plain one at no cost to the layout. It needs both halves:
+    // with padding off there is no marker, and half a dispatch pasted with
+    // five spaces hanging off the end would be worse than no button.
+    if (button(Rect{action_x, y, kBtnW, kBtnH}, "Copy both", in,
+               !cipher_out_.empty() && !marker_out_.empty()))
+        copy_both();
     y += h_cipher_ + kGap;
 
     label(Rect{x, y, kLabelW, kFieldH}, "marker", true);
@@ -327,6 +365,7 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
 float EncipheringPanel::draw_decipher(const GuiInput& in, float x, float y, float field_w) {
     const bool ready = pipeline_ != nullptr;
     label(Rect{x, y, 200, 26}, "Decipher", false, Font::BodyLarge);
+    draw_clear_button(in, x + kLabelW + field_w + kGap, y);
     y += kTitleH;
 
     const float paste_x = x + kLabelW + field_w + kGap;

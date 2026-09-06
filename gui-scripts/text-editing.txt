@@ -1,0 +1,70 @@
+# Caret, selection, undo and redo in a writable box.
+#
+# The settings search row is used because it is the one writable box that
+# is two keystrokes from the main menu and needs no machine set up first.
+# Every writable box in the application is the same text_field() call, so
+# what holds here holds everywhere.
+#
+# The pointer is parked off screen except for the clicks that place the
+# caret and drag a selection. Coordinates are logical, not the pixels in
+# the screenshot: at the 110% zoom in inop.gui.json the search box runs
+# from 566 to 866 logical, its text starts at 574, and a character is
+# about 9.5 wide.
+move -5000 -5000
+wait 0.6
+key down
+key down
+key down
+key down
+wait 0.3
+key enter
+wait 1.2
+ctrl on
+key f
+wait 0.3
+ctrl off
+type abcdefgh
+wait 0.4
+shot t1-typed
+
+# Click between d and e. Before this the caret did not exist and a click
+# inside a box did nothing at all.
+move 612 100
+wait 0.3
+click
+wait 0.3
+shot t2-caret-placed
+type xy
+wait 0.4
+shot t3-typed-mid-string
+
+ctrl on
+key z
+wait 0.4
+ctrl off
+shot t4-undone
+ctrl on
+key y
+wait 0.4
+ctrl off
+shot t5-redone
+
+# Press at c and drag to g, so cdef is selected.
+move 593 100
+wait 0.2
+press
+wait 0.2
+move 640 100
+wait 0.4
+shot t6-drag-selection
+release
+wait 0.2
+key backspace
+wait 0.4
+shot t7-selection-deleted
+
+# And the Delete key, which did not exist before this pass.
+key delete
+wait 0.4
+shot t8-delete-key
+quit

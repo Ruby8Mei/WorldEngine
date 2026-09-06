@@ -66,8 +66,10 @@ bool InputScript::load(const std::string& path, std::string* error) {
             std::string which;
             if (!(ls >> which))
                 return fail(line_no,
-                            "key needs enter, escape, backspace, an arrow or a single letter");
+                            "key needs enter, escape, backspace, delete, an arrow or a "
+                            "single letter");
             if (which == "enter") s.key = Key::Enter;
+            else if (which == "delete") s.key = Key::Delete;
             else if (which == "escape") s.key = Key::Escape;
             else if (which == "backspace") s.key = Key::Backspace;
             else if (which == "up") s.key = Key::Up;
@@ -79,6 +81,13 @@ bool InputScript::load(const std::string& path, std::string* error) {
                 s.letter = static_cast<char>(std::toupper(static_cast<unsigned char>(which[0])));
             } else return fail(line_no, "unknown key '" + which + "'");
             s.verb = Verb::Key;
+        } else if (verb == "shift") {
+            std::string which;
+            if (!(ls >> which)) return fail(line_no, "shift needs on or off");
+            if (which == "on") s.flag = true;
+            else if (which == "off") s.flag = false;
+            else return fail(line_no, "shift takes on or off, not '" + which + "'");
+            s.verb = Verb::Shift;
         } else if (verb == "ctrl") {
             std::string which;
             if (!(ls >> which)) return fail(line_no, "ctrl needs on or off");
@@ -129,6 +138,7 @@ bool InputScript::fill(GuiInput& out, float dt) {
     out.mouse_y = mouse_y_;
     out.mouse_held = held_;
     out.ctrl_held = ctrl_;
+    out.shift_held = shift_;
 
     if (done_ || at_ >= steps_.size()) return false;
 
@@ -185,6 +195,7 @@ bool InputScript::fill(GuiInput& out, float dt) {
                 case Key::Enter: out.key_enter = true; break;
                 case Key::Escape: out.key_escape = true; break;
                 case Key::Backspace: out.key_backspace = true; break;
+                case Key::Delete: out.key_delete = true; break;
                 case Key::Up: out.key_up = true; break;
                 case Key::Down: out.key_down = true; break;
                 case Key::Left: out.key_left = true; break;
@@ -197,6 +208,12 @@ bool InputScript::fill(GuiInput& out, float dt) {
         case Verb::Ctrl:
             ctrl_ = s.flag;
             out.ctrl_held = ctrl_;
+            ++at_;
+            break;
+
+        case Verb::Shift:
+            shift_ = s.flag;
+            out.shift_held = shift_;
             ++at_;
             break;
 

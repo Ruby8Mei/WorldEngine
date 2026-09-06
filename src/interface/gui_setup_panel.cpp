@@ -319,7 +319,8 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
     }
 
     bool any_file_modal = ui_.show_load_panel || ui_.show_save_chooser || ui_.show_overwrite_panel ||
-                           ui_.show_create_name_modal || ui_.show_corruption_popup;
+                           ui_.show_create_name_modal || ui_.show_corruption_popup ||
+                           ui_.show_delete_confirm;
     bool modal_active = any_file_modal || ui_.open_dropdown_id != -1;
 
     GuiInput in = real_in;
@@ -328,6 +329,14 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
         in.mouse_released = false;
         in.typed.clear();
         in.key_backspace = in.key_enter = in.key_escape = false;
+        // The arrows and the shortcut letter go too, the same way gui.cpp
+        // empties them for the screen under its own modals. The focus
+        // itself is held by the overlay's modal layer rather than by this,
+        // since resolve_focus() runs on the real input before any of this
+        // is reached -- but a screen that is out of reach should not be
+        // answering shortcuts either.
+        in.key_left = in.key_right = in.key_up = in.key_down = false;
+        in.key_letter = 0;
         in.scroll_y = 0;
     }
 
@@ -683,14 +692,24 @@ void SetupPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
 }
 
 void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
+    // Escape belongs to the topmost box on screen and to nothing else, so
+    // it is answered here rather than by any of the controls, and the
+    // alert layer below gets first refusal on it.
+    bool esc = in.key_escape;
+    const bool alert_up = ui_.show_corruption_popup || ui_.show_delete_confirm;
+
     GuiInput under_in = in;
-    if (ui_.show_corruption_popup || ui_.show_delete_confirm) {
+    under_in.key_escape = false;
+    if (alert_up) {
         under_in.mouse_pressed = false;
         under_in.mouse_released = false;
         under_in.typed.clear();
         under_in.scroll_y = 0;
     }
 
+    // The chooser layer. Everything drawn inside is what the keyboard can
+    // reach, unless an alert opens a layer over the top of it further down.
+    begin_modal_layer();
     if (ui_.show_load_panel) {
         FileTilePanelResult r = file_tile_panel_frame(under_in, "Load Setup", w, h,
                                                        ui_.file_panel_scroll, TilePanelMode::Load,
@@ -701,20 +720,22 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
             ui_.show_load_panel = false;
         } else if (r.delete_requested)
             on_delete_tile_requested(r.delete_path);
-        else if (r.cancelled)
+        else if (r.cancelled || (esc && !alert_up))
             ui_.show_load_panel = false;
         else if (r.picked)
             on_load_tile_picked(r.path);
+        if (esc && !alert_up) esc = false;
     } else if (ui_.show_overwrite_panel) {
         FileTilePanelResult r =
             file_tile_panel_frame(under_in, "Overwrite Setup", w, h, ui_.file_panel_scroll,
                                    TilePanelMode::Overwrite, state_.suite_code);
         if (r.delete_requested)
             on_delete_tile_requested(r.delete_path);
-        else if (r.cancelled)
+        else if (r.cancelled || (esc && !alert_up))
             ui_.show_overwrite_panel = false;
         else if (r.picked)
             on_overwrite_tile_picked(r.path);
+        if (esc && !alert_up) esc = false;
     } else if (ui_.show_save_chooser) {
         draw_rect(0, 0, w, h, rgba(0, 0, 0, 0.55f));
         Rect box{w / 2 - 160, h / 2 - 70, 320, 140};
@@ -751,6 +772,10 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         }
         if (under_in.mouse_pressed && !rect_contains(box, under_in.mouse_x, under_in.mouse_y))
             ui_.show_save_chooser = false;
+        if (esc && !alert_up) {
+            ui_.show_save_chooser = false;
+            esc = false;
+        }
     } else if (ui_.show_create_name_modal) {
         draw_rect(0, 0, w, h, rgba(0, 0, 0, 0.55f));
         Rect box{w / 2 - 200, h / 2 - 90, 400, 180};
@@ -774,7 +799,16 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         Rect cancel_r{box.x + box.w - 136, box.y + box.h - 44, 120, 32};
         if (button(confirm_r, "Confirm", under_in, true, true)) on_create_confirmed();
         if (button(cancel_r, "Cancel", under_in, true)) ui_.show_create_name_modal = false;
+        if (esc && !alert_up) {
+            ui_.show_create_name_modal = false;
+            esc = false;
+        }
     }
+    end_modal_layer();
+
+    // Drawn over the chooser layer, and given a layer of its own so that it
+    // takes the keyboard from whatever is underneath it.
+    if (alert_up) begin_modal_layer();
 
     if (ui_.show_corruption_popup) {
         Rect box{w / 2 - 220, h / 2 - 60, 440, 120};
@@ -784,6 +818,10 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
               "Corruption error, please pick another setting file");
         Rect ok_r{box.x + box.w / 2 - 50, box.y + box.h - 44, 100, 30};
         if (button(ok_r, "OK", in, true)) ui_.show_corruption_popup = false;
+        if (esc) {
+            ui_.show_corruption_popup = false;
+            esc = false;
+        }
     }
 
     if (ui_.show_delete_confirm) {
@@ -799,7 +837,16 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         Rect cancel_r{box.x + box.w / 2 + 8, box.y + box.h - 44, 100, 30};
         if (button(confirm_r, "Delete", in, true)) on_delete_confirmed();
         if (button(cancel_r, "Cancel", in, true)) ui_.show_delete_confirm = false;
+        // Escape cancels rather than confirms: the box warns that the
+        // delete cannot be undone, so the key that means "get me out of
+        // here" must not be the one that does it.
+        if (esc) {
+            ui_.show_delete_confirm = false;
+            esc = false;
+        }
     }
+
+    if (alert_up) end_modal_layer();
 }
 
 void SetupPanel::on_generate_clicked() {
@@ -865,6 +912,20 @@ void SetupPanel::on_generate_clicked() {
     } catch (const std::exception& e) {
         std::cout << "[gui] generate failed: " << e.what() << "\n";
     }
+}
+
+void SetupPanel::open() {
+    ui_.show_load_panel = false;
+    ui_.show_save_chooser = false;
+    ui_.show_overwrite_panel = false;
+    ui_.show_create_name_modal = false;
+    ui_.show_corruption_popup = false;
+    ui_.show_delete_confirm = false;
+    ui_.create_name_text.clear();
+    ui_.create_name_error.clear();
+    ui_.delete_confirm_path.clear();
+    ui_.file_panel_scroll = 0.0f;
+    ui_.open_dropdown_id = -1;
 }
 
 void SetupPanel::on_save_clicked() { ui_.show_save_chooser = true; }
