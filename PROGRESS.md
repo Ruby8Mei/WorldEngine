@@ -138,13 +138,17 @@ ROADMAP APPENDIX: UI Logic & Quality of Life
 1. Keybindings & Navigation
 
     The list that used to sit here was wrong in six of its eight lines. It
-    named Shift+C, Ctrl+C, Ctrl+V, Ctrl+X and Ctrl+A, none of which were
-    ever built, and it called Ctrl+Shift+C reserved when it is the
-    composite copy. Only the two save shortcuts were right.
+    named Ctrl+C, Ctrl+V, Ctrl+X and Ctrl+A, none of which were ever
+    built, and it called Ctrl+Shift+C reserved when it is the composite
+    copy. Only the two save shortcuts were right.
 
     The real list lives inside the application, on the settings screen
     under Keyboard, beside the thing it describes. Read that one. It is
     kept in one table in gui_settings_panel.cpp.
+
+    Wanted: Ctrl+C copy, Ctrl+V paste, Ctrl+X cut, Ctrl+A select all.
+    Parked here 2026-09-06, not built yet, operator wants them low
+    priority.
 
 2. Text Container & Input Behavior (done 2026-09-06)
 
