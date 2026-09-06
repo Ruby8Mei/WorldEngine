@@ -100,6 +100,7 @@ if(INOP_WITH_GUI)
     src/interface/gui_settings_panel.cpp
     src/interface/gui_legal_panel.cpp
     src/interface/gui_maintenance_panel.cpp
+    src/interface/gui_tutorial.cpp
     src/interface/gui_self_test.cpp
   )
 else()

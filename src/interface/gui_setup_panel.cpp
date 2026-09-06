@@ -439,9 +439,14 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
     bool next_enabled = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
     float btn_w = 150, btn_h = 30, gap = 6;
     Rect next_r{width - btn_w - 16, pad, btn_w, btn_h};
+    // Named for the tutorial. See gui_widgets.hpp -- a landmark is a
+    // measurement handed forward one frame, and nothing reads these
+    // unless a tutorial is running.
+    set_landmark("setup.next", next_r);
     if (button(next_r, "Next", in, next_enabled, next_enabled)) next_clicked_ = true;
 
     Rect generate_r{width - btn_w - 16, pad + (btn_h + gap), btn_w, btn_h};
+    set_landmark("setup.generate", generate_r);
     if (button(generate_r, "Generate Setup", in, true)) on_generate_clicked();
 
     Rect save_r{width - btn_w - 16, pad + 2 * (btn_h + gap), btn_w, btn_h};
@@ -497,6 +502,7 @@ void SetupPanel::draw_top_row(const GuiInput& in, float width, float y, float h)
         label(Rect{left.x, left.y + 58, left.w, 18}, "language");
         float lang_w = dropdown_content_width(language_labels_, 120.0f, 220.0f);
         Rect lang_r{left.x, left.y + 78, lang_w, 30};
+        set_landmark("setup.language", lang_r);
         dropdown(lang_r, language_labels_, language_idx_, 1, ui_.open_dropdown_id, in, true);
     }
 
@@ -529,6 +535,7 @@ void SetupPanel::draw_master_key(const GuiInput& in, Rect area) {
     if (field_w < 90.0f) field_w = 90.0f;
 
     Rect field_r{area.x, area.y + 20, field_w, 30};
+    set_landmark("setup.master_key", field_r);
     bool invalid = unlocked && !master_key_valid(state_, validity_);
     CaseFold fold = Alphabet(su.alphabet).uses_uppercase() ? CaseFold::ToUpper : CaseFold::ToLower;
     text_field(field_r, state_.master_key_text, in, su.alphabet,
@@ -556,6 +563,7 @@ void SetupPanel::draw_bottom_row(const GuiInput& in, float width, float y, float
         label(Rect{left.x, left.y, left.w, 18}, "rotor count (" + std::to_string(su.min_rotors) + "-" +
                                                      std::to_string(su.max_rotors) + ")");
         Rect rc_area{left.x, left.y + 20, left.w, 26};
+        set_landmark("setup.rotor_count", rc_area);
         draw_rotor_count_buttons(in, rc_area);
         grid_y = left.y + 56;
     }
@@ -597,6 +605,10 @@ void SetupPanel::draw_rotor_count_buttons(const GuiInput& in, Rect area) {
 }
 
 void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
+    // The whole grid. The rotor count step opens this along with the
+    // count buttons, because asking for more rotors leaves empty rows and
+    // the operator has to be able to fill them.
+    set_landmark("setup.rotor_grid", area);
     const Suite& su = suite(state_.suite_code);
     const float header_h = 20.0f;
 
@@ -637,6 +649,11 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
         float ry = grid_top + i * row_h;
         Rect pick_r{area.x, ry, pick_w, row_h - 4};
         Rect ring_r{ring_x, ry, ring_w, row_h - 4};
+        // The whole of the first row, wheel through notch, so a tutorial
+        // step can open the row rather than one box of it.
+        if (i == 0)
+            set_landmark("setup.rotor_one",
+                         Rect{area.x, ry, notch_x + notch_total_w - area.x, row_h - 4});
 
         dropdown(pick_r, rotor_options_, rotor_pick_idx_[i], 10 + i, ui_.open_dropdown_id, in, active,
                  active && !validity_.rotor_pick_ok[i]);
@@ -676,6 +693,9 @@ void SetupPanel::draw_rotor_grid(const GuiInput& in, Rect area) {
 }
 
 void SetupPanel::draw_plugboard_grid(const GuiInput& in, Rect area) {
+    // The whole grid, since a tutorial step that says "fill in a pair"
+    // means any pair rather than one the tutorial picked.
+    set_landmark("setup.plugboard", area);
     const Suite& su = suite(state_.suite_code);
     float grid_y = area.y + 24;
     const int cols = 3, rows = 5;

@@ -1,0 +1,40 @@
+# Superfocus in the two shapes of box.
+#
+# A wrapping box: Up and Down move one row and keep the column, which is
+# what a word processor does and what the operator asked for once the
+# boxes grew a second row.
+#
+# The one line case is in superfocus-one-line.txt.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+
+move 300 245
+wait 0.3
+click
+wait 0.2
+type the quick brown fox jumps over the lazy dog while the sun goes down behind the hill and nobody says a word about it and here the second row begins
+wait 0.5
+shot g1-caret-on-row-two
+key up
+wait 0.5
+shot g2-caret-up-one-row
+key down
+wait 0.5
+shot g3-caret-down-one-row
+
+quit

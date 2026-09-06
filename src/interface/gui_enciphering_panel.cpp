@@ -7,6 +7,7 @@
 
 #include "languages.hpp"
 #include "registry.hpp"
+#include "transform.hpp"
 
 namespace inop {
 namespace gui {
@@ -30,6 +31,12 @@ constexpr float kColGap = 24.0f;
 // before it wraps. Below it the two halves cannot sit side by side and
 // they stack instead.
 constexpr int kMinGroupsPerLine = 4;
+// The two marker boxes, given one height between them by the operator.
+// They are not the same widget -- the encipher marker is read and the
+// decipher marker is typed into -- and the two natural heights differ by
+// about eleven, which showed as a step between two boxes sitting side by
+// side. One number given to both settles it.
+constexpr float kMarkerH = 65.0f;
 constexpr float kTitleH = 34.0f;
 constexpr float kSectionGap = 16.0f;
 // An output box never shows fewer than five lines and never grows past
@@ -105,6 +112,12 @@ void EncipheringPanel::open(const PanelState& state) {
     allowed_message_.push_back(' ');
     allowed_cipher_ = su.alphabet + " ";
     allowed_marker_ = su.alphabet;
+    // A folded code is letters, digits and the slash. A suite missing any
+    // of those cannot carry one, so its message box is left taking bare
+    // letters rather than writing half a code into it.
+    fold_input_ = su.alphabet.find('/') != std::string::npos;
+    for (char d = '0'; d <= '9'; ++d)
+        if (su.alphabet.find(d) == std::string::npos) fold_input_ = false;
 
     std::string rotors;
     for (int i = 0; i < state.rotor_count; ++i)
@@ -154,7 +167,12 @@ void EncipheringPanel::deliver_paste(const std::string& text) {
     PasteTarget target = paste_target_;
     paste_target_ = PasteTarget::None;
     switch (target) {
-        case PasteTarget::Message:    message_ = filtered(text, allowed_message_); break;
+        // Pasted text goes through the same transformer the keyboard
+        // does, and in one call, which is the shape transform() is at its
+        // best in: it sees the whole run and gets every escape right.
+        case PasteTarget::Message:
+            message_ = filtered(fold_input_ ? transform(text) : text, allowed_message_);
+            break;
         case PasteTarget::Ciphertext: cipher_in_ = filtered(text, allowed_cipher_); break;
         case PasteTarget::Marker:     marker_in_ = filtered(text, allowed_marker_); break;
         case PasteTarget::None:       break;
@@ -242,9 +260,8 @@ void EncipheringPanel::frame(const GuiInput& in, int width, int height) {
 
     float top = draw_header(in, w);
 
-    // A one line box is a caption and a line under it now, so even the
-    // shortest of them is taller than the bare field height.
-    const float row = text_block_height(1, true) + kGap;
+    // The marker row, and the same height on both sides of the screen.
+    const float row = kMarkerH + kGap;
     // The two boxes that wrap are taller again.
     const float input_row = text_field_height(kInputLines, true) + kGap;
     // Two rows of buttons, which is what the encipher half needs. The
@@ -280,9 +297,7 @@ void EncipheringPanel::frame(const GuiInput& in, int width, int height) {
     // fits rather than running off the bottom.
     const float e_fixed = kTitleH + ctrl_h + input_row + kGap + row;
     float d_fixed = kTitleH + ctrl_h + input_row;
-    // The decipher marker is typed into rather than read, so it is a field
-    // and not a block, and the two are not the same height.
-    if (padding_) d_fixed += text_field_height(1, true) + kGap;
+    if (padding_) d_fixed += row;
 
     float want_cipher = box_height(field_w, cipher_out_);
     float want_check =
@@ -377,15 +392,19 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
     float cy = y;
     if (button(Rect{x, cy, kBtnW, kBtnH}, "Paste", in, ready))
         paste_target_ = PasteTarget::Message;
-    if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Encipher", in,
-               ready && !message_.empty(), true))
-        on_encipher();
+    // Named for the tutorial, which points at controls it cannot measure
+    // for itself. See gui_widgets.hpp.
+    const Rect encipher_r{x + (kBtnW + kGap), cy, kBtnW, kBtnH};
+    set_landmark("cipher.encipher", encipher_r);
+    if (button(encipher_r, "Encipher", in, ready && !message_.empty(), true)) on_encipher();
     draw_clear_button(in, x + 2 * (kBtnW + kGap), cy);
     cy += kBtnH + kGap;
+    set_landmark("cipher.copy_cipher", Rect{x, cy, kBtnW, kBtnH});
     if (button(Rect{x, cy, kBtnW, kBtnH}, "Copy cipher", in, !cipher_out_.empty())) {
         copy_text_ = cipher_out_;
         copy_pending_ = true;
     }
+    set_landmark("cipher.copy_marker", Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH});
     if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Copy marker", in,
                !marker_out_.empty())) {
         copy_text_ = marker_out_;
@@ -400,20 +419,25 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
     y += ctrl_h;
 
     const float input_h = text_field_height(kInputLines, true);
+    set_landmark("cipher.message", Rect{x, y, field_w, input_h});
     text_field(Rect{x, y, field_w, input_h}, message_, in, allowed_message_, kFieldCap, ready,
-               false, fold_, "", false, kInputLines, "message");
+               false, fold_, "", false, kInputLines, "message", fold_input_);
     y += input_h + kGap;
 
-    text_block(Rect{x, y, field_w, h_cipher_}, cipher_out_, in, cipher_scroll_, false, "cipher");
-    y += h_cipher_ + kGap;
-
-    const float one_h = text_block_height(1, true);
+    // The marker sits above the cipher, out of the order the two are read
+    // in, so that it lands level with the marker box on the decipher side.
+    // The two markers are the pair an operator copies from one to the
+    // other, and beside each other they are one glance rather than two.
+    const float one_h = kMarkerH;
     if (marker_out_.empty())
         text_block(Rect{x, y, field_w, one_h}, padding_ ? "" : "no marker: padding is off", in,
                    marker_scroll_, true, "marker");
     else
         text_block(Rect{x, y, field_w, one_h}, marker_out_, in, marker_scroll_, false, "marker");
     y += one_h + kGap;
+
+    text_block(Rect{x, y, field_w, h_cipher_}, cipher_out_, in, cipher_scroll_, false, "cipher");
+    y += h_cipher_ + kGap;
 
     if (!encipher_error_.empty())
         text_block(Rect{x, y, field_w, h_check_}, "error: " + encipher_error_, in, check_scroll_,
@@ -430,11 +454,14 @@ float EncipheringPanel::draw_decipher(const GuiInput& in, float x, float y, floa
     y += kTitleH;
 
     float cy = y;
+    set_landmark("cipher.paste_cipher", Rect{x, cy, kBtnW, kBtnH});
     if (button(Rect{x, cy, kBtnW, kBtnH}, "Paste cipher", in, ready))
         paste_target_ = PasteTarget::Ciphertext;
+    set_landmark("cipher.paste_marker", Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH});
     if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Paste marker", in, ready && padding_))
         paste_target_ = PasteTarget::Marker;
     const bool can_decipher = ready && !cipher_in_.empty() && (!padding_ || !marker_in_.empty());
+    set_landmark("cipher.decipher", Rect{x + 2 * (kBtnW + kGap), cy, kBtnW, kBtnH});
     if (button(Rect{x + 2 * (kBtnW + kGap), cy, kBtnW, kBtnH}, "Decipher", in, can_decipher, true))
         on_decipher();
     cy += kBtnH + kGap;
@@ -447,7 +474,7 @@ float EncipheringPanel::draw_decipher(const GuiInput& in, float x, float y, floa
     y += input_h + kGap;
 
     if (padding_) {
-        const float marker_h = text_field_height(1, true);
+        const float marker_h = kMarkerH;
         text_field(Rect{x, y, field_w, marker_h}, marker_in_, in, allowed_marker_, kFieldCap,
                    ready, false, fold_, "", false, 1, "marker");
         y += marker_h + kGap;

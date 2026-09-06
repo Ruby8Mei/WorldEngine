@@ -34,6 +34,16 @@ public:
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
 
+    // What the tutorial needs to know about this screen, and nothing
+    // more. Each one is a box being empty or not, which is what a step
+    // here waits on: typing a message, enciphering it, and pasting both
+    // halves back over to the deciphering side.
+    bool has_message() const { return !message_.empty(); }
+    bool has_cipher() const { return !cipher_out_.empty(); }
+    bool cipher_pasted() const { return !cipher_in_.empty(); }
+    bool marker_pasted() const { return !marker_in_.empty(); }
+    bool has_plain() const { return !plain_out_.empty(); }
+
     // Clipboard. Only gui.cpp may call GLFW, so the panel asks: a copy
     // hands its text out once, a paste is answered with deliver_paste()
     // on a later frame, aimed at whichever field asked for it.
@@ -69,6 +79,12 @@ private:
     bool padding_ = true;
     int block_ = 16;
     CaseFold fold_ = CaseFold::ToLower;
+    // Whether the message box folds what is typed into it through
+    // transform(). True only for a suite whose alphabet has room for a
+    // whole code, which means the digits and the slash. Enigma has
+    // neither, so there it stays false and the box takes bare letters, as
+    // the real machine did.
+    bool fold_input_ = false;
     std::string allowed_message_, allowed_cipher_, allowed_marker_;
 
     std::string message_, cipher_out_, marker_out_, check_out_, encipher_error_;

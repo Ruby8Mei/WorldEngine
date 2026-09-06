@@ -50,6 +50,10 @@ float form_screen_header(const GuiInput& in, float width, const std::string& tit
     float word_tw = text_width(Font::Wordmark, "INOP");
     float word_th = text_line_height(Font::Wordmark);
     Rect wordmark_r{kFormMargin, pad, word_tw + 24.0f, word_th + 12.0f};
+    // Named for the tutorial, which points at the way back out of a
+    // screen. Every form screen draws its wordmark through here, so one
+    // name covers all of them and only the screen on show can be meant.
+    set_landmark("screen.wordmark", wordmark_r);
     if (wordmark_button(wordmark_r, in) && wordmark_clicked) *wordmark_clicked = true;
 
     // The title centred in what is left of the bar, rather than in the

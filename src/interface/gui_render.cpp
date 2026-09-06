@@ -43,6 +43,12 @@ struct FontAtlas {
     std::vector<stbtt_bakedchar> chars;  // ASCII 32..127 (96 glyphs)
     int bitmap_w = 0, bitmap_h = 0;
     float pixel_height = 0;
+    // Which of ASCII 32 to 126 the face has no glyph for. A face missing
+    // one still bakes and still draws: stb puts the notdef glyph in the
+    // slot, which comes out as an empty box. Recorded here so a caller
+    // can ask before it draws, rather than an operator finding out from
+    // a row of boxes.
+    std::string missing;
 };
 
 FontAtlas g_body;
@@ -92,6 +98,17 @@ bool bake_font(const std::string& path, float pixel_height, FontAtlas& out, int 
         std::cerr << "gui: font atlas bake failed for '" << path << "'\n";
         return false;
     }
+    // Asked of the font itself rather than of the baked bitmap. A notdef
+    // glyph is not reliably blank, so counting empty pixels would call a
+    // full stop missing and let a box through.
+    out.missing.clear();
+    stbtt_fontinfo info;
+    if (stbtt_InitFont(&info, ttf.data(), stbtt_GetFontOffsetForIndex(ttf.data(), 0))) {
+        for (int cp = 32; cp < 127; ++cp)
+            if (stbtt_FindGlyphIndex(&info, cp) == 0)
+                out.missing.push_back(static_cast<char>(cp));
+    }
+
     glGenTextures(1, &out.texture);
     glBindTexture(GL_TEXTURE_2D, out.texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -365,6 +382,21 @@ float preview_text_width(const std::string& font_file, const std::string& text) 
         w += a->chars[static_cast<size_t>(ch - 32)].xadvance;
     }
     return w;
+}
+
+bool typeface_can_spell(const std::string& font_file, const std::string& text) {
+    // Two ways a face fails to spell something, and only one of them can
+    // be found in the file. A rune face has every glyph and draws runes,
+    // which is the named list. A face with a hole in its alphabet draws a
+    // box, which is what the bake recorded.
+    if (!typeface_draws_latin(font_file)) return false;
+    const FontAtlas* a = preview_atlas(font_file);
+    // Nothing baked to ask. Saying yes leaves the row as it was rather
+    // than hanging a bracket off a name that never drew.
+    if (!a) return true;
+    for (char c : text)
+        if (a->missing.find(c) != std::string::npos) return false;
+    return true;
 }
 
 float preview_line_height(const std::string& font_file) {

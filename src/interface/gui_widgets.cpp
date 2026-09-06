@@ -5,6 +5,7 @@
 #include <map>
 
 #include "gui_anim.hpp"
+#include "transform.hpp"
 
 namespace inop {
 namespace gui {
@@ -16,6 +17,19 @@ bool rect_contains(const Rect& r, double mx, double my) {
 namespace {
 
 const void* g_focus = nullptr;       // identity of the std::string* being edited
+// The field the arrows belong to, or null when they belong to the screen.
+// A typed character puts a field in here and Escape takes it back out. It
+// is deliberately a separate thing from g_focus: crossing the screen with
+// the arrows moves the focus without ever entering superfocus.
+const void* g_superfocus = nullptr;
+// Set for the one frame in which Escape left superfocus, so that gui.cpp,
+// which reads Escape after the screen has drawn, can tell that the key was
+// already spent and not leave the screen on the same press.
+bool g_superfocus_ate_escape = false;
+// Whether the field holding superfocus actually drew last frame. A screen
+// change leaves g_superfocus pointing at a box nothing draws any more, and
+// without this the arrows would stay lost to it for good.
+bool g_superfocus_seen = false;
 // The same field again, writable, so that a Clear button somewhere else on
 // the screen can empty whichever box the operator is in without the panel
 // having to keep its own idea of which one that is.
@@ -55,6 +69,52 @@ void push_undo(FieldEdit& e, const std::string& before) {
     if (e.undo.size() > kUndoSteps) e.undo.erase(e.undo.begin());
     // A fresh edit is a new branch, so whatever was undone is unreachable.
     e.redo.clear();
+}
+
+// One codepoint as UTF-8, which is the only shape transform() reads.
+std::string utf8_of(unsigned int cp) {
+    std::string out;
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    return out;
+}
+
+// Whether a digit written at `caret` would read back as part of a mark
+// code rather than as a number, which is what decides whether it needs the
+// double slash in front of it.
+//
+// transform() answers this from a flag it carries along as it writes. A
+// box cannot: it holds the folded text already, and folding it a second
+// time would read every code in it as fresh input. So the same question is
+// answered by walking backwards over what the box already holds, which
+// reaches the same answer from the other end.
+bool digit_reads_as_mark(const std::string& s, size_t caret) {
+    if (caret == 0 || caret > s.size()) return false;
+    // A digit lands on the end of whatever run of digits is already there,
+    // so it is that run's own beginning that decides for both of them.
+    size_t i = caret;
+    while (i > 0 && s[i - 1] >= '0' && s[i - 1] <= '9') --i;
+    if (i == 0) return false;  // digits standing at the very start are a number
+    const char p = s[i - 1];
+    if ((p >= 'a' && p <= 'z') || (p >= 'A' && p <= 'Z')) return true;
+    // A single slash stacks a second mark on the same letter, so digits
+    // after it are still marks. A double slash is the escape that says the
+    // rest is a number.
+    if (p == '/') return !(i >= 2 && s[i - 2] == '/');
+    return false;  // a space, and anything else, ends the codes
 }
 
 // Everything needed to draw the closed face of a dropdown: the box, the
@@ -155,6 +215,65 @@ bool click_over_open_popup(const GuiInput& in) {
     return g_popup_shown_last && rect_contains(g_popup_rect_last, in.mouse_x, in.mouse_y);
 }
 
+// ── the focus gate ──────────────────────────────────────────────────────
+//
+// See gui_widgets.hpp for what the mode is for. Kept here beside the
+// popup guard because it is the same kind of thing: a question every
+// control asks before it agrees that a click was aimed at it.
+
+std::vector<Rect> g_gate;
+int g_gate_bypass = 0;
+
+// A control is allowed when it lies inside one of the gate rects, so a
+// gate can open a group as easily as a single control. The tolerance is
+// there because a focus ring is drawn three units outside its control and
+// a gate measured from the ring would otherwise fall a hair short.
+bool inside_gate(const Rect& r) {
+    const float e = 1.0f;
+    for (const Rect& g : g_gate) {
+        if (r.x >= g.x - e && r.y >= g.y - e && r.x + r.w <= g.x + g.w + e &&
+            r.y + r.h <= g.y + g.h + e)
+            return true;
+    }
+    return false;
+}
+
+// Modals are never gated. They are drawn by gui.cpp over the top of
+// everything, including the tutorial, and a modal that could not be
+// answered would strand the operator.
+bool gate_blocks(const Rect& r) {
+    if (g_gate.empty() || g_gate_bypass > 0) return false;
+    if (current_modal_layer() > 0) return false;
+    return !inside_gate(r);
+}
+
+// The input a control at `r` is entitled to see. Blocked means every
+// click and every key taken out, and the pointer moved off the window as
+// well, so a dead control does not light up under it and no tooltip
+// surfaces from one.
+GuiInput gate_input(const GuiInput& in, const Rect& r) {
+    if (!gate_blocks(r)) return in;
+    GuiInput out = in;
+    out.mouse_pressed = out.mouse_released = out.mouse_held = false;
+    out.typed.clear();
+    out.key_backspace = out.key_delete = false;
+    out.key_enter = out.key_escape = false;
+    out.key_left = out.key_right = out.key_up = out.key_down = false;
+    out.key_letter = 0;
+    out.scroll_y = 0;
+    out.mouse_x = out.mouse_y = -1.0e6;
+    return out;
+}
+
+// ── landmarks ───────────────────────────────────────────────────────────
+//
+// Aged in resolve_focus(), which gui.cpp calls exactly once a frame. Not
+// in begin_widget_frame(), which each panel calls for itself: two panels
+// draw in the same frame during a screen change, and ageing there would
+// throw away the landmarks of the first one before anybody read them.
+std::map<std::string, Rect> g_landmarks_filling;
+std::map<std::string, Rect> g_landmarks_ready;
+
 const float PAD = 6.0f;
 
 // -- keyboard focus ------------------------------------------------------
@@ -200,6 +319,12 @@ bool same_rect(const Rect& a, const Rect& b) {
 // A click also moves the focus here, so the pointer and the keyboard share
 // one idea of where you are rather than each keeping their own.
 bool focus_register(const Rect& r, const GuiInput& in) {
+    // A control the focus gate has shut out is not somewhere the focus can
+    // land, so it never joins the pool the arrows walk. resolve_focus()
+    // drops a focus whose rect stopped registering, so a gate going up
+    // takes the focus off whatever it was on and the first arrow press
+    // lands on the one control the step is waiting for.
+    if (gate_blocks(r)) return false;
     g_focus_filling.push_back(FocusRect{r, current_modal_layer()});
     if (in.mouse_pressed && rect_contains(r, in.mouse_x, in.mouse_y) &&
         !click_over_open_popup(in)) {
@@ -229,6 +354,7 @@ void begin_widget_frame() {
     g_pending.active = false;
     g_popup_shown_last = g_popup_drawn_this_frame;
     g_popup_drawn_this_frame = false;
+    g_superfocus_ate_escape = false;
 }
 
 void end_widget_frame(const GuiInput& in) {
@@ -245,6 +371,34 @@ void set_keyboard_focus(const Rect& r) {
     g_has_focus = true;
 }
 
+bool keyboard_focus_inside(const Rect& r) {
+    if (!g_has_focus) return false;
+    const float e = 1.0f;
+    return g_focused.x >= r.x - e && g_focused.y >= r.y - e &&
+           g_focused.x + g_focused.w <= r.x + r.w + e &&
+           g_focused.y + g_focused.h <= r.y + r.h + e;
+}
+
+void clear_focus_gate() { g_gate.clear(); }
+void add_focus_gate(const Rect& r) { g_gate.push_back(r); }
+bool focus_gate_on() { return !g_gate.empty(); }
+
+bool focus_gate_blocks(const Rect& r) { return gate_blocks(r); }
+
+void begin_gate_bypass() { ++g_gate_bypass; }
+void end_gate_bypass() {
+    if (g_gate_bypass > 0) --g_gate_bypass;
+}
+
+void set_landmark(const char* name, const Rect& r) { g_landmarks_filling[name] = r; }
+
+bool landmark(const char* name, Rect* out) {
+    auto it = g_landmarks_ready.find(name);
+    if (it == g_landmarks_ready.end()) return false;
+    if (out) *out = it->second;
+    return true;
+}
+
 void begin_modal_layer() { g_modal_stack.push_back(++g_modal_seq); }
 
 void end_modal_layer() {
@@ -256,6 +410,10 @@ bool modal_layer_open() { return g_modal_seq > 0; }
 void resolve_focus(const GuiInput& in) {
     g_focus_ready.swap(g_focus_filling);
     g_focus_filling.clear();
+    // Landmarks age on the same clock as the focus rects, and for the same
+    // reason -- both are measurements taken while the previous frame drew.
+    g_landmarks_ready.swap(g_landmarks_filling);
+    g_landmarks_filling.clear();
     // Called once per frame, before anything draws, so this is where the
     // frames layer numbering starts over.
     g_modal_seq = 0;
@@ -283,6 +441,14 @@ void resolve_focus(const GuiInput& in) {
             }
         if (!still_there) g_has_focus = false;
     }
+
+    // Superfocus survives only as long as the box holding it keeps
+    // drawing, which is what a screen change ends.
+    if (!g_superfocus_seen) g_superfocus = nullptr;
+    g_superfocus_seen = false;
+    // And while it does hold, the arrows are the caret's. The field reads
+    // them itself, later in the frame, when it draws.
+    if (g_superfocus) return;
 
     const bool up = in.key_up, down = in.key_down;
     const bool left = in.key_left, right = in.key_right;
@@ -556,8 +722,12 @@ void label(const Rect& r, const std::string& text, bool dim, Font font) {
     draw_text(font, r.x, ty, text, dim ? palette::text_dim() : palette::text());
 }
 
-bool button(const Rect& r, const std::string& text, const GuiInput& in, bool enabled,
+bool button(const Rect& r, const std::string& text, const GuiInput& raw, bool enabled,
             bool accent) {
+    // Focus Mode, if it is up. Every control that answers anything takes
+    // its input through this one call, so a control the current tutorial
+    // step did not open sees a frame in which nothing happened.
+    const GuiInput in = gate_input(raw, r);
     // A disabled control asks for nothing and so claims no timer: it
     // cannot be lit and it cannot be pressed.
     WidgetMotion m = enabled ? widget_motion(r, in) : WidgetMotion{};
@@ -597,7 +767,8 @@ bool button(const Rect& r, const std::string& text, const GuiInput& in, bool ena
     return clicked;
 }
 
-bool wordmark_button(const Rect& r, const GuiInput& in) {
+bool wordmark_button(const Rect& r, const GuiInput& raw) {
+    const GuiInput in = gate_input(raw, r);
     WidgetMotion m = widget_motion(r, in);
     const bool kb = focus_register(r, in);
     bool hovered = rect_contains(r, in.mouse_x, in.mouse_y);
@@ -769,6 +940,10 @@ int text_block_lines(float box_w, const std::string& text) {
     return static_cast<int>(wrap_lines(box_w, text).size());
 }
 
+const std::vector<std::string>& wrap_text(float box_w, const std::string& text) {
+    return wrap_lines(box_w, text);
+}
+
 float text_block_height(int lines, bool with_caption) {
     if (lines < 1) lines = 1;
     return static_cast<float>(lines) * block_line_height() + 2 * PAD +
@@ -819,7 +994,8 @@ int text_block(const Rect& r, const std::string& text, const GuiInput& in, float
     return static_cast<int>(lines.size());
 }
 
-bool text_link(const Rect& r, const std::string& text, const GuiInput& in, bool enabled) {
+bool text_link(const Rect& r, const std::string& text, const GuiInput& raw, bool enabled) {
+    const GuiInput in = gate_input(raw, r);
     const bool kb = enabled && focus_register(r, in);
     const bool hovered = enabled && rect_contains(r, in.mouse_x, in.mouse_y);
     const bool lit = hovered || kb;
@@ -839,8 +1015,9 @@ bool text_link(const Rect& r, const std::string& text, const GuiInput& in, bool 
     return clicked || (kb && in.key_enter);
 }
 
-bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput& in,
+bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput& raw,
             bool enabled) {
+    const GuiInput in = gate_input(raw, r);
     bool changed = false;
     float box_size = r.h;
     Rect box{r.x, r.y, box_size, box_size};
@@ -874,16 +1051,23 @@ bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput&
     return changed;
 }
 
-bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
+bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold,
                  const std::string& placeholder, bool center_text, int lines,
-                 const std::string& caption) {
+                 const std::string& caption, bool fold_marks) {
+    // Focus Mode takes the typed characters out along with the clicks, so
+    // a box that already held the caret when the gate went up stops
+    // accepting text as well. Which box holds the caret is remembered
+    // across frames, so neutering the input is the only thing that stops
+    // it; refusing it the keyboard focus would not.
+    const GuiInput in = gate_input(raw, r);
     bool changed = false;
     // A keyboard focus on a field is the same thing as the field being the
-    // one that types. Left and Right stay navigation between controls
-    // rather than moving the caret: the arrows are how a mouseless
-    // operator crosses the screen, and a field that swallowed two of them
-    // would be a trap. The caret is placed with the pointer.
+    // one that types. The arrows stay navigation between controls until a
+    // character is typed here, which is what enters superfocus and hands
+    // them to the caret; the arrows are how a mouseless operator crosses
+    // the screen, and a box that swallowed them just for being focused
+    // would be a trap. Escape gives them back.
     const bool kb = enabled && focus_register(r, in);
     if (kb) {
         g_focus = &value;
@@ -987,6 +1171,53 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
         auto sel_lo = [&]() { return ed.caret < ed.anchor ? ed.caret : ed.anchor; };
         auto sel_hi = [&]() { return ed.caret < ed.anchor ? ed.anchor : ed.caret; };
 
+        if (g_superfocus == &value) {
+            // Said every frame the box draws, which is how a screen change
+            // is told apart from the box simply sitting there.
+            g_superfocus_seen = true;
+            if (in.key_escape) {
+                g_superfocus = nullptr;
+                g_superfocus_ate_escape = true;
+            }
+        }
+        // The arrows, but only in superfocus. resolve_focus() has already
+        // stood aside for this frame, so nothing else is reading them.
+        if (g_superfocus == &value) {
+            const size_t lo = sel_lo(), hi = sel_hi();
+            if (in.key_left) {
+                // A selection collapses to its near edge rather than
+                // stepping from the caret, which is what puts a wrong
+                // selection right in one key.
+                ed.caret = (lo != hi) ? lo : (ed.caret > 0 ? ed.caret - 1 : 0);
+                ed.anchor = ed.caret;
+            }
+            if (in.key_right) {
+                ed.caret = (lo != hi) ? hi
+                                      : (ed.caret < value.size() ? ed.caret + 1 : ed.caret);
+                ed.anchor = ed.caret;
+            }
+            if (in.key_up || in.key_down) {
+                if (multiline && !rows.empty()) {
+                    // The column is kept across the move, which is what a
+                    // word processor does and what the operator asked for
+                    // once the boxes grew a second row.
+                    const size_t cur = row_of(ed.caret);
+                    const size_t col = ed.caret - rows[cur].begin;
+                    size_t tgt = cur;
+                    if (in.key_up && cur > 0) tgt = cur - 1;
+                    if (in.key_down && cur + 1 < rows.size()) tgt = cur + 1;
+                    const size_t want = rows[tgt].begin + col;
+                    ed.caret = want < rows[tgt].end ? want : rows[tgt].end;
+                } else {
+                    // A box of one line has no row above or below it, so
+                    // the two keys mean its two ends instead.
+                    if (in.key_up) ed.caret = 0;
+                    if (in.key_down) ed.caret = value.size();
+                }
+                ed.anchor = ed.caret;
+            }
+        }
+
         if (in.ctrl_held && in.key_letter == 'Z') {
             if (!ed.undo.empty()) {
                 ed.redo.push_back(value);
@@ -1039,13 +1270,44 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
             if (!in.ctrl_held) {
                 bool first = true;
                 for (unsigned int cp : in.typed) {
-                    if (cp > 127 || cp < 32) continue;
-                    char c = static_cast<char>(cp);
-                    if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z')
-                        c = static_cast<char>(c - 'A' + 'a');
-                    else if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z')
-                        c = static_cast<char>(c - 'a' + 'A');
-                    if (allowed.find(c) == std::string::npos) continue;
+                    if (cp < 32) continue;
+                    // What this one keystroke puts in the box. Plainly the
+                    // character itself, until folding is on: then it is the
+                    // code that stands in for the character, which can be
+                    // several characters long and only means anything
+                    // whole.
+                    std::string ins;
+                    if (fold_marks) {
+                        if (cp == ' ') {
+                            // transform() trims a lone space away, having
+                            // no text to hang it on. In a box being typed
+                            // into there is text on either side of it.
+                            ins = " ";
+                        } else {
+                            // One call answers for the whole scheme: a
+                            // letter comes back as itself, a capital gains
+                            // its 0, a marked letter becomes its code, and
+                            // punctuation comes back empty and is dropped,
+                            // which is what happens to it everywhere else.
+                            ins = transform(utf8_of(cp));
+                            if (ins.empty()) continue;
+                        }
+                    } else {
+                        if (cp > 127) continue;
+                        char c = static_cast<char>(cp);
+                        if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z')
+                            c = static_cast<char>(c - 'A' + 'a');
+                        else if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z')
+                            c = static_cast<char>(c - 'a' + 'A');
+                        ins.assign(1, c);
+                    }
+                    // A code the box cannot hold every character of is not
+                    // written at all: half a code reads back as something
+                    // else entirely.
+                    bool holds = true;
+                    for (char c : ins)
+                        if (allowed.find(c) == std::string::npos) holds = false;
+                    if (!holds) continue;
                     // One undo step for a burst of typing in the same
                     // frame, not one per character.
                     if (first) {
@@ -1058,11 +1320,24 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
                         }
                         first = false;
                     }
-                    if (value.size() >= max_len) continue;
-                    value.insert(ed.caret, 1, c);
-                    ++ed.caret;
+                    // Asked here and not above, because clearing the
+                    // selection has just changed what sits in front of the
+                    // caret, and that is the whole of the question.
+                    if (fold_marks && ins[0] >= '0' && ins[0] <= '9' &&
+                        digit_reads_as_mark(value, ed.caret)) {
+                        if (allowed.find('/') == std::string::npos) continue;
+                        ins.insert(0, "//");
+                    }
+                    if (value.size() + ins.size() > max_len) continue;
+                    value.insert(ed.caret, ins);
+                    ed.caret += ins.size();
                     ed.anchor = ed.caret;
                     changed = true;
+                    // Typing is the one way into superfocus, so the arrows
+                    // never change meaning without a character having gone
+                    // into the box first.
+                    g_superfocus = &value;
+                    g_superfocus_seen = true;
                 }
             }
         }
@@ -1209,6 +1484,10 @@ bool clear_focused_field() {
 
 bool a_field_has_focus() { return g_focus_field != nullptr; }
 
+bool superfocus_active() { return g_superfocus != nullptr; }
+
+bool superfocus_ate_escape() { return g_superfocus_ate_escape; }
+
 bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t max_len,
                     bool enabled, bool invalid, bool center_text) {
     return text_field(r, value, in, "0123456789", max_len, enabled, invalid,
@@ -1230,7 +1509,7 @@ void label_in_face(const Rect& r, const std::string& text, const std::string& fo
     const Color c = dim ? palette::text_dim() : palette::text();
     const float ty = r.y + (r.h + preview_line_height(font_file) * 0.7f) * 0.5f;
     draw_preview_text(font_file, r.x, ty, text, c);
-    if (typeface_draws_latin(font_file)) return;
+    if (typeface_can_spell(font_file, text)) return;
 
     // A face that cannot spell its own name gets the name again after it,
     // in the interface face and in brackets, so the row both shows what
@@ -1256,8 +1535,12 @@ void draw_dropdown_face(const DropdownFace& f) {
 }  // namespace
 
 void dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
-              int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid,
+              int& open_dropdown_id, const GuiInput& raw, bool enabled, bool invalid,
               const std::vector<std::string>* item_fonts) {
+    // The list itself is not gated. It can only be open because a gated
+    // dropdown opened it, and it is drawn later in the frame over the top
+    // of everything, so the rows have to stay clickable where they are.
+    const GuiInput in = gate_input(raw, r);
     bool is_open = enabled && open_dropdown_id == id;
 
     WidgetMotion m = enabled ? widget_motion(r, in) : WidgetMotion{};

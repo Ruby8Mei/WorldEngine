@@ -1,0 +1,37 @@
+# Superfocus in a box of one line. It has no row above or below it, so Up
+# is its start and Down is its end.
+#
+# The box is the decipher marker, which is one line and only drawn while
+# padding is on.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+
+move 1273 353
+wait 0.3
+click
+wait 0.2
+type qwerty
+wait 0.5
+shot h1-one-line-caret-at-end
+key up
+wait 0.5
+shot h2-one-line-caret-at-start
+key down
+wait 0.5
+shot h3-one-line-caret-back-at-end
+quit

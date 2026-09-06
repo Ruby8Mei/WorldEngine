@@ -111,6 +111,27 @@ struct GuiPrefs {
     // fade, nothing that moves position moves. Off by default, because
     // the motion is the point of having built it.
     bool reduced_motion = false;
+
+    // -- the first-launch tutorial --------------------------------------
+    //
+    // A first launch is a launch with no preferences file at all, which
+    // is the one moment nobody could have set a preference yet. These
+    // three are what happens afterwards, and they are preferences in the
+    // same sense the rest are: they are about the application rather than
+    // about a message.
+    //
+    // `tutorial_done` is set when the walkthrough is finished, and once
+    // it is set nothing is ever offered again. The replay control on the
+    // settings screen still works, and always starts from the beginning.
+    bool tutorial_done = false;
+    // The part that was reached, as TutorialSection in gui_tutorial.hpp:
+    // 0 maintenance, 1 setup, 2 enciphering. What a resume goes back to.
+    int tutorial_section = 0;
+    // How many times INOP has opened with the tutorial unfinished. The
+    // operator gets the walkthrough itself, then two offers to pick it
+    // up again, then one dry line about it, then silence for good. See
+    // gui.cpp, which owns which of those a given count means.
+    int tutorial_launches = 0;
 };
 
 // The steps the zoom control offers, 50 to 250 in 25s.

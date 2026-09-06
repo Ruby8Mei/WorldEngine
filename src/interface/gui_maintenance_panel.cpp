@@ -142,6 +142,7 @@ void MaintenancePanel::open() {
     sheet_.rotor_count = std::to_string(suite("38").min_rotors);
     sheet_.path = "inop_keysheet.json";
 
+    rotors_written_ = false;
     open_dropdown_id_ = -1;
 }
 
@@ -189,6 +190,9 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
 
     row_label(x, y, std::string("How many ") + what);
     bool count_ok = parse_int(f.count, 1, 500, nullptr);
+    // The tutorial walks the rotor batch and nothing else on this screen,
+    // so only the rotor pass names its controls.
+    if (rotors) set_landmark("maint.rotor_count", ctrl_rect(x, y));
     changed |= numeric_field(ctrl_rect(x, y), f.count, in, 3, true, !count_ok);
     // Legacy wheels are fixed and historical and are never machine
     // generated, which is why the terminal menu refuses suite 26 here
@@ -240,7 +244,9 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
 
     bool valid = count_ok && prefix_ok && start_ok && notch_ok && path_ok;
     std::string caption = f.confirm ? "Overwrite " + f.path : "Generate";
-    if (button(Rect{x, y, f.confirm ? kWideBtnW : kBtnW, kBtnH}, caption, in, valid, f.confirm)) {
+    const Rect generate_r{x, y, f.confirm ? kWideBtnW : kBtnW, kBtnH};
+    if (rotors) set_landmark("maint.rotor_generate", generate_r);
+    if (button(generate_r, caption, in, valid, f.confirm)) {
         // Holding Control skips the confirmation, the same bargain the
         // quit dialog offers. It still destroys the file — it just does
         // not stop to ask first.
@@ -420,6 +426,7 @@ void MaintenancePanel::generate_wheels(bool rotors) {
     if (f.path != kRotorsPath && f.path != kReflectorsPath)
         f.status += " (only the two default files are loaded automatically at startup)";
     f.status_error = false;
+    if (rotors) rotors_written_ = true;
 }
 
 void MaintenancePanel::generate_key_sheet() {

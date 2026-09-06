@@ -38,6 +38,14 @@ public:
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
 
+    // What the tutorial needs to know about this screen, and nothing
+    // more: what is in the rotor count box, whether the rotor Generate
+    // button is currently asking its overwrite question, and whether a
+    // rotor batch has actually been written since the screen opened.
+    const std::string& rotor_count_text() const { return rotor_.count; }
+    bool rotors_confirming() const { return rotor_.confirm; }
+    bool rotors_written() const { return rotors_written_; }
+
 private:
     // The two wheel sections differ only in whether they carry a notch
     // count, so they share one set of fields and one generate path.
@@ -92,6 +100,11 @@ private:
     // layout pass, so it lags by one frame by construction.
     float scroll_ = 0.0f;
     float content_h_ = 0.0f;
+
+    // Set once a rotor batch has been written, and cleared by open() with
+    // everything else. Only the tutorial reads it: a status line says the
+    // same thing to the operator, but not in a form anything can test.
+    bool rotors_written_ = false;
 
     int open_dropdown_id_ = -1;
     bool wordmark_clicked_ = false;

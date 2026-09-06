@@ -70,9 +70,9 @@ o	First launch tutorial with "Focus Mode" (restricts clicks/Enter to intended ar
 o	Options to skip on first launch and replay later in Settings.
 •	Layout & Visual Adjustments:
 2. Core Logic & Language Processing
-•	Code Hygiene: Strip all comments from the codebase at all times during build/compilation.
+•	Code Hygiene: comments stay, and are written on purpose. The old rule here said to strip every comment during the build. That was reversed deliberately and no build step removes anything.
 🧩 The INOP Diacritic Mapping System (0-9 Base)
-Rule: "Close marks stick alike." The first digit (0-9) represents the core shape family. The second digit represents the variation (position, smoothness, quantity). Appended to the end of the message between the actual end and the marker.
+Rule: "Close marks stick alike." The first digit (0-9) represents the core shape family. The second digit represents the variation (position, smoothness, quantity). A code is written inline, right after the letter it belongs to.
 0: Meta / Base
 •	0: Capitalize
 •	01: Lowercase (reserved for future)
@@ -119,7 +119,7 @@ Rule: "Close marks stick alike." The first digit (0-9) represents the core shape
 3. Settings & Configuration
 •	Interface Language: Currently "English" (default).
 •	INOP Script: Latin (default), Greek, Cyrillic, Hebrew, Hangul.
-•	Arachnophobia Mode: "Sacred supreme setting." Default OFF. Warning: Removing this from the setting panel currently bricks the entire app.
+•	Arachnophobia Mode: "Sacred supreme setting." Default OFF. Warning: Removing this from the setting panel bricks the entire app. That is a promise from the operator, not a description of a fault in the code. Nothing hides behind the setting yet, and it stays anyway. Do not cut this line.
 4. Utilities & Quality of Life
 •	Plaintext Buffer Clear: Dedicated "Clear" button and shortcut to wipe the input field.
 •	Composite Copy Utility: Single "Copy Ciphertext + Marker" button to push both to the clipboard simultaneously.
@@ -135,18 +135,18 @@ o	Fix root cause of why they (and certain reflectors) survive wheel regeneration
 •	General future features not yet conceptualized.
 
 ROADMAP APPENDIX: UI Logic & Quality of Life
-1. Keybindings & Navigation (Finalized)
+1. Keybindings & Navigation
 
-    Shift+C: Clear text in any writable container.
-    Ctrl+C: Copy.
-    Ctrl+V: Paste.
-    Ctrl+X: Cut.
-    Ctrl+A: Highlight all text.
-    Ctrl+S: Save to current preset (NEW FEATURE).
-    Ctrl+Shift+S: Save to new preset.
-    Ctrl+Shift+C: Reserved / does nothing.
+    The list that used to sit here was wrong in six of its eight lines. It
+    named Shift+C, Ctrl+C, Ctrl+V, Ctrl+X and Ctrl+A, none of which were
+    ever built, and it called Ctrl+Shift+C reserved when it is the
+    composite copy. Only the two save shortcuts were right.
 
-2. Text Container & Input Behavior
+    The real list lives inside the application, on the settings screen
+    under Keyboard, beside the thing it describes. Read that one. It is
+    kept in one table in gui_settings_panel.cpp.
+
+2. Text Container & Input Behavior (done 2026-09-06)
 
     Full Cursor Interaction: All text containers support clicking to place the cursor (to fix specific typos inline without deleting everything).
     Selection: Click and drag to highlight specific text.
@@ -154,8 +154,6 @@ ROADMAP APPENDIX: UI Logic & Quality of Life
     Composite Copy Format: When copying ciphertext, the clipboard output is formatted as: [CIPHERTEXT]     [MARKER] (Ciphertext, exactly five spaces, then the marker).
 
 
-clicking in containers still doesnt work
-when super focused on a container operator must press escape to normal focus (use arrow keys as standard) other wise in superfocus arrowkeys move the "I" cursor around (left arrow one left, up arrow to beginning, right arrow to rightm down arrow to end)
 settings reordering
 tooltips: the mechanism ships and works, live only on the settings apply button. blocked on a list of which controls get one, operator to supply
 
@@ -170,3 +168,6 @@ diacritic transformer decisions 2026-09-06:
 - old ciphertext will not decode under the new scheme. accepted, nothing is public
 
 special characters BROKEN. these four are letters in their own right and not a base plus a mark, so the shape family table has no slot for them: ss-zet, ae, oe and turkish dotless i. today ae and oe are already spelled out and lost, while ss-zet is s0 and dotless i is i0, and the new table takes 0 for capitalise. under the transformer all four are spelled out, so they do not come back: strasse for the ss-zet word, and isik for the turkish one. turkish is the real casualty, it treats i and dotless i as different letters. the fix if wanted later is meta slots 02 to 05 beside capitalise, which would make all four round trip. parked on purpose 2026-09-06, operator to think about it
+
+punctuation does not survive enciphering. transform() drops it and the shape family table has no slot for it. the fix is the same kind of change as the four broken letters above, and is parked with them. diacritics and capital letters were fixed 2026-09-06
+phyrexian font: all three candidates checked 2026-09-06 and none can be used. phyrexia neue is free for personal use only, which does not cover bundling. phyrexian regular has no licence file anywhere and fontstruct wants a sign in to show one. mtg-phyrexian is cc0 and was bundled and seen working, then pulled back out: it has no glyph for i, l, I or J, so it cannot spell inop, settings or apply, and most of the interface came out as empty boxes. open, waiting on a font with both a clean licence and a full alphabet. dropping one into fonts/ with a matching -license.txt beside it is all it takes, the picker and the licences screen both find it on their own

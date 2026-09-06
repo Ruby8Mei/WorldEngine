@@ -48,6 +48,7 @@
 #include "gui_script.hpp"
 #include "gui_legal_panel.hpp"
 #include "gui_settings_panel.hpp"
+#include "gui_tutorial.hpp"
 #include "gui_setup_panel.hpp"
 #include "gui_widgets.hpp"
 
@@ -296,7 +297,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // before the first atlas is baked and the first frame is drawn. A
     // first run has no file and gets the defaults.
     gui::GuiPrefs prefs;
-    gui::load_prefs(prefs);
+    // No file at all is what a first launch is. It is the one moment the
+    // operator could not yet have set a preference, so nothing has to be
+    // stored to recognise it. Every launch after this writes the file on
+    // the way out, so this is true exactly once.
+    const bool first_launch = !gui::load_prefs(prefs);
     gui::palette::set_palette(prefs.theme, prefs.colourblind);
 
     if (!gui::load_fonts(prefs.font_file)) {
@@ -348,6 +353,30 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // The GUI opens on MainMenu, not Setup directly.
     enum class Screen { MainMenu, Setup, Enciphering, Settings, Maintenance, Legal };
     Screen screen = Screen::MainMenu;
+
+    // The walkthrough, and the counting that decides whether it is
+    // offered. A first launch runs it. After that the operator gets two
+    // offers to pick it up where they left off, then one dry line about
+    // it, then nothing ever again. Finishing it stops all of that at
+    // once, and the settings screen can always play it back from the
+    // start whatever the count says.
+    gui::Tutorial tutorial;
+    bool offer_resume = false;
+    bool show_tutorial_shrug = false;
+    if (!prefs.tutorial_done) {
+        ++prefs.tutorial_launches;
+        if (first_launch) {
+            tutorial.start(gui::TutorialSection::Maintenance);
+        } else if (prefs.tutorial_launches == 2 || prefs.tutorial_launches == 3) {
+            offer_resume = true;
+        } else if (prefs.tutorial_launches == 4) {
+            show_tutorial_shrug = true;
+        }
+    }
+    // Said once, on the fourth launch, and never again. Three offers were
+    // enough, and a fourth box would be nagging.
+    if (show_tutorial_shrug)
+        main_menu.set_note("The operator doesnt want a tutorial, sure...");
     // Legal is the one screen with more than one way in — the Settings
     // footer and Alt and L from anywhere — so it remembers where it came
     // from rather than always dropping the operator back into Settings.
@@ -414,7 +443,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // Modals belong to this loop rather than to a screen, because they
     // cover the whole window and the screen underneath must not react
     // while one is up. Only one is ever open.
-    enum class Modal { None, ConfirmQuit, ZoomUnsupported };
+    enum class Modal { None, ConfirmQuit, ZoomUnsupported, ResumeTutorial, StopTutorial };
     Modal modal = Modal::None;
 
     // Which modal was on screen when the previous frame finished. A modal
@@ -496,6 +525,57 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // has to be reachable from the keyboard as well, and the screen
         // behind one was just handed input with the arrows taken out.
         gui::resolve_focus(g_input);
+
+        // Everything the tutorial is allowed to know, gathered here
+        // because this loop is the only place that can see every screen at
+        // once. The tutorial itself knows nothing about rotors or ciphers
+        // -- see gui_tutorial.hpp.
+        //
+        // Only while it is running. derive_validity() below rebuilds every
+        // rotor in the setup, and the setup screen already pays for one of
+        // those per frame; a second one for nobody would be a steady cost
+        // for a feature that is switched off.
+        gui::TutorialFacts facts;
+        if (tutorial.active()) {
+            switch (screen) {
+                case Screen::MainMenu: facts.screen = gui::TutorialScreen::MainMenu; break;
+                case Screen::Maintenance: facts.screen = gui::TutorialScreen::Maintenance; break;
+                case Screen::Setup: facts.screen = gui::TutorialScreen::Setup; break;
+                case Screen::Enciphering: facts.screen = gui::TutorialScreen::Cipher; break;
+                default: facts.screen = gui::TutorialScreen::Other; break;
+            }
+            // A screen still travelling is nowhere yet. Without this, a
+            // step waiting to arrive somewhere would be satisfied by the
+            // first frame of the slide, and would then point at a control
+            // that has not finished moving.
+            if (transition.active) facts.screen = gui::TutorialScreen::Other;
+
+            facts.wheel_count = maintenance.rotor_count_text();
+            facts.wheels_confirming = maintenance.rotors_confirming();
+            facts.wheels_written = maintenance.rotors_written();
+
+            const gui::PanelState& st = panel.state();
+            const gui::FieldValidity v = gui::derive_validity(st);
+            facts.setup_fields_ok = v.all_mandatory_ok;
+            facts.setup_ready = v.all_mandatory_ok && gui::master_key_valid(st, v);
+            facts.language_code = st.language_code;
+            facts.rotor_one = st.rotor_rows[0].rotor_name;
+            facts.rotor_count = st.rotor_count;
+            for (int i = 0; i < gui::kMaxPlugSlots; ++i) facts.plugboard += gui::plug_pair(st, i);
+            facts.master_key = st.master_key_text;
+
+            facts.has_message = enciphering.has_message();
+            facts.has_cipher = enciphering.has_cipher();
+            facts.cipher_pasted = enciphering.cipher_pasted();
+            facts.marker_pasted = enciphering.marker_pasted();
+            facts.has_plain = enciphering.has_plain();
+        }
+
+        // Before the screen draws, because the gate it puts up is what the
+        // screen is about to be drawn under. A modal of its own is up, or
+        // the tutorial is not running, and the gate simply is not there.
+        if (modal == Modal::None) tutorial.begin_frame(facts, g_input);
+        else gui::clear_focus_gate();
 
         // The window belongs to this loop, so clearing it does too. It
         // used to be the first thing each screen did, which cannot work
@@ -615,6 +695,13 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 // side of the map, so it travels the same way.
                 go_to(Screen::Legal, -1.0f, 0.0f);
             }
+            // Replay always starts at the beginning, whatever was
+            // reached before, and leaves the settings the way the
+            // wordmark does. The first step is on the main menu.
+            if (settings.replay_tutorial_clicked()) {
+                tutorial.start(gui::TutorialSection::Maintenance);
+                go_to(Screen::MainMenu, 0.0f, -1.0f);
+            }
             if (settings.wordmark_clicked())
                 go_to(Screen::MainMenu, 0.0f, -1.0f);
         } else if (screen == Screen::Legal) {
@@ -669,8 +756,12 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // a capital is typed. Each screen arrives the way the main menu
         // would have brought it, so the movement still says which one it
         // is. A modal or an open list holds the keyboard and these wait.
-        if (modal == Modal::None && g_input.alt_held && !gui::dropdown_popup_open() &&
-            !gui::modal_layer_open()) {
+        // The tutorial holds the operator to one control at a time, and a
+        // shortcut that jumps to another screen would walk straight out of
+        // the step. It is one of the two keyboard paths the focus gate
+        // cannot see, because neither goes through a control.
+        if (modal == Modal::None && !tutorial.active() && g_input.alt_held &&
+            !gui::dropdown_popup_open() && !gui::modal_layer_open()) {
             const char k = g_input.key_letter;
             if (k == 'Q' && screen != Screen::Setup) {
                 panel.open();
@@ -687,6 +778,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 go_to(Screen::Legal, -1.0f, 0.0f);
             }
         }
+
+        // Over the screen it is walking, and under the tooltips and the
+        // modals, both of which are entitled to cover it.
+        if (modal == Modal::None) tutorial.draw(g_input, lw, lh);
+        if (tutorial.skip_requested()) modal = Modal::StopTutorial;
 
         // Above everything the screen drew, including any dropdown popup,
         // and below any modal, which is drawn after this and is entitled
@@ -705,9 +801,19 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // this line, so modal_layer_open() can say whether one is up, and
         // the box answers the key rather than the screen leaving out from
         // under it.
+        // And so does a text box in superfocus, which has just given the
+        // arrows back and spent the key doing it. The first Escape leaves
+        // the caret, the second leaves the screen.
         if (modal == Modal::None && g_input.key_escape && !gui::dropdown_popup_open() &&
-            !gui::modal_layer_open()) {
-            if (g_input.ctrl_held) {
+            !gui::modal_layer_open() && !gui::superfocus_ate_escape()) {
+            if (tutorial.active() && !g_input.ctrl_held) {
+                // The other keyboard path the gate cannot see. Escape
+                // during a walkthrough plainly means the walkthrough, and
+                // leaving the screen out from under a step would strand
+                // it. Control and Escape still leaves INOP outright,
+                // which is what it means everywhere else.
+                modal = Modal::StopTutorial;
+            } else if (g_input.ctrl_held) {
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
             } else if (screen != Screen::MainMenu) {
                 // A sub-screen has somewhere to go back to, so Escape means
@@ -758,6 +864,32 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 glfwSetWindowShouldClose(window, GLFW_TRUE);
             else if (choice == gui::ModalChoice::Cancel)
                 modal = Modal::None;
+        } else if (modal == Modal::ResumeTutorial) {
+            gui::ModalChoice choice = gui::modal_question(
+                static_cast<float>(lw), static_cast<float>(lh), "Carry on with the tutorial?",
+                "You left it part way through. It picks up at the start of the part you "
+                "were in.",
+                "Carry on", "Not now", modal_input);
+            if (choice == gui::ModalChoice::Confirm) {
+                modal = Modal::None;
+                tutorial.start(static_cast<gui::TutorialSection>(prefs.tutorial_section));
+            } else if (choice == gui::ModalChoice::Cancel) {
+                modal = Modal::None;
+            }
+        } else if (modal == Modal::StopTutorial) {
+            gui::ModalChoice choice = gui::modal_question(
+                static_cast<float>(lw), static_cast<float>(lh), "Stop the tutorial?",
+                "Nothing you have done is undone. Settings can play it again from the start.",
+                "Stop it", "Keep going", modal_input);
+            if (choice == gui::ModalChoice::Confirm) {
+                // Where they got to is written down, so an offer to carry
+                // on knows which part to come back to.
+                prefs.tutorial_section = static_cast<int>(tutorial.section());
+                tutorial.skip();
+                modal = Modal::None;
+            } else if (choice == gui::ModalChoice::Cancel) {
+                modal = Modal::None;
+            }
         } else if (modal == Modal::ZoomUnsupported) {
             if (gui::modal_notice(static_cast<float>(lw), static_cast<float>(lh),
                                   "That zoom is not supported yet",
@@ -765,6 +897,13 @@ GuiExit run_gui_settings(const std::string& script_path) {
                                       "% the panels do not fit the window. Zoom left unchanged.",
                                   modal_input))
                 modal = Modal::None;
+        }
+
+        // Raised on the first frame rather than before the loop, so it
+        // opens over a window the operator can already see.
+        if (offer_resume && modal == Modal::None && !transition.active) {
+            offer_resume = false;
+            modal = Modal::ResumeTutorial;
         }
 
         if (script && !script->pending_shot().empty())
@@ -800,6 +939,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // A machine setup is deliberately not included. It is message
     // material, it is saved under a name the operator chooses, and writing
     // one out unasked would leave files in setup/ that nobody named.
+    // What the tutorial reached goes out with the rest of it. Finished
+    // means finished for good: nothing is offered again, and only the
+    // replay button on the settings screen can bring it back.
+    if (tutorial.finished()) prefs.tutorial_done = true;
+    else if (tutorial.active()) prefs.tutorial_section = static_cast<int>(tutorial.section());
     gui::save_prefs(prefs);
 
     gui::render_shutdown();

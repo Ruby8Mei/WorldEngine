@@ -25,6 +25,7 @@
 #include "gui_prefs.hpp"
 #include "gui_script.hpp"
 #include "gui_setup_panel.hpp"
+#include "gui_tutorial.hpp"
 #include "gui_widgets.hpp"
 
 namespace inop {
@@ -257,6 +258,210 @@ void gui_self_test(const SelfTestCheck& check) {
         const std::string suggested = suggest_filename(st);
         check(!suggested.empty() && !config_exists(suggested),
               "the suggested filename is one that is not taken");
+    }
+    // ── the tutorial ───────────────────────────────────────────────────
+    //
+    // All of it is state, and none of it draws, so the whole walk can be
+    // taken here rather than in a window. What cannot be checked here is
+    // whether the landmarks name controls that exist -- a landmark is
+    // only set while a panel draws, and nothing draws in this suite.
+    {
+        Tutorial t;
+        t.start(TutorialSection::Maintenance);
+        check(t.active() && t.step() == 0, "the tutorial starts on its first step");
+        check(Tutorial::step_count() > 0, "the tutorial has steps");
+    }
+    {
+        // The enciphering part cannot stand on its own: it needs a
+        // machine that a restart threw away, so it resumes at the setup.
+        Tutorial t;
+        t.start(TutorialSection::Cipher);
+        check(t.section() == TutorialSection::Setup,
+              "resuming the enciphering part goes back to the setup part");
+    }
+    {
+        Tutorial t;
+        t.start(TutorialSection::Setup);
+        check(t.section() == TutorialSection::Setup, "resuming the setup part starts there");
+        t.skip();
+        check(!t.active() && !t.finished(), "a skipped tutorial is neither running nor finished");
+        check(t.section() == TutorialSection::Setup, "a skipped tutorial remembers its part");
+    }
+    {
+        // A fact moves the first step on, and a click inside the gate
+        // moves the second one, which is both ways a step can be
+        // answered. The click is judged on the frame before, so it takes
+        // two calls: one to be seen, one to be acted on.
+        Tutorial t;
+        t.start(TutorialSection::Maintenance);
+        TutorialFacts facts;
+        GuiInput quiet;
+        facts.screen = TutorialScreen::Maintenance;
+        t.begin_frame(facts, quiet);
+        check(t.step() == 1, "arriving at maintenance answers the first step");
+
+        set_landmark("maint.rotor_count", Rect{10.0f, 10.0f, 100.0f, 20.0f});
+        resolve_focus(quiet);  // ages the landmark into the frame just gone
+
+        GuiInput click;
+        click.mouse_pressed = true;
+        click.mouse_x = 20.0;
+        click.mouse_y = 15.0;
+        t.begin_frame(facts, click);
+        check(t.step() == 1, "a click is not acted on in the frame it arrives");
+        t.begin_frame(facts, quiet);
+        check(t.step() == 2, "a click inside the gate answers the step");
+    }
+    {
+        // The gate itself. A control outside it is not somewhere the
+        // focus can land, which is what stops the arrows walking out of a
+        // step, and it is put back the moment the gate comes down.
+        const Rect inside{10.0f, 10.0f, 50.0f, 20.0f};
+        const Rect outside{200.0f, 200.0f, 50.0f, 20.0f};
+        clear_focus_gate();
+        check(!focus_gate_on(), "no gate is up to begin with");
+        add_focus_gate(Rect{0.0f, 0.0f, 100.0f, 100.0f});
+        check(focus_gate_on(), "a gate goes up");
+        check(!focus_gate_blocks(inside), "a control inside the gate still answers");
+        check(focus_gate_blocks(outside), "a control outside the gate does not");
+        begin_gate_bypass();
+        check(!focus_gate_blocks(outside), "the tutorial bubble ignores the gate");
+        end_gate_bypass();
+        clear_focus_gate();
+        check(!focus_gate_blocks(outside), "the gate coming down puts everything back");
+    }
+    {
+        // The whole table, walked end to end. Every step is answered with
+        // the fact that step waits for, so a step nothing could ever
+        // satisfy shows up here as the walk stopping short rather than as
+        // an operator stuck in a window with only Skip for a way out.
+        //
+        // The landmarks are all planted first, because a gate with
+        // nothing to point at closes over the whole screen and the one
+        // step that waits for a click would have nowhere to be clicked.
+        const Rect here{10.0f, 10.0f, 100.0f, 20.0f};
+        const char* names[] = {"menu.open",         "menu.maintenance",   "screen.wordmark",
+                               "maint.rotor_count", "maint.rotor_generate", "setup.generate",
+                               "setup.language",    "setup.rotor_one",    "setup.rotor_count",
+                               "setup.rotor_grid",  "setup.plugboard",    "setup.master_key",
+                               "setup.next",        "cipher.message",     "cipher.encipher",
+                               "cipher.copy_cipher", "cipher.paste_cipher", "cipher.copy_marker",
+                               "cipher.paste_marker", "cipher.decipher"};
+        for (const char* n : names) set_landmark(n, here);
+        GuiInput quiet;
+        resolve_focus(quiet);
+
+        GuiInput click;
+        click.mouse_pressed = true;
+        click.mouse_x = 20.0;
+        click.mouse_y = 15.0;
+
+        Tutorial t;
+        t.start(TutorialSection::Maintenance);
+        TutorialFacts f;
+        int reached = 0;
+        bool walked = true;
+
+        // Each entry is what the operator does, and the step it answers.
+        // A step that will not move on leaves `walked` false and names
+        // itself in the failure.
+        auto answer = [&](const GuiInput& in) {
+            const int was = t.step();
+            t.begin_frame(f, in);
+            // A click is judged on the frame after it arrives, so it
+            // takes a second call to be acted on.
+            if (t.step() == was) t.begin_frame(f, quiet);
+            if (t.step() != was + 1) walked = false;
+            reached = t.step();
+        };
+
+        f.screen = TutorialScreen::Maintenance;      answer(quiet);   // 1
+        answer(click);                                                // 2
+        f.wheels_confirming = true;                  answer(quiet);   // 3
+        f.wheels_written = true;                     answer(quiet);   // 4
+        f.screen = TutorialScreen::MainMenu;         answer(quiet);   // 5
+        f.screen = TutorialScreen::Setup;            answer(quiet);   // 6
+        f.setup_fields_ok = true;
+        f.setup_ready = true;                        answer(quiet);   // 7
+        f.language_code = "spa";                     answer(quiet);   // 8
+        f.rotor_one = "U12";                         answer(quiet);   // 9
+        f.rotor_count = 5;                           answer(quiet);   // 10
+        f.plugboard = "ab";                          answer(quiet);   // 11
+        f.master_key = "abcdef";                     answer(quiet);   // 12
+        f.screen = TutorialScreen::Cipher;           answer(quiet);   // 13
+        f.has_message = true;                        answer(quiet);   // 14
+        f.has_cipher = true;                         answer(quiet);   // 15
+        f.cipher_pasted = true;                      answer(quiet);   // 16
+        f.marker_pasted = true;                      answer(quiet);   // 17
+        f.has_plain = true;                          answer(quiet);   // 18
+
+        check(walked, "every step of the tutorial can be answered");
+        check(reached == Tutorial::step_count() - 1,
+              "answering every step reaches the last one");
+
+        // The closing step waits for its own button and for nothing else,
+        // so no fact may run off the end of the table.
+        t.begin_frame(f, quiet);
+        check(t.step() == Tutorial::step_count() - 1, "the last step stays until it is answered");
+    }
+    {
+        // Half of the setup steps wait for the fields to be sound as well
+        // as changed. Without that, a rotor count that left empty rows
+        // would move the walk on to a master key it could never make
+        // valid, and the box that would fix it is not the one the step
+        // opened.
+        const Rect here{10.0f, 10.0f, 100.0f, 20.0f};
+        set_landmark("setup.rotor_count", here);
+        set_landmark("setup.rotor_grid", here);
+        GuiInput quiet;
+        resolve_focus(quiet);
+
+        Tutorial t;
+        t.start(TutorialSection::Setup);
+        TutorialFacts f;
+        f.screen = TutorialScreen::Setup;
+        f.setup_fields_ok = true;
+        f.setup_ready = true;
+        t.begin_frame(f, quiet);  // open INOP
+        t.begin_frame(f, quiet);  // generate setup
+        f.language_code = "spa";
+        t.begin_frame(f, quiet);  // language
+        f.rotor_one = "U12";
+        t.begin_frame(f, quiet);  // rotor one
+        const int at_count = t.step();
+        // The count changes and leaves the fields unsound, which is what
+        // asking for more rotors does.
+        f.rotor_count = 9;
+        f.setup_fields_ok = false;
+        f.setup_ready = false;
+        t.begin_frame(f, quiet);
+        check(t.step() == at_count, "a rotor count that left empty rows does not move on");
+        f.setup_fields_ok = true;
+        t.begin_frame(f, quiet);
+        check(t.step() == at_count + 1, "filling the new rows in moves it on");
+    }
+    {
+        // The three tutorial fields ride in the preferences file with
+        // everything else, and a hand edited section number cannot index
+        // past the end of the step table.
+        GuiPrefs wrote;
+        wrote.tutorial_done = true;
+        wrote.tutorial_section = 2;
+        wrote.tutorial_launches = 3;
+        const std::string path = "inop_selftest_tut.json";
+        const bool saved = save_prefs(wrote, path);
+        GuiPrefs read;
+        const bool loaded = load_prefs(read, path);
+        drop_temp(path);
+        check(saved && loaded && read == wrote, "the tutorial state survives a save and a load");
+
+        const std::string bad = write_temp("prefs_tut_bad.json",
+                                           "{\"tutorial\":{\"section\":9,\"launches\":-4}}");
+        GuiPrefs p;
+        const bool bad_loaded = load_prefs(p, bad);
+        drop_temp(bad);
+        check(bad_loaded && p.tutorial_section == 2, "a section past the end is clamped");
+        check(bad_loaded && p.tutorial_launches == 0, "a negative launch count is clamped");
     }
 }
 

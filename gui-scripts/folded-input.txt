@@ -1,0 +1,70 @@
+# Item 1 and item 2, in the real window.
+#
+# Item 1: the message box takes capitals, accented letters, punctuation
+# and digits. Capitals and accents arrive as their codes, punctuation is
+# dropped, and a digit after a mark gets the double slash in front of it.
+# What should land in the box is:
+#
+#   a0/2bc 5 de2//5
+#
+# Item 2: a typed character enters superfocus, the arrows then move the
+# caret, and Escape gives them back to the screen. A second Escape is what
+# leaves the screen.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+
+move 300 245
+wait 0.3
+click
+wait 0.2
+type Ábc, 5 dé5
+wait 0.5
+shot f1-folded-input
+
+# Enciphered, so the codes are shown going through the machine and coming
+# back the same in the check box.
+move 178 172
+wait 0.3
+click
+wait 1.0
+shot f2-folded-enciphered
+
+# Superfocus. Typing has already turned it on, so these three walk the
+# caret left inside the box rather than walking the focus off it.
+key left
+wait 0.2
+key left
+wait 0.2
+key left
+wait 0.5
+shot f3-caret-walked-left
+
+# Escape hands the arrows back without leaving the screen, so the next
+# arrow puts a focus ring on a control instead.
+key escape
+wait 0.5
+shot f4-escaped-superfocus
+key left
+wait 0.5
+shot f5-arrows-are-navigation
+
+# And the second Escape is the one that leaves.
+key escape
+wait 1.2
+shot f6-left-the-screen
+quit

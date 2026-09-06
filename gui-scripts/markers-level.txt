@@ -1,0 +1,34 @@
+# The marker boxes level with each other. On the encipher side the marker
+# now sits above the cipher, out of reading order, so that it lands on the
+# same row as the marker on the decipher side.
+#
+# Coordinates are logical, not the pixels in the screenshot. At the 110%
+# zoom in inop.gui.json the window is 1745x982 logical.
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+shot m1-markers-level-empty
+
+move 300 245
+wait 0.3
+click
+wait 0.2
+type the quick brown fox jumps over the lazy dog and every marker needs a line of its own
+wait 0.4
+move 178 172
+wait 0.3
+click
+wait 1.0
+shot m2-markers-level-filled
+quit

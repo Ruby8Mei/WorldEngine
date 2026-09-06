@@ -1,6 +1,7 @@
 #include "gui_script.hpp"
 
 #include <cctype>
+#include <cstddef>
 #include <fstream>
 #include <sstream>
 
@@ -194,7 +195,48 @@ bool InputScript::fill(GuiInput& out, float dt) {
             break;
 
         case Verb::Type:
-            for (unsigned char c : s.text) out.typed.push_back(static_cast<unsigned int>(c));
+            // GLFW hands over one codepoint per key, not one byte, so a
+            // script written in UTF-8 is decoded here rather than pushed
+            // through a byte at a time. Without this an accented letter
+            // would arrive as the two halves of itself and the field would
+            // see neither.
+            for (std::size_t i = 0; i < s.text.size();) {
+                const unsigned char c = static_cast<unsigned char>(s.text[i]);
+                unsigned int cp = c;
+                std::size_t len = 1;
+                if ((c & 0xE0) == 0xC0) {
+                    cp = c & 0x1Fu;
+                    len = 2;
+                } else if ((c & 0xF0) == 0xE0) {
+                    cp = c & 0x0Fu;
+                    len = 3;
+                } else if ((c & 0xF8) == 0xF0) {
+                    cp = c & 0x07u;
+                    len = 4;
+                }
+                // A run that is cut short or malformed costs one byte and
+                // is otherwise ignored, so a damaged script cannot walk
+                // off the end of the line.
+                if (len > 1 && i + len <= s.text.size()) {
+                    bool ok = true;
+                    for (std::size_t k = 1; k < len; ++k) {
+                        const unsigned char t = static_cast<unsigned char>(s.text[i + k]);
+                        if ((t & 0xC0) != 0x80) ok = false;
+                        else cp = (cp << 6) | (t & 0x3Fu);
+                    }
+                    if (!ok) {
+                        ++i;
+                        continue;
+                    }
+                    i += len;
+                } else if (len > 1) {
+                    ++i;
+                    continue;
+                } else {
+                    ++i;
+                }
+                out.typed.push_back(cp);
+            }
             ++at_;
             break;
 

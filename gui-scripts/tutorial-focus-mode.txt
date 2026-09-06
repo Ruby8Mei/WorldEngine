@@ -1,0 +1,31 @@
+# The first-launch tutorial, and Focus Mode with it.
+#
+# Run this with no inop.gui.json in the working directory. No preferences
+# file is what a first launch is, so the tutorial opens with the window.
+# Put the file back afterwards.
+#
+# Coordinates are LOGICAL units. With no preferences file the defaults are
+# borderless fullscreen at 100%, so on a 1920x1080 display the logical
+# screen is 1920x1080 and the main menu buttons are 220 wide, centred, in
+# a stack 256 tall: Open INOP at y 432, Terminal 486, Maintenance 540,
+# Settings 594, Exit 648.
+#
+# The point of the middle of this script is the click on Settings. It is a
+# real click on a real enabled button that the step did not open, and the
+# proof it did nothing is that the next picture is still the main menu.
+wait 1.0
+shot tut1-first-launch
+move 960 594
+wait 0.4
+click
+wait 0.8
+shot tut2-blocked-click-did-nothing
+move 960 540
+wait 0.4
+click
+wait 1.2
+shot tut3-maintenance-step
+move -5000 -5000
+wait 0.5
+shot tut4-count-box-opened
+quit

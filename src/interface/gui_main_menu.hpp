@@ -17,6 +17,12 @@ namespace gui {
 class MainMenu {
 public:
     // width/height are the current framebuffer size in pixels.
+    // A line down the left edge, level with the buttons. Empty means
+    // there is none, which is the usual state. The only thing that sets
+    // one is the tutorial counting in gui.cpp, on the launch where it
+    // stops asking.
+    void set_note(const std::string& text) { note_ = text; }
+
     void frame(const GuiInput& in, int width, int height);
 
     // True the frame "Open INOP" was clicked — caller switches to the
@@ -44,6 +50,7 @@ private:
     bool maintenance_requested_ = false;
     bool settings_requested_ = false;
     bool exit_requested_ = false;
+    std::string note_;
 };
 
 }  // namespace gui

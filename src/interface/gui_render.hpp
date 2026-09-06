@@ -120,6 +120,15 @@ bool preview_font_ready(const std::string& font_file);
 // the same way typeface_size_scale() is. Anything not on it draws latin.
 bool typeface_draws_latin(const std::string& font_file);
 
+// Whether this face can put `text` on the screen as readable letters.
+// Answers the two ways a face fails at that. It is not latin at all, per
+// typeface_draws_latin() above, or it is latin and simply has no glyph
+// for one of the characters, which stb draws as an empty box. The second
+// half is read out of the font file at bake time and needs no list.
+// Faces that have not baked yet answer yes, having said nothing either
+// way.
+bool typeface_can_spell(const std::string& font_file, const std::string& text);
+
 // Both do nothing and return 0 unless preview_font_ready() has already
 // said yes for this file.
 float preview_text_width(const std::string& font_file, const std::string& text);

@@ -249,6 +249,12 @@ const KeybindRow kKeybinds[] = {
     {"Alt+S", "Go straight to settings."},
     {"Alt+L", "Go straight to the licences."},
 
+    // The tutorial takes two keyboard paths for itself, and neither goes
+    // through a control, so neither is covered by the rows above. They
+    // are listed rather than left to be discovered.
+    {"Escape", "While the tutorial is running, stops the tutorial instead."},
+    {"Alt keys", "All four above are switched off while the tutorial is running."},
+
     {"Ctrl+F", "Jump to the search box at the top of this screen."},
     {"Ctrl+S", "On the setup screen, save over the preset named in the header."},
     {"Ctrl+Shift+S", "On the setup screen, save the setup as a new preset."},
@@ -321,6 +327,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     GuiInput in = real_in;
     wordmark_clicked_ = false;
     license_clicked_ = false;
+    replay_tutorial_clicked_ = false;
 
     // Set before anything lays a row out, because every helper below reads
     // it rather than being handed the width.
@@ -394,6 +401,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     y = draw_appearance(in, x, y);
     y = draw_audio(x, y);
     y = draw_interface(in, x, y);
+    y = draw_help(in, x, y);
     y = draw_keyboard(x, y);
 
     // Nothing drew, so the operator is looking at an empty page and is
@@ -666,6 +674,22 @@ static void keybind_row(float x, float y, const char* key, const char* meaning) 
     begin_scissor(r.x, r.y, r.w, r.h);
     label(r, meaning, false);
     end_scissor();
+}
+
+float SettingsPanel::draw_help(const GuiInput& in, float x, float y) {
+    if (!shown("Tutorial")) return y;
+    y = heading(x, y + kSectionGap, "Help");
+
+    row_label(x, y, "Tutorial", false);
+    // A button and not a toggle: it does something once rather than
+    // holding a setting, so it does not wait on Apply either. The click
+    // leaves this screen, which is why the panel only reports it.
+    if (button(Rect{x + kLabelW + kGap, y, kBtnW, kRowH}, "Replay", in, true))
+        replay_tutorial_clicked_ = true;
+    row_note(x, y, "walks you through the three working screens, from the start");
+    y += kRowH + kRowGap;
+
+    return y - kRowGap;
 }
 
 float SettingsPanel::draw_keyboard(float x, float y) {

@@ -37,12 +37,17 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
     const float step = kButtonH + kButtonGap;
 
     Rect open_inop_r{x, y, kButtonW, kButtonH};
+    // Landmarks for the tutorial, which points at controls it cannot
+    // measure for itself. See gui_widgets.hpp. Nothing else reads them
+    // and nothing changes when no tutorial is running.
+    set_landmark("menu.open", open_inop_r);
     if (button(open_inop_r, "Open INOP", in, true)) open_inop_requested_ = true;
 
     Rect terminal_r{x, y + step, kButtonW, kButtonH};
     if (button(terminal_r, "Terminal", in, true)) terminal_requested_ = true;
 
     Rect maintenance_r{x, y + 2 * step, kButtonW, kButtonH};
+    set_landmark("menu.maintenance", maintenance_r);
     if (button(maintenance_r, "Maintenance", in, true)) maintenance_requested_ = true;
 
     Rect settings_r{x, y + 3 * step, kButtonW, kButtonH};
@@ -50,6 +55,14 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
 
     Rect exit_r{x, y + 4 * step, kButtonW, kButtonH};
     if (button(exit_r, "Exit", in, true)) exit_requested_ = true;
+
+    // The note, on the left edge and level with the stack rather than
+    // under it. Dim, and nothing can be done to it: it is a remark, not a
+    // control, and it goes away by itself the next time INOP opens.
+    if (!note_.empty()) {
+        const float note_h = 20.0f;
+        label(Rect{kMargin, (h - note_h) * 0.5f, x - kMargin * 2.0f, note_h}, note_, true);
+    }
 
     end_widget_frame(in);
 }

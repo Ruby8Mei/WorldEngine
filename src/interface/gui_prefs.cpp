@@ -270,7 +270,9 @@ const int kMaxSupportedZoom = 200;
 bool operator==(const GuiPrefs& a, const GuiPrefs& b) {
     return a.theme == b.theme && a.colourblind == b.colourblind &&
            a.window_mode == b.window_mode && a.font_file == b.font_file &&
-           a.zoom_percent == b.zoom_percent && a.reduced_motion == b.reduced_motion;
+           a.zoom_percent == b.zoom_percent && a.reduced_motion == b.reduced_motion &&
+           a.tutorial_done == b.tutorial_done && a.tutorial_section == b.tutorial_section &&
+           a.tutorial_launches == b.tutorial_launches;
 }
 
 bool load_prefs(GuiPrefs& p, const std::string& path) {
@@ -310,6 +312,25 @@ bool load_prefs(GuiPrefs& p, const std::string& path) {
     if (j.contains("reduced_motion") && j["reduced_motion"].is_boolean())
         read.reduced_motion = j["reduced_motion"].get<bool>();
 
+    // Nested rather than three flat keys, because the three only mean
+    // anything together. A file written before the tutorial existed has
+    // no object here and reads as a tutorial never started, which is the
+    // truth about that file.
+    if (j.contains("tutorial") && j["tutorial"].is_object()) {
+        const nlohmann::json& t = j["tutorial"];
+        if (t.contains("done") && t["done"].is_boolean()) read.tutorial_done = t["done"].get<bool>();
+        if (t.contains("section") && t["section"].is_number_integer()) {
+            const int sec = t["section"].get<int>();
+            // Clamped rather than trusted: a hand-edited 9 would index
+            // past the end of the step table.
+            read.tutorial_section = sec < 0 ? 0 : (sec > 2 ? 2 : sec);
+        }
+        if (t.contains("launches") && t["launches"].is_number_integer()) {
+            const int n = t["launches"].get<int>();
+            read.tutorial_launches = n < 0 ? 0 : n;
+        }
+    }
+
     p = read;
     return true;
 }
@@ -322,6 +343,9 @@ bool save_prefs(const GuiPrefs& p, const std::string& path) {
     j["font"] = p.font_file;
     j["zoom"] = p.zoom_percent;
     j["reduced_motion"] = p.reduced_motion;
+    j["tutorial"] = {{"done", p.tutorial_done},
+                     {"section", p.tutorial_section},
+                     {"launches", p.tutorial_launches}};
 
     std::ofstream f(path);
     if (!f) return false;

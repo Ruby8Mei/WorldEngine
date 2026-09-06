@@ -37,6 +37,11 @@ public:
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
 
+    // True the frame the Replay button in the Help section was clicked.
+    // The caller starts the tutorial and leaves this screen; the panel
+    // itself knows nothing about what a tutorial is.
+    bool replay_tutorial_clicked() const { return replay_tutorial_clicked_; }
+
     // True the frame the footer word "License" was clicked — caller opens
     // the legal screen. The other three footer words are still plain text
     // with nothing behind them.
@@ -67,6 +72,9 @@ private:
     float draw_appearance(const GuiInput& in, float x, float y);
     float draw_audio(float x, float y);
     float draw_interface(const GuiInput& in, float x, float y);
+    // One row, above the keyboard list: the tutorial, and a button that
+    // plays it again.
+    float draw_help(const GuiInput& in, float x, float y);
     // Takes no input: every row is text and nothing on it can be
     // clicked. It is the one section that reports the interface rather
     // than changing it.
@@ -127,6 +135,7 @@ private:
     bool apply_pending_ = false;
     bool wordmark_clicked_ = false;
     bool license_clicked_ = false;
+    bool replay_tutorial_clicked_ = false;
 };
 
 }  // namespace gui

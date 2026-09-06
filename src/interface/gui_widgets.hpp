@@ -93,6 +93,57 @@ bool has_keyboard_focus(const Rect& r);
 // everywhere else in here.
 void set_keyboard_focus(const Rect& r);
 
+// Whether the keyboard focus is inside `r` right now, rather than exactly
+// on it. A tutorial step aimed at a group of boxes -- one plugboard pair
+// is two of them -- has to be able to ask about the group.
+bool keyboard_focus_inside(const Rect& r);
+
+// -- the focus gate ------------------------------------------------------
+//
+// Focus Mode, which the first-launch tutorial holds on for the length of
+// one step. While a gate is up, only the controls inside one of the gate
+// rects answer anything: a click or an Enter aimed anywhere else does
+// nothing at all, and the keyboard focus cannot walk out of the gate
+// either, because a control outside it stops registering as somewhere the
+// focus can land.
+//
+// Nothing is said about a blocked click. No nudge, no shake, no message.
+// The rest of the screen keeps drawing exactly as it did, it simply stops
+// answering, which is the whole of what the mode promises.
+//
+// A gate rect is an area and not one control, so a step can open a whole
+// row or a pair of boxes: anything drawn inside one of them is allowed.
+// Set it before the screen draws, from rects measured on the previous
+// frame -- see set_landmark() below.
+void clear_focus_gate();
+void add_focus_gate(const Rect& r);
+bool focus_gate_on();
+
+// Whether a control drawn at `r` would be shut out right now. Every
+// widget asks this for itself, so nothing in the interface needs to call
+// it; it is here so the rule can be checked without a window, where no
+// widget can be drawn to ask on its behalf.
+bool focus_gate_blocks(const Rect& r);
+
+// The tutorial's own bubble is drawn over a screen that is gated, and its
+// Skip has to work when nothing else does. Everything drawn between these
+// two ignores the gate. Nestable, like a scissor.
+void begin_gate_bypass();
+void end_gate_bypass();
+
+// -- landmarks -----------------------------------------------------------
+//
+// Where a named control was drawn. A panel calls set_landmark() as it
+// draws the control, and whoever wants to point at it reads it back on
+// the next frame with landmark(). One frame of lag, the same trade the
+// keyboard focus and the scroll regions already make, and for the same
+// reason: a frame cannot know what is on it until it has drawn.
+//
+// Names are short stable strings, "setup.next" and so on, listed in
+// gui_tutorial.cpp, which is the only thing that reads them.
+void set_landmark(const char* name, const Rect& r);
+bool landmark(const char* name, Rect* out);
+
 // -- modal layers --------------------------------------------------------
 //
 // A modal owns the keyboard while it is up. modal_question/modal_notice
@@ -184,6 +235,12 @@ int text_block(const Rect& r, const std::string& text, const GuiInput& in, float
 int text_block_lines(float box_w, const std::string& text);
 float text_block_height(int lines, bool with_caption = false);
 
+// The lines themselves, by that same rule. text_block_lines() answers how
+// many there are; this answers what they say, for a caller that draws its
+// own paragraph rather than putting one in a box -- the tutorial bubble
+// and the modals both do.
+const std::vector<std::string>& wrap_text(float box_w, const std::string& text);
+
 // Returns true if value changed this frame.
 bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput& in, bool enabled);
 
@@ -209,10 +266,20 @@ enum class CaseFold { None, ToLower, ToUpper };
 // box width instead, the rows scroll vertically to follow the caret, and a
 // click lands on whichever row it was over. Give the Rect the matching
 // height from text_field_height(), or the rows will not fit inside it.
+// `fold_marks` sends every keystroke through transform() before it is
+// written, so a key the machine alphabet has no room for arrives as the
+// code that stands in for it: a-acute becomes a2, a capital A becomes a0.
+// It is what lets a box take diacritics and capitals at all, since the
+// font atlas can draw neither and the rotors have no key for either.
+// Punctuation folds to nothing and is dropped, which is what transform()
+// does with it everywhere else. A field whose alphabet cannot hold a
+// whole code leaves this false and keeps the plain per-character
+// behaviour, `case_fold` included; with it true `case_fold` is ignored,
+// because case is carried in the code instead of being folded away.
 bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold = CaseFold::None,
                  const std::string& placeholder = "", bool center_text = false, int lines = 1,
-                 const std::string& caption = "");
+                 const std::string& caption = "", bool fold_marks = false);
 
 // The height a text_field needs to show `lines` rows. One line answers the
 // same 30 pixels every single-line field on every screen already uses, so
@@ -229,6 +296,18 @@ bool clear_focused_field();
 // Whether any writable field has the focus. A Clear button asks so that it
 // can grey itself out rather than sitting there doing nothing.
 bool a_field_has_focus();
+
+// Superfocus: the state a writable field enters the moment a character is
+// typed into it. While it holds, the arrow keys move the caret inside that
+// field instead of walking the focus between controls, and Escape is what
+// gives them back. Nothing else turns it on, so an operator crossing the
+// screen with the arrows never falls into it by accident.
+bool superfocus_active();
+
+// Whether a field answered Escape by leaving superfocus this frame. gui.cpp
+// asks after the screen has drawn, so that the first Escape leaves the
+// caret and only the second leaves the screen.
+bool superfocus_ate_escape();
 
 // Digits-only convenience wrapper over text_field.
 bool numeric_field(const Rect& r, std::string& value, const GuiInput& in, size_t max_len,
