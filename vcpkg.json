@@ -1,6 +1,6 @@
 {
   "name": "inop",
-  "version-string": "2.3.0",
+  "version-string": "2.3.1",
   "builtin-baseline": "e026127a6f1b7442c585964d4b76a51129d1a230",
-  "dependencies": ["glfw3", "stb", "nlohmann-json"]
+  "dependencies": ["glfw3", "miniaudio", "stb", "nlohmann-json"]
 }

@@ -32,11 +32,28 @@
 // alphabet. It says nothing when it drops something.
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace inop {
+
+enum class TransformValidationStatus {
+    Valid,
+    LiteralContent,
+    UnsupportedInput,
+    InvalidUtf8,
+    MalformedData,
+};
+
+struct TransformValidationResult {
+    TransformValidationStatus status = TransformValidationStatus::Valid;
+    std::size_t offset = 0;
+    std::string reason;
+
+    bool ok() const { return status == TransformValidationStatus::Valid; }
+};
 
 // Any UTF-8 text at all -> lowercase INOP-safe ASCII with the marks
 // folded to digits. Takes no language, which is the whole point of it.
@@ -45,6 +62,8 @@ namespace inop {
 // any letter outside the 487 in the table. What survives is a-z, 0-9,
 // space and the slash.
 std::string transform(const std::string& text);
+
+TransformValidationResult validate_transform_input(const std::string& text);
 
 // The way back, from folded ASCII to readable UTF-8. Nothing it does not
 // recognise is touched, so a string that never went through transform()
@@ -56,6 +75,8 @@ std::string transform(const std::string& text);
 // spelled out on the way in and stay spelled out on the way back. See
 // "special characters BROKEN" in PROGRESS.md.
 std::string untransform(const std::string& text);
+
+TransformValidationResult validate_transformed_data(const std::string& text);
 
 // Every (base letter, code) pair the scheme can produce, sorted and
 // without repeats. One list, not one per language, which is the whole

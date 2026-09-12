@@ -20,10 +20,12 @@ namespace gui {
 
 class EncipheringPanel {
 public:
+    static void self_test(const std::function<void(bool, const std::string&)>& check);
     // Builds the machine and pipeline from a completed setup. If that
     // fails the screen still opens, shows the reason and offers only the
     // way back, so the failure is read where the click happened.
     void open(const PanelState& state);
+    void set_processing_audio(std::function<void()> start, std::function<void()> stop);
 
     // width/height are the current framebuffer size in pixels.
     void frame(const GuiInput& in, int width, int height);
@@ -79,13 +81,8 @@ private:
     bool padding_ = true;
     int block_ = 16;
     CaseFold fold_ = CaseFold::ToLower;
-    // Whether the message box folds what is typed into it through
-    // transform(). True only for a suite whose alphabet has room for a
-    // whole code, which means the digits and the slash. Enigma has
-    // neither, so there it stays false and the box takes bare letters, as
-    // the real machine did.
-    bool fold_input_ = false;
-    std::string allowed_message_, allowed_cipher_, allowed_marker_;
+    bool transform_input_ = false;
+    std::string allowed_cipher_, allowed_marker_;
 
     std::string message_, cipher_out_, marker_out_, check_out_, encipher_error_;
     std::string cipher_in_, marker_in_, plain_out_, decipher_error_;
@@ -101,12 +98,6 @@ private:
     // needed to read the message back, and they are useless apart, so
     // this is the one copy that carries a whole dispatch.
     void copy_both();
-    // The Clear button both sections carry. Draws at bx,by and empties
-    // whichever writable box has the focus. It sits in the button block
-    // with the rest now, rather than in a title row on its own. No
-    // keyboard shortcut: the roadmap named Shift and C, which is how a
-    // capital C is typed, so it would eat the keystroke inside every box
-    // it is meant to serve.
     void draw_clear_button(const GuiInput& in, float bx, float by);
     static const char* kBothSeparator;
 
@@ -115,6 +106,8 @@ private:
     bool copy_pending_ = false;
     bool back_clicked_ = false;
     bool wordmark_clicked_ = false;
+    std::function<void()> processing_audio_start_;
+    std::function<void()> processing_audio_stop_;
 };
 
 }  // namespace gui

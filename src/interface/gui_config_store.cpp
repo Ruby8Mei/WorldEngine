@@ -3,15 +3,9 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
-
-#if defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+#include <system_error>
 
 #include <nlohmann/json.hpp>
 
@@ -23,9 +17,8 @@ namespace {
 const std::string kDir = "setup";
 
 void ensure_dir() {
-#if defined(_WIN32)
-    CreateDirectoryA(kDir.c_str(), nullptr);  // no-op if it already exists
-#endif
+    std::error_code ec;
+    std::filesystem::create_directories(kDir, ec);
 }
 
 // Bumped by every successful save_config()/delete_config() — lets
@@ -97,23 +90,20 @@ std::vector<SavedConfigInfo> list_configs() {
 
     ensure_dir();
     std::vector<SavedConfigInfo> out;
-#if defined(_WIN32)
-    WIN32_FIND_DATAA fd;
-    std::string pattern = kDir + "\\*.json";
-    HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                SavedConfigInfo info;
-                info.filename = fd.cFileName;
-                info.path = kDir + "\\" + fd.cFileName;
-                info.suite_code = peek_suite_code(info.path);
-                out.push_back(info);
-            }
-        } while (FindNextFileA(h, &fd));
-        FindClose(h);
+    std::error_code ec;
+    std::filesystem::directory_iterator it(kDir, ec);
+    const std::filesystem::directory_iterator end;
+    while (!ec && it != end) {
+        const std::filesystem::directory_entry& entry = *it;
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".json") {
+            SavedConfigInfo info;
+            info.filename = entry.path().filename().string();
+            info.path = entry.path().generic_string();
+            info.suite_code = peek_suite_code(info.path);
+            out.push_back(info);
+        }
+        it.increment(ec);
     }
-#endif
     std::sort(out.begin(), out.end(),
               [](const SavedConfigInfo& a, const SavedConfigInfo& b) { return a.filename < b.filename; });
     g_dir_cache = std::move(out);
@@ -150,7 +140,7 @@ std::string suggest_filename(const PanelState& state) {
 
 bool save_config(const PanelState& state, const std::string& filename, std::string* error) {
     ensure_dir();
-    std::ofstream f(kDir + "\\" + filename);
+    std::ofstream f(std::filesystem::path(kDir) / filename);
     if (!f) {
         if (error) *error = "could not open '" + filename + "' for writing";
         return false;
@@ -236,17 +226,13 @@ bool load_config(const std::string& path, PanelState& out, std::string* error) {
 }
 
 bool delete_config(const std::string& path, std::string* error) {
-#if defined(_WIN32)
-    if (DeleteFileA(path.c_str())) {
+    std::error_code ec;
+    if (std::filesystem::remove(path, ec)) {
         ++g_dir_generation;
         return true;
     }
     if (error) *error = "could not delete '" + path + "'";
     return false;
-#else
-    if (error) *error = "delete not supported on this platform";
-    return false;
-#endif
 }
 
 }  // namespace gui

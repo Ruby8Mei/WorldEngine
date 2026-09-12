@@ -285,25 +285,29 @@ Settings collect_settings() {
     if (su.notches_are_fixed) {
         std::cout << DIM << "  legacy wheels carry their historic notches" << RST << "\n";
     } else {
-        for (size_t i = 0; i < s.rotors.size(); ++i) {
-            while (true) {
-                std::string raw = ask("notches for " + s.rotors[i] + " (1-" +
-                                      std::to_string(su.max_notches) + " symbols)");
-                if (raw.empty() || raw == "-") {
-                    fail("at least one notch is required — a notch-less rotor never advances "
-                         "the next rotor, which collapses the machine's period");
-                    continue;
+        while (true) {
+            for (size_t i = 0; i < s.rotors.size(); ++i) {
+                while (true) {
+                    std::string raw = ask("notches for " + s.rotors[i] + " (1-" +
+                                          std::to_string(su.max_notches) + " symbols)");
+                    if (raw.empty() || raw == "-") {
+                        fail("at least one notch is required — a notch-less rotor never advances "
+                             "the next rotor, which collapses the machine period");
+                        continue;
+                    }
+                    std::string n = alpha.fold_case(raw);
+                    if (static_cast<int>(n.size()) > su.max_notches) {
+                        fail("at most " + std::to_string(su.max_notches)); continue;
+                    }
+                    bool ok = true;
+                    for (char c : n) if (!alpha.contains(c)) ok = false;
+                    if (!ok) { fail("symbols must come from the alphabet"); continue; }
+                    s.notches[i] = n;
+                    break;
                 }
-                std::string n = alpha.fold_case(raw);
-                if (static_cast<int>(n.size()) > su.max_notches) {
-                    fail("at most " + std::to_string(su.max_notches)); continue;
-                }
-                bool ok = true;
-                for (char c : n) if (!alpha.contains(c)) ok = false;
-                if (!ok) { fail("symbols must come from the alphabet"); continue; }
-                s.notches[i] = n;
-                break;
             }
+            if (duplicate_notch_symbols(s.notches).empty()) break;
+            fail("notch symbols cannot repeat within or across rotors; enter all notches again");
         }
     }
 
@@ -319,8 +323,13 @@ Settings collect_settings() {
         std::cout << DIM << "  (the historic reflector is fixed and does not rotate; a "
                   << (need + 1) << "-symbol key from an older sheet still loads, with the "
                   << "last symbol ignored)" << RST << "\n";
-    std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
-              << secure_string(su.alphabet, need) << RST << "\n";
+    try {
+        entropy_self_check();
+        std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
+                  << secure_string(su.alphabet, need) << RST << "\n";
+    } catch (const std::exception& e) {
+        std::cout << DIM << "  no key suggestion: " << e.what() << RST << "\n";
+    }
     while (true) {
         std::string k = alpha.fold_case(ask("key"));
         if (k.size() != need && !(su.historic_lock && k.size() == need + 1)) {
@@ -937,6 +946,67 @@ int self_test() {
         }
         check(bad_failed == 0, "transformer adversarial cases: " +
                                    std::to_string(sizeof(bad) / sizeof(bad[0])) + " rows");
+        check(untransform("A0") == "A0", "unknown uppercase transformer code stays unchanged");
+        check(transform("\xc1\x81\xc0\xb5").empty(),
+              "overlong UTF-8 letters and digits are rejected");
+
+        check(validate_transform_input("Lowercase 42\n").status ==
+                  TransformValidationStatus::Valid,
+              "supported transformer input validates explicitly");
+        check(validate_transform_input("word!").status ==
+                  TransformValidationStatus::UnsupportedInput,
+              "unsupported transformer input is reported explicitly");
+        check(validate_transform_input("\xf0\x28\x8c\x28").status ==
+                  TransformValidationStatus::InvalidUtf8,
+              "invalid UTF-8 is distinct from unsupported input");
+        check(validate_transformed_data("lowercase a0 a2 o75/4 a//42").status ==
+                  TransformValidationStatus::Valid,
+              "combined transformed data validates explicitly");
+        check(validate_transformed_data("A0").status ==
+                  TransformValidationStatus::LiteralContent,
+              "literal text resembling a control code stays distinct");
+        const std::vector<std::string> malformed_transform_data = {
+            "a/", "a/2", "a//", "a//x", "a2/", "a2/x", "a31", "a999", "a2/999"};
+        bool malformed_reported = true;
+        for (const std::string& encoded : malformed_transform_data)
+            malformed_reported = malformed_reported &&
+                                 validate_transformed_data(encoded).status ==
+                                     TransformValidationStatus::MalformedData &&
+                                 untransform(encoded) == encoded;
+        check(malformed_reported,
+              "malformed transformer markers are reported and preserved without repair");
+
+        bool declared_codes_valid = true;
+        for (const std::pair<char, std::string>& code : declared_codes()) {
+            const std::string encoded = std::string(1, code.first) + code.second;
+            declared_codes_valid = declared_codes_valid &&
+                                   validate_transformed_data(encoded).status ==
+                                       TransformValidationStatus::Valid &&
+                                   transform(untransform(encoded)) == encoded;
+        }
+        check(declared_codes_valid,
+              "every declared transformer code validates and round trips");
+
+        bool finite_code_space_valid = true;
+        const std::vector<std::pair<char, std::string>> codes = declared_codes();
+        for (char base = 'a'; base <= 'z'; ++base) {
+            for (int value = 0; value <= 99; ++value) {
+                const std::string digits = std::to_string(value);
+                bool declared = digits == "0";
+                for (const std::pair<char, std::string>& code : codes)
+                    if (code.first == base && code.second == digits) declared = true;
+                const TransformValidationStatus actual =
+                    validate_transformed_data(std::string(1, base) + digits).status;
+                finite_code_space_valid = finite_code_space_valid &&
+                                          actual == (declared ? TransformValidationStatus::Valid
+                                                             : TransformValidationStatus::MalformedData);
+            }
+        }
+        check(finite_code_space_valid,
+              "finite single modifier transformer space rejects every undeclared code");
+        const std::string deterministic_sample = "\xc3\x81rvíztűrő 1964";
+        check(transform(deterministic_sample) == transform(deterministic_sample),
+              "repeated transformer output is deterministic");
 
         // -- the round trip ----------------------------------------------
         //
@@ -1011,6 +1081,10 @@ int self_test() {
               "entropy_self_check runs before wheel generation");
         check(wheel_batch_problem(good, s38).empty(),
               "a freshly generated batch passes its own validation");
+        before = entropy_check_count();
+        GeneratedSettings setup_generated = random_setup_settings(s38);
+        check(entropy_check_count() > before && setup_generated.rotors.size() >= 5,
+              "entropy_self_check runs before GUI setup generation");
 
         // G2. A batch whose wirings are not all distinct is refused. This
         //     is the guard that DESIGN section 6 asserted was working while
@@ -1072,6 +1146,25 @@ int self_test() {
               "write_wheel_batch does write a valid batch");
         check(slurp(scratch) != baseline && slurp(scratch).find(good.wirings[0]) != std::string::npos,
               "the written file actually contains the batch");
+        std::vector<std::string> check_problems;
+        check(validate_wheel_file(scratch, &check_problems) && check_problems.empty(),
+              "read-only wheel check accepts a valid generated catalogue");
+        const std::string first_serialization = slurp(scratch);
+        check(write_wheel_batch(scratch, good, s38, /*append=*/false, &err) &&
+                  slurp(scratch) == first_serialization,
+              "the same wheel batch serializes reproducibly");
+        check(!write_wheel_batch(scratch, good, s38, /*append=*/true, &err) &&
+                  slurp(scratch) == first_serialization,
+              "append rejects duplicate wheel IDs without changing the catalogue");
+
+        WheelBatch bad_id = good;
+        bad_id.wheels[0].name.clear();
+        check(!wheel_batch_problem(bad_id, s38).empty(),
+              "generated wheel batches require every ID");
+        WheelBatch bad_notch = good;
+        bad_notch.wheels[0].notches = "aa";
+        check(!wheel_batch_problem(bad_notch, s38).empty(),
+              "generated wheel batches reject duplicate notch symbols");
 
         // G7. The wheel file is validated on LOAD, not only on generation,
         //     so a bad file left on disk cannot poison a later session.
@@ -1105,6 +1198,37 @@ int self_test() {
         }
         check(load_wheel_file(scratch, &problems) == 0 && !problems.empty(),
               "load_wheel_file rejects a file that is not JSON");
+        problems.clear();
+        {
+            std::ofstream f(scratch, std::ios::trunc);
+            f << R"({"reflectors":[{"name":"SELFTESTFIXED","wiring":")"
+              << s38.alphabet << R"("}]})" << "\n";
+        }
+        check(load_wheel_file(scratch, &problems) == 0 && !problems.empty(),
+              "load_wheel_file rejects a reflector with fixed points");
+        problems.clear();
+        {
+            std::ofstream f(scratch, std::ios::trunc);
+            f << R"({"reflectors":[{"name":"SELFTESTNONINV","wiring":")"
+              << rot38 << R"("}]})" << "\n";
+        }
+        check(load_wheel_file(scratch, &problems) == 0 && !problems.empty(),
+              "load_wheel_file rejects a reflector that is not an involution");
+        problems.clear();
+        check(!validate_wheel_document(
+                  R"({"rotors":[{"name":"DUP","wiring":"abcdefghijklmnopqrstuvwxyz0123456789#/"},{"name":"DUP","wiring":"abcdefghijklmnopqrstuvwxyz0123456789#/"}]})",
+                  &problems) && !problems.empty(),
+              "wheel validation rejects duplicate IDs before map insertion");
+        problems.clear();
+        check(!validate_wheel_document(R"({"rotors":[{"wiring":"missing-id"}]})", &problems) &&
+                  !problems.empty(),
+              "wheel validation rejects entries with missing IDs");
+        problems.clear();
+        check(!validate_wheel_document(R"({"rotors":[7]})", &problems) && !problems.empty(),
+              "wheel validation rejects malformed catalogue entries");
+        problems.clear();
+        check(!validate_wheel_document("{}", &problems) && !problems.empty(),
+              "wheel validation rejects a missing catalogue");
         std::remove(scratch.c_str());
 
         // G8. random_notches() clamps to a floor of one. A notch-less rotor
@@ -1217,6 +1341,51 @@ int self_test() {
               "a batch file over the floppy cap is refused before it is read");
     }
     {
+        Settings valid;
+        valid.suite_code = "38";
+        valid.rotors = {"R1", "R2", "R3", "R4", "R5"};
+        valid.reflector = "D";
+        valid.rings = {1, 2, 3, 4, 5};
+        valid.notches = {"a", "b", "c", "d", "e"};
+        valid.plugs = {"fg"};
+        valid.master_key = "abcde0";
+        std::string err;
+        check(validate_settings(valid, &err), "complete valid settings are accepted");
+
+        Settings changed = valid;
+        changed.rings[0] = 0;
+        check(!validate_settings(changed, &err), "ring zero is rejected before machine construction");
+        changed = valid;
+        changed.rotors[1] = changed.rotors[0];
+        check(!validate_settings(changed, &err), "duplicate rotors are rejected before machine construction");
+        changed = valid;
+        changed.rotors[0] = "MISSING";
+        check(!validate_settings(changed, &err), "unavailable rotors are rejected before machine construction");
+        changed = valid;
+        changed.reflector = "MISSING";
+        check(!validate_settings(changed, &err), "unavailable reflectors are rejected before machine construction");
+        changed = valid;
+        changed.notches[1] = "a";
+        check(!validate_settings(changed, &err), "repeated notch symbols are rejected before machine construction");
+        changed = valid;
+        changed.master_key.back() = '!';
+        check(!validate_settings(changed, &err), "master key symbols outside the alphabet are rejected");
+    }
+    {
+        const std::string path = "inop_selftest_bad_settings.json";
+        {
+            std::ofstream f(path, std::ios::binary);
+            f << R"({"suite_code":"38","reflector":"D","master_key":"abcde0","rotors":[{"name":"R1","ring":"1x","notches":"a"}],"plugboard":[]})";
+        }
+        Settings unchanged;
+        unchanged.suite_code = "sentinel";
+        std::string err;
+        const bool loaded = load_settings(unchanged, path, &err);
+        std::remove(path.c_str());
+        check(!loaded && unchanged.suite_code == "sentinel" && !err.empty(),
+              "malformed JSON ring is rejected without changing active settings");
+    }
+    {
         // A settings file has to come back as what went into it. Generated
         // rather than hand written, so this covers whatever a real
         // configuration carries rather than whatever was easy to type.
@@ -1257,12 +1426,18 @@ int self_test() {
         const bool got1 = load_keysheet_entry(path, 1, one, &e1);
         const bool got3 = load_keysheet_entry(path, 3, three, &e3);
         const bool got_past = load_keysheet_entry(path, 4, past, &ep);
+        std::vector<KeySheetEntry> loaded_entries;
+        std::string sheet_error;
+        const bool loaded_once = load_keysheet(path, loaded_entries, &sheet_error);
         std::remove(path.c_str());
 
         check(wrote && n == 3, "a written key sheet counts its own entries");
         check(got1 && got3 && one.master_key != three.master_key,
               "key sheet entry one and entry three are different entries");
         check(!got_past && !ep.empty(), "a key sheet index past the end is refused");
+        check(loaded_once && loaded_entries.size() == 3 && loaded_entries[0].valid &&
+                  loaded_entries[2].valid,
+              "a complete key sheet is parsed and validated in one operation");
     }
     {
         // The 2.2.x plain text settings file has to survive the move to
@@ -1334,7 +1509,10 @@ void run_batch_mode(const PipelineConfig& cfg) {
 
     std::string keysheet = ask("keysheet file [inop_keysheet.json]");
     if (keysheet.empty()) keysheet = "inop_keysheet.json";
-    int entries = count_keysheet_entries(keysheet);
+    std::vector<KeySheetEntry> key_entries;
+    std::string keysheet_error;
+    if (!load_keysheet(keysheet, key_entries, &keysheet_error)) { fail(keysheet_error); return; }
+    int entries = static_cast<int>(key_entries.size());
     if (entries == 0) { fail("no entries found in " + keysheet); return; }
     std::cout << DIM << "  " << entries << " config(s) available in " << keysheet << RST << "\n";
 
@@ -1366,50 +1544,60 @@ void run_batch_mode(const PipelineConfig& cfg) {
     // once here rather than rebuilt from scratch (and the file reopened and
     // rescanned) on every single iteration — Pipeline::run_pass already
     // rewinds the Machine before each encipher, so one instance is safe to
-    // reuse across repeated encrypt()/decrypt() calls. Sequential mode
-    // genuinely needs a fresh entry per message, so it streams through one
-    // open ifstream instead (entries are read in order, so this costs one
-    // forward scan total rather than one rescan-from-the-top per entry).
+    // reuse across repeated encrypt()/decrypt() calls.
     Settings fixed_settings;
     std::optional<Machine> fixed_machine;
     std::optional<Pipeline> fixed_pipe;
     if (!sequential) {
-        std::string err;
-        if (!load_keysheet_entry(keysheet, fixed_index, fixed_settings, &err)) { fail(err); return; }
-        fixed_machine.emplace(build_machine(fixed_settings));
-        fixed_pipe.emplace(*fixed_machine, cfg);
+        const KeySheetEntry& entry = key_entries[static_cast<size_t>(fixed_index - 1)];
+        if (!entry.valid) { fail(entry.error); return; }
+        fixed_settings = entry.settings;
+        try {
+            fixed_machine.emplace(build_machine(fixed_settings));
+            fixed_pipe.emplace(*fixed_machine, cfg);
+        } catch (const std::exception& e) {
+            fail(e.what());
+            return;
+        }
     }
 
     for (size_t i = 0; i < n; ++i) {
         int idx = sequential ? static_cast<int>(i) + 1 : fixed_index;
-        Settings s;
-        std::optional<Machine> seq_machine;
-        std::optional<Pipeline> seq_pipe;
-        Pipeline* pipe_ptr;
-        if (sequential) {
-            std::string err;
-            if (!load_keysheet_entry(keysheet, idx, s, &err)) { fail(err); continue; }
-            seq_machine.emplace(build_machine(s));
-            seq_pipe.emplace(*seq_machine, cfg);
-            pipe_ptr = &*seq_pipe;
-        } else {
-            s = fixed_settings;
-            pipe_ptr = &*fixed_pipe;
-        }
-        Pipeline& pipe = *pipe_ptr;
-        const Suite& su = suite(s.suite_code);
-
-        std::cout << "\n" << BOLD << "  [" << (i + 1) << "/" << n << "] config #" << idx << RST << "\n";
-
-        std::string to_send = messages[i];
-        std::string lang;
-        if (!su.historic_lock) {
-            lang = ask_language(last_lang);
-            last_lang = lang;
-            to_send = transform(messages[i]);
-        }
-
         try {
+            Settings s;
+            std::optional<Machine> seq_machine;
+            std::optional<Pipeline> seq_pipe;
+            Pipeline* pipe_ptr;
+            if (sequential) {
+                const KeySheetEntry& entry = key_entries[i];
+                if (!entry.valid) { fail(entry.error); continue; }
+                s = entry.settings;
+                seq_machine.emplace(build_machine(s));
+                seq_pipe.emplace(*seq_machine, cfg);
+                pipe_ptr = &*seq_pipe;
+            } else {
+                s = fixed_settings;
+                pipe_ptr = &*fixed_pipe;
+            }
+            Pipeline& pipe = *pipe_ptr;
+            const Suite& su = suite(s.suite_code);
+
+            std::cout << "\n" << BOLD << "  [" << (i + 1) << "/" << n << "] config #" << idx << RST << "\n";
+
+            std::string to_send = messages[i];
+            std::string lang;
+            if (!su.historic_lock) {
+                const TransformValidationResult validation = validate_transform_input(messages[i]);
+                if (!validation.ok()) {
+                    fail("message cannot be transformed at byte " +
+                         std::to_string(validation.offset + 1) + ": " + validation.reason);
+                    continue;
+                }
+                lang = ask_language(last_lang);
+                last_lang = lang;
+                to_send = transform(messages[i]);
+            }
+
             Encrypted e = pipe.encrypt(to_send);
             std::string grouped = group(e.ciphertext, su.block);
             if (!lang.empty()) grouped += "  " + lang;
@@ -1716,6 +1904,12 @@ int main(int argc, char** argv) {
         std::string to_send = line;
         std::string lang;
         if (!active.historic_lock) {
+            const TransformValidationResult validation = validate_transform_input(line);
+            if (!validation.ok()) {
+                fail("message cannot be transformed at byte " +
+                     std::to_string(validation.offset + 1) + ": " + validation.reason);
+                continue;
+            }
             lang = ask_language(last_lang);
             last_lang = lang;
             to_send = transform(line);

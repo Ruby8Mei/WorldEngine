@@ -3,6 +3,7 @@
 #include <map>
 
 #include "gui_prefs.hpp"
+#include "gui_text.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -38,8 +39,16 @@ namespace gui {
 
 namespace {
 
+struct UnicodeGlyph {
+    GLuint texture = 0;
+    float advance = 0;
+    int width = 0, height = 0, xoff = 0, yoff = 0;
+};
+
 struct FontAtlas {
     GLuint texture = 0;
+    std::vector<unsigned char> font_data;
+    mutable std::map<unsigned int, UnicodeGlyph> unicode;
     std::vector<stbtt_bakedchar> chars;  // ASCII 32..127 (96 glyphs)
     int bitmap_w = 0, bitmap_h = 0;
     float pixel_height = 0;
@@ -120,13 +129,52 @@ bool bake_font(const std::string& path, float pixel_height, FontAtlas& out, int 
     out.bitmap_w = bw;
     out.bitmap_h = bh;
     out.pixel_height = pixel_height;
+    out.font_data = std::move(ttf);
     return true;
 }
 
 // Every atlas back to its unbaked state, textures released. Shared by
 // shutdown and by a re-bake, since a re-bake that kept the old texture
 // names would leak one atlas per typeface change.
+void free_unicode(FontAtlas& atlas) {
+    for (const auto& entry : atlas.unicode)
+        if (entry.second.texture) glDeleteTextures(1, &entry.second.texture);
+    atlas.unicode.clear();
+}
+
+const UnicodeGlyph& unicode_glyph(const FontAtlas& atlas, unsigned int cp) {
+    const auto found = atlas.unicode.find(cp);
+    if (found != atlas.unicode.end()) return found->second;
+    UnicodeGlyph glyph;
+    stbtt_fontinfo info;
+    if (!atlas.font_data.empty() && stbtt_InitFont(&info, atlas.font_data.data(),
+            stbtt_GetFontOffsetForIndex(atlas.font_data.data(), 0))) {
+        const float scale = stbtt_ScaleForPixelHeight(&info, atlas.pixel_height);
+        int advance = 0;
+        stbtt_GetCodepointHMetrics(&info, static_cast<int>(cp), &advance, nullptr);
+        glyph.advance = static_cast<float>(advance) * scale;
+        unsigned char* pixels = stbtt_GetCodepointBitmap(&info, scale, scale,
+            static_cast<int>(cp), &glyph.width, &glyph.height, &glyph.xoff, &glyph.yoff);
+        if (pixels && glyph.width > 0 && glyph.height > 0) {
+            glGenTextures(1, &glyph.texture);
+            glBindTexture(GL_TEXTURE_2D, glyph.texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, glyph.width, glyph.height, 0,
+                         GL_ALPHA, GL_UNSIGNED_BYTE, pixels);
+        }
+        stbtt_FreeBitmap(pixels, nullptr);
+    }
+    return atlas.unicode.emplace(cp, glyph).first->second;
+}
+
 void free_atlases() {
+    free_unicode(g_body);
+    free_unicode(g_wordmark);
+    free_unicode(g_body_large);
     if (g_body.texture) glDeleteTextures(1, &g_body.texture);
     if (g_wordmark.texture) glDeleteTextures(1, &g_wordmark.texture);
     if (g_body_large.texture) glDeleteTextures(1, &g_body_large.texture);
@@ -435,9 +483,10 @@ float text_width(Font font, const std::string& text) {
     const FontAtlas& a = atlas_for(font);
     if (a.chars.empty()) return 0.0f;
     float w = 0.0f;
-    for (unsigned char ch : text) {
-        if (ch < 32 || ch > 127) continue;
-        w += a.chars[static_cast<size_t>(ch - 32)].xadvance;
+    for (size_t at = 0; at < text.size();) {
+        const auto cp = read_utf8(text, at);
+        if (cp < 32 || cp == 127) continue;
+        w += cp < 128 ? a.chars[cp - 32].xadvance : unicode_glyph(a, cp).advance;
     }
     return w;
 }
@@ -447,16 +496,42 @@ float text_line_height(Font font) { return atlas_for(font).pixel_height * 1.25f;
 void draw_text(Font font, float x, float baseline_y, const std::string& text, Color c) {
     const FontAtlas& a = atlas_for(font);
     if (!a.texture) return;
+    for (size_t at = 0; at < text.size();) {
+        const auto cp = read_utf8(text, at);
+        if (cp > 127) unicode_glyph(a, cp);
+    }
     glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, a.texture);
     glColor4f(c.r, c.g, c.b, c.a);
     float xpos = x, ypos = baseline_y;
+    GLuint texture = a.texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
     glBegin(GL_QUADS);
-    for (unsigned char ch : text) {
-        if (ch < 32 || ch > 127) continue;
+    for (size_t at = 0; at < text.size();) {
+        const auto cp = read_utf8(text, at);
+        if (cp < 32 || cp == 127) continue;
         stbtt_aligned_quad q;
-        stbtt_GetBakedQuad(const_cast<stbtt_bakedchar*>(a.chars.data()), a.bitmap_w, a.bitmap_h,
-                            ch - 32, &xpos, &ypos, &q, 1);
+        GLuint next_texture = a.texture;
+        if (cp < 128) {
+            stbtt_GetBakedQuad(const_cast<stbtt_bakedchar*>(a.chars.data()), a.bitmap_w,
+                               a.bitmap_h, static_cast<int>(cp - 32), &xpos, &ypos, &q, 1);
+        } else {
+            const auto& glyph = unicode_glyph(a, cp);
+            q.x0 = xpos + static_cast<float>(glyph.xoff);
+            q.y0 = ypos + static_cast<float>(glyph.yoff);
+            q.x1 = q.x0 + static_cast<float>(glyph.width);
+            q.y1 = q.y0 + static_cast<float>(glyph.height);
+            q.s0 = q.t0 = 0;
+            q.s1 = q.t1 = 1;
+            xpos += glyph.advance;
+            if (!glyph.texture) continue;
+            next_texture = glyph.texture;
+        }
+        if (next_texture != texture) {
+            glEnd();
+            texture = next_texture;
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glBegin(GL_QUADS);
+        }
         glTexCoord2f(q.s0, q.t0);
         glVertex2f(q.x0, q.y0);
         glTexCoord2f(q.s1, q.t0);

@@ -3,9 +3,12 @@
 #include "gui.hpp"
 
 #include <cstddef>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -39,6 +42,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#include "audio_manager.hpp"
 #include "gui_anim.hpp"
 #include "gui_enciphering_panel.hpp"
 #include "gui_main_menu.hpp"
@@ -55,6 +59,44 @@
 namespace inop {
 
 namespace {
+
+class FrameWaiter {
+public:
+    FrameWaiter() {
+#if defined(_WIN32)
+        constexpr DWORD high_resolution = 0x00000002;
+        timer_ = CreateWaitableTimerExW(nullptr, nullptr, high_resolution,
+                                       TIMER_MODIFY_STATE | SYNCHRONIZE);
+#endif
+    }
+
+    ~FrameWaiter() {
+#if defined(_WIN32)
+        if (timer_) CloseHandle(timer_);
+#endif
+    }
+
+    FrameWaiter(const FrameWaiter&) = delete;
+    FrameWaiter& operator=(const FrameWaiter&) = delete;
+
+    void wait(double seconds) {
+        if (seconds <= 0) return;
+#if defined(_WIN32)
+        if (timer_) {
+            LARGE_INTEGER due;
+            due.QuadPart = -static_cast<LONGLONG>(std::ceil(seconds * 10000000.0));
+            if (SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE) &&
+                WaitForSingleObject(timer_, INFINITE) == WAIT_OBJECT_0) return;
+        }
+#endif
+        std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
+    }
+
+private:
+#if defined(_WIN32)
+    HANDLE timer_ = nullptr;
+#endif
+};
 
 gui::GuiInput g_input;
 
@@ -283,8 +325,13 @@ GuiExit run_gui_settings(const std::string& script_path) {
         return leave_gui(GuiExit::Terminal);
     }
 
+    gui::set_text_clipboard([window]() {
+        const char* text = glfwGetClipboardString(window);
+        return std::string(text ? text : "");
+    }, [window](const std::string& text) {
+        glfwSetClipboardString(window, text.c_str());
+    });
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
 
     glfwSetCharCallback(window, char_callback);
     glfwSetKeyCallback(window, key_callback);
@@ -320,12 +367,20 @@ GuiExit run_gui_settings(const std::string& script_path) {
             prefs.font_file = "times.ttf";
             if (!gui::load_fonts(prefs.font_file)) {
                 std::cerr << "gui: could not load any font — closing\n";
+                gui::set_text_clipboard({}, {});
                 glfwDestroyWindow(window);
                 glfwTerminate();
                 return leave_gui(GuiExit::Terminal);
             }
         }
     }
+
+    gui::AudioManager audio;
+    audio.set_master_volume(prefs.audio_volume);
+    audio.set_muted(prefs.audio_muted);
+    audio.initialize();
+    audio.start_background_music();
+    gui::set_button_sound([&audio] { audio.play_button_click(); });
 
     // Captured before any fullscreen switch, so Windowed has somewhere to
     // come back to.
@@ -342,6 +397,8 @@ GuiExit run_gui_settings(const std::string& script_path) {
     gui::SetupPanel panel;
     gui::MainMenu main_menu;
     gui::EncipheringPanel enciphering;
+    enciphering.set_processing_audio([&audio] { audio.start_processing_cue(); },
+                                    [&audio] { audio.stop_processing_cue(); });
     gui::SettingsPanel settings;
     gui::MaintenancePanel maintenance;
     gui::LegalPanel legal;
@@ -458,6 +515,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
 
     gui::set_ui_scale(static_cast<float>(prefs.zoom_percent) / 100.0f);
     gui::set_motion_enabled(!prefs.reduced_motion);
+    glfwSwapInterval(prefs.vsync ? 1 : 0);
 
     // The frame clock every animation reads. Taken from GLFW rather than
     // from a chrono clock so that it shares an origin with the rest of the
@@ -465,8 +523,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // stalls this loop: an animation handed a quarter second of elapsed
     // time jumps instead of moving.
     double last_time = glfwGetTime();
+    FrameWaiter frame_waiter;
 
     while (!glfwWindowShouldClose(window)) {
+        const auto frame_started = std::chrono::steady_clock::now();
         glfwPollEvents();
 
         double now = glfwGetTime();
@@ -667,6 +727,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
                     gui::set_ui_scale(static_cast<float>(next.zoom_percent) / 100.0f);
 
                 gui::set_motion_enabled(!next.reduced_motion);
+                if (next.vsync != prefs.vsync || next.window_mode != prefs.window_mode)
+                    glfwSwapInterval(next.vsync ? 1 : 0);
+                audio.set_master_volume(next.audio_volume);
+                audio.set_muted(next.audio_muted);
 
                 prefs = next;
                 bool saved = gui::save_prefs(prefs);
@@ -910,6 +974,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
             save_screenshot(fb_w, fb_h, script->pending_shot());
 
         glfwSwapBuffers(window);
+        const double frame_elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - frame_started).count();
+        const double frame_delay = gui::frame_delay_seconds(prefs.frame_rate_limit, frame_elapsed);
+        if (frame_delay > 0 && !glfwWindowShouldClose(window))
+            frame_waiter.wait(frame_delay);
 
         // Edge-triggered/accumulated input has now been consumed for this
         // frame — clear it before the next poll picks up new events.
@@ -946,7 +1015,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
     else if (tutorial.active()) prefs.tutorial_section = static_cast<int>(tutorial.section());
     gui::save_prefs(prefs);
 
+    gui::set_button_sound({});
+    enciphering.set_processing_audio({}, {});
+    audio.shutdown();
     gui::render_shutdown();
+    gui::set_text_clipboard({}, {});
     glfwDestroyWindow(window);
     glfwTerminate();
     return leave_gui(exit_reason);

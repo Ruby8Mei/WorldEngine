@@ -10,10 +10,10 @@ declared mark grammar) and writes one markdown table per experiment.
 Nothing here reimplements the fold tables. The streams come from
 languages.cpp via the probe, and the grammar comes from declared_marks().
 What this script does implement is the split of a folded stream back into
-mark digits and literal digits, which is the same rule resubstitute()
-decodes with: a digit is a mark if a letter or another mark digit sits
-directly in front of it, and literal if a separator slash does. That rule
-is cross-checked in the density table against an independent count of
+mark digits and literal digits, following the grammar decoded by
+untransform(): a single slash joins mark codes on one letter and a double
+slash introduces literal digits after a letter or mark. That rule is
+cross-checked in the density table against an independent count of
 non-ASCII letters in the raw corpus.
 """
 import argparse
@@ -38,47 +38,71 @@ DIGITS = set("0123456789")
 def classify(s):
     """Tag every symbol of a folded stream.
 
-    L letter, M mark digit, D literal digit, S separator slash,
-    # space, / literal slash.
+    L letter, M mark digit, J mark join, E literal escape,
+    D literal digit, # space, / unrecognised slash.
     """
-    tags = []
-    prev = None
+    tags = ["?"] * len(s)
     n = len(s)
-    for i, c in enumerate(s):
+    i = 0
+    while i < n:
+        c = s[i]
         if c in LETTERS:
-            t = "L"
+            tags[i] = "L"
+            i += 1
+            while i < n:
+                if s[i] in DIGITS:
+                    while i < n and s[i] in DIGITS:
+                        tags[i] = "M"
+                        i += 1
+                    continue
+                if s[i] == "/" and i + 2 < n and s[i + 1] == "/" and s[i + 2] in DIGITS:
+                    tags[i] = "E"
+                    tags[i + 1] = "E"
+                    i += 2
+                    while i < n and s[i] in DIGITS:
+                        tags[i] = "D"
+                        i += 1
+                    break
+                if s[i] == "/" and i + 1 < n and s[i + 1] in DIGITS:
+                    tags[i] = "J"
+                    i += 1
+                    continue
+                break
+            continue
         elif c == "#":
-            t = "#"
-        elif c == "/":
-            t = "S" if (i + 1 < n and s[i + 1] in DIGITS and prev in ("L", "M")) else "/"
+            tags[i] = "#"
+            i += 1
         elif c in DIGITS:
-            t = "M" if prev in ("L", "M") else "D"
+            while i < n and s[i] in DIGITS:
+                tags[i] = "D"
+                i += 1
+        elif c == "/":
+            tags[i] = "/"
+            i += 1
         else:
-            t = "?"
-        tags.append(t)
-        prev = t
+            i += 1
     return tags
 
 
 def strip_stream(s, tags):
     """What INOP-38 would carry if the scheme did not exist: base letters,
-    literal digits, spaces, literal slashes. No mark digits, no separators.
+    literal digits and spaces. No mark digits, joins, or literal escapes.
     """
-    return "".join(c for c, t in zip(s, tags) if t not in ("M", "S"))
+    return "".join(c for c, t in zip(s, tags) if t not in ("M", "J", "E"))
 
 
 def mark_events(s, tags):
     """(base letter, mark code) for every marked letter. A chain such as
-    u61 is one event with code 61, not two events."""
+    o75/4 is one event with code 75/4, not two events."""
     out = []
     i = 0
     n = len(s)
     while i < n:
         if tags[i] == "L" and i + 1 < n and tags[i + 1] == "M":
             j = i + 1
-            while j < n and tags[j] == "M":
+            while j < n and tags[j] in ("M", "J"):
                 j += 1
-            out.append((s[i], int(s[i + 1:j])))
+            out.append((s[i], s[i + 1:j]))
             i = j
         else:
             i += 1
@@ -99,9 +123,10 @@ def load_probe(probe_dir):
         next(f)
         for line in f:
             lang, base, code = line.rstrip("\n").split("\t")
-            marks[lang].add((base, int(code)))
+            marks[lang].add((base, code))
+    global_marks = marks.get("GLOBAL", set())
     for lang in langs:
-        langs[lang]["marks"] = marks.get(lang, set())
+        langs[lang]["marks"] = marks.get(lang, global_marks)
     return langs, marks
 
 
@@ -135,7 +160,7 @@ def exp_density(langs, corpus_dir, out):
             "lang": lang, "n": n,
             "mark_frac": c["M"] / n if n else 0.0,
             "lit_frac": c["D"] / n if n else 0.0,
-            "sep_frac": c["S"] / n if n else 0.0,
+            "sep_frac": (c["J"] + c["E"]) / n if n else 0.0,
             "marked_letter_frac": len(ev) / letters if letters else 0.0,
             "events": len(ev),
             "raw_acc": raw_acc,
@@ -151,9 +176,9 @@ def exp_density(langs, corpus_dir, out):
         "can be large either.",
         "",
         "Source: `benchmark/corpus`, folded through the live path",
-        "`preprocess(fold_diacritics(mark_literal_digits(raw)))`. Fractions are",
+        "`preprocess(transform(raw))`. Fractions are",
         "of total folded symbols. `marked letters` is the fraction of letters",
-        "carrying at least one mark; a chain such as Pinyin `u61` counts as one",
+        "carrying at least one code; a composite such as `o75/4` counts as one",
         "marked letter, not two.",
         "",
         "`raw accented` is an independent count of non-ASCII letters in the raw",
@@ -233,15 +258,15 @@ def overlay_cost(s, tags):
     i = 0
     events = 0
     while i < n:
-        if tags[i] in ("M", "S"):
+        if tags[i] in ("M", "J", "E"):
             i += 1
             continue
         if tags[i] == "L" and i + 1 < n and tags[i + 1] == "M":
             j = i + 1
-            while j < n and tags[j] == "M":
+            while j < n and tags[j] in ("M", "J"):
                 j += 1
             gaps[pos - last if last is not None else pos] += 1
-            codes[s[i]][int(s[i + 1:j])] += 1
+            codes[s[i]][s[i + 1:j]] += 1
             last = pos
             events += 1
             i = j
@@ -294,7 +319,7 @@ def exp_predictability(langs, out):
         "symbols would measure the predictability of the language and credit it",
         "to the fold scheme.",
         "",
-        "- **folded**: `preprocess(fold_diacritics(mark_literal_digits(text)))`,",
+        "- **folded**: `preprocess(transform(text))`,",
         "  the exact stream the rotors receive.",
         "- **stripped**: the same stream with mark digits and their separators",
         "  removed, so an accented letter is carried as its bare base letter.",
@@ -416,44 +441,77 @@ def exp_predictability(langs, out):
 def grammar_rate(marks):
     """Growth rate of the language of grammar-valid INOP-38 strings.
 
-    States: one per letter, one per (letter, first mark digit), one for a
-    completed two-digit chain, one for a literal digit run, one for the
-    space symbol, one for a slash. Transfer matrix, largest eigenvalue.
+    The deterministic states retain each valid prefix of a declared code,
+    the pending slash after a letter, and literal digit runs. Transfer
+    matrix, largest eigenvalue.
     """
-    singles = defaultdict(set)
-    chains = defaultdict(set)
+    codes = defaultdict(set)
     for base, code in marks:
-        if code < 10:
-            singles[base].add(code)
+        codes[base].add(code)
+    prefixes = defaultdict(set)
+    for base, entries in codes.items():
+        prefixes[base].add("")
+        for code in entries:
+            for length in range(1, len(code) + 1):
+                prefixes[base].add(code[:length])
+
+    root = ("R",)
+    literal = ("D",)
+
+    def transitions(state):
+        out = {}
+
+        def add_general():
+            for letter in string.ascii_lowercase:
+                out[letter] = ("C", letter, "")
+            out["#"] = root
+
+        kind = state[0]
+        if kind == "R":
+            add_general()
+            for digit in string.digits:
+                out[digit] = literal
+        elif kind == "D":
+            add_general()
+            for digit in string.digits:
+                out[digit] = literal
+        elif kind == "C":
+            base, prefix = state[1], state[2]
+            complete = prefix == "" or prefix in codes[base]
+            if complete:
+                add_general()
+                out["/"] = ("P", base, prefix)
+            for symbol in string.digits:
+                candidate = prefix + symbol
+                if candidate in prefixes[base]:
+                    out[symbol] = ("C", base, candidate)
         else:
-            d, e = divmod(code, 10)
-            singles[base].add(d)
-            chains[(base, d)].add(e)
+            base, prefix = state[1], state[2]
+            out["/"] = literal
+            candidate_prefix = prefix + "/"
+            for digit in string.digits:
+                candidate = candidate_prefix + digit
+                if candidate in prefixes[base]:
+                    out[digit] = ("C", base, candidate)
+        return out
 
-    states = [("L", L) for L in string.ascii_lowercase]
-    states += [("M1", L, d) for L in string.ascii_lowercase for d in range(10)]
-    states += [("M2",), ("D",), ("H",), ("SL",)]
-    si = {s: i for i, s in enumerate(states)}
-    n = len(states)
-    M = np.zeros((n, n))
+    states = []
+    si = {}
+    pending = [root]
+    while pending:
+        state = pending.pop()
+        if state in si:
+            continue
+        si[state] = len(states)
+        states.append(state)
+        for target in transitions(state).values():
+            if target not in si:
+                pending.append(target)
 
-    for s in states:
-        i = si[s]
-        for L in string.ascii_lowercase:
-            M[i, si[("L", L)]] = 1
-        M[i, si[("H",)]] = 1
-        M[i, si[("SL",)]] = 1
-        kind = s[0]
-        if kind == "L":
-            for d in singles.get(s[1], ()):
-                M[i, si[("M1", s[1], d)]] = 1
-        elif kind == "M1":
-            if chains.get((s[1], s[2])):
-                M[i, si[("M2",)]] = len(chains[(s[1], s[2])])
-        elif kind == "SL":
-            M[i, si[("D",)]] = 10
-        elif kind in ("D", "H"):
-            M[i, si[("D",)]] = 10
+    M = np.zeros((len(states), len(states)))
+    for state in states:
+        for target in transitions(state).values():
+            M[si[state], si[target]] += 1
     ev = np.linalg.eigvals(M)
     return float(np.max(np.abs(ev)))
 
@@ -475,10 +533,10 @@ def exp_grammar(langs, out, pred_rows):
         "How much of the 38-symbol space the fold grammar forbids, and therefore",
         "how much an analyst who knows the scheme never has to search.",
         "",
-        "The grammar: a digit may appear only after a slash (literal), after a",
-        "letter `L` where `(L, digit)` is a key in the language table, or after a",
-        "first mark digit where the pair forms a declared two-digit chain.",
-        "Counted exactly with a transfer matrix over 290 states; the growth rate",
+        "The grammar follows the universal declared code table exactly. A single",
+        "slash joins mark codes on one letter, while a double slash introduces",
+        "literal digits after a letter or mark. Code prefixes and literal digit",
+        "runs are counted with a deterministic transfer matrix; the growth rate",
         "is its largest eigenvalue, and log2 of that is the per-symbol capacity",
         "of the constrained space. `bits lost` is log2(38) minus that capacity.",
         "",
@@ -515,9 +573,9 @@ def exp_grammar(langs, out, pred_rows):
         "*bigger* mark table loses *less*, because every extra key is another",
         "string the grammar permits. The largest loss belongs to the languages",
         "with no table at all, where a digit may never follow a letter without a",
-        "separator. Most of the constraint is therefore imposed by",
-        "`mark_literal_digits()`, not by any language table, and it would survive",
-        "the removal of every mark in the scheme.",
+        "double slash escape. Most of the constraint is therefore imposed by",
+        "literal digit escaping, not by any one code in the universal table, and",
+        "it would survive the removal of every mark in the scheme.",
         "",
         "**Against ordinary language redundancy, it is small.** The order-1",
         "conditional entropy of real folded text averages {h:.3f} bits per symbol,".format(
@@ -792,8 +850,9 @@ def digit_profile(events):
     actually acts on."""
     prof = defaultdict(lambda: np.zeros(10))
     for base, code in events:
-        for ch in str(code):
-            prof[base][int(ch)] += 1
+        for ch in code:
+            if ch in DIGITS:
+                prof[base][int(ch)] += 1
     return prof
 
 
@@ -826,7 +885,7 @@ def exp_permrecover(langs, out, n_perms=120, seed=99, grid=(50, 100, 200, 400, 8
         cut = int(len(s) * 0.5)
         ref_ev = mark_events(s[:cut], tags[:cut])
         ref = digit_profile(ref_ev)
-        used = sorted({int(ch) for _, code in ref_ev for ch in str(code)})
+        used = sorted({int(ch) for _, code in ref_ev for ch in code if ch in DIGITS})
         if not used or not ref_ev:
             rows.append({"lang": lang, "density": density, "events": len(ev),
                          "used": 0, "solved": 0, "mean_n": None, "median_n": None})
@@ -843,7 +902,7 @@ def exp_permrecover(langs, out, n_perms=120, seed=99, grid=(50, 100, 200, 400, 8
                     break
                 window = s[cut:cut + N]
                 wtags = tags[cut:cut + N]
-                pev = [(b, int(str(c).translate(remap))) for b, c in mark_events(window, wtags)]
+                pev = [(b, c.translate(remap)) for b, c in mark_events(window, wtags)]
                 if not pev:
                     continue
                 obs = digit_profile(pev)

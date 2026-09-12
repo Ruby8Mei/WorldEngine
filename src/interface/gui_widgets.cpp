@@ -5,7 +5,7 @@
 #include <map>
 
 #include "gui_anim.hpp"
-#include "transform.hpp"
+#include "gui_text.hpp"
 
 namespace inop {
 namespace gui {
@@ -71,9 +71,9 @@ void push_undo(FieldEdit& e, const std::string& before) {
     e.redo.clear();
 }
 
-// One codepoint as UTF-8, which is the only shape transform() reads.
 std::string utf8_of(unsigned int cp) {
     std::string out;
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return out;
     if (cp < 0x80) {
         out += static_cast<char>(cp);
     } else if (cp < 0x800) {
@@ -92,29 +92,87 @@ std::string utf8_of(unsigned int cp) {
     return out;
 }
 
-// Whether a digit written at `caret` would read back as part of a mark
-// code rather than as a number, which is what decides whether it needs the
-// double slash in front of it.
-//
-// transform() answers this from a flag it carries along as it writes. A
-// box cannot: it holds the folded text already, and folding it a second
-// time would read every code in it as fresh input. So the same question is
-// answered by walking backwards over what the box already holds, which
-// reaches the same answer from the other end.
-bool digit_reads_as_mark(const std::string& s, size_t caret) {
-    if (caret == 0 || caret > s.size()) return false;
-    // A digit lands on the end of whatever run of digits is already there,
-    // so it is that run's own beginning that decides for both of them.
-    size_t i = caret;
-    while (i > 0 && s[i - 1] >= '0' && s[i - 1] <= '9') --i;
-    if (i == 0) return false;  // digits standing at the very start are a number
-    const char p = s[i - 1];
-    if ((p >= 'a' && p <= 'z') || (p >= 'A' && p <= 'Z')) return true;
-    // A single slash stacks a second mark on the same letter, so digits
-    // after it are still marks. A double slash is the escape that says the
-    // rest is a number.
-    if (p == '/') return !(i >= 2 && s[i - 2] == '/');
-    return false;  // a space, and anything else, ends the codes
+std::function<std::string()> g_clipboard_read;
+std::function<void(const std::string&)> g_clipboard_write;
+std::function<void()> g_button_sound;
+
+bool edit_text_input(std::string& value, FieldEdit& ed, const GuiInput& in,
+                     const std::string& allowed, size_t max_len, CaseFold case_fold,
+                     bool unicode_text) {
+    ed.caret = utf8_boundary(value, ed.caret);
+    ed.anchor = utf8_boundary(value, ed.anchor);
+    const size_t lo = std::min(ed.caret, ed.anchor);
+    const size_t hi = std::max(ed.caret, ed.anchor);
+    auto replace_selection = [&](const std::string& inserted) {
+        if (value.size() - (hi - lo) + inserted.size() > max_len) return false;
+        if (lo == hi && inserted.empty()) return false;
+        push_undo(ed, value);
+        value.replace(lo, hi - lo, inserted);
+        ed.caret = ed.anchor = lo + inserted.size();
+        return true;
+    };
+    auto accept = [&](unsigned int cp) {
+        if (unicode_text) {
+            if (cp < 32 && cp != '\n' && cp != '\r' && cp != '\t') return std::string{};
+            if (cp == 127) return std::string{};
+            return utf8_of(cp);
+        }
+        if (cp == '\n' || cp == '\r' || cp == '\t') cp = ' ';
+        if (cp < 32 || cp > 126) return std::string{};
+        char c = static_cast<char>(cp);
+        if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z') c -= 'a' - 'A';
+        return allowed.find(c) == std::string::npos ? std::string{} : std::string(1, c);
+    };
+    if (in.alt_held) return false;
+    if (in.key_clear) {
+        if (value.empty()) return false;
+        push_undo(ed, value);
+        value.clear();
+        ed.caret = ed.anchor = ed.view_start = ed.first_row = 0;
+        return true;
+    }
+    if (in.ctrl_held) {
+        if (in.shift_held) return false;
+        if (in.key_letter == 'A') {
+            ed.anchor = 0;
+            ed.caret = value.size();
+        } else if ((in.key_letter == 'C' || in.key_letter == 'X') && lo != hi &&
+                   g_clipboard_write) {
+            g_clipboard_write(value.substr(lo, hi - lo));
+            if (in.key_letter == 'X') return replace_selection("");
+        } else if (in.key_letter == 'V' && g_clipboard_read) {
+            const std::string pasted = g_clipboard_read();
+            std::string inserted;
+            for (size_t at = 0; at < pasted.size();) inserted += accept(read_utf8(pasted, at));
+            if (!inserted.empty()) return replace_selection(inserted);
+        } else if (in.key_letter == 'Z' || in.key_letter == 'Y') {
+            auto& from = in.key_letter == 'Z' ? ed.undo : ed.redo;
+            auto& to = in.key_letter == 'Z' ? ed.redo : ed.undo;
+            if (!from.empty()) {
+                to.push_back(value);
+                if (to.size() > kUndoSteps) to.erase(to.begin());
+                value = from.back();
+                from.pop_back();
+                ed.caret = ed.anchor = value.size();
+                return true;
+            }
+        }
+        return false;
+    }
+    if (in.key_backspace || in.key_delete) {
+        if (lo != hi) return replace_selection("");
+        const size_t begin = in.key_backspace ? previous_utf8(value, ed.caret) : ed.caret;
+        const size_t end = in.key_backspace ? ed.caret : next_utf8(value, ed.caret);
+        if (begin == end) return false;
+        push_undo(ed, value);
+        value.erase(begin, end - begin);
+        ed.caret = ed.anchor = begin;
+        return true;
+    }
+    std::string inserted;
+    for (auto cp : in.typed) inserted += accept(cp);
+    return !inserted.empty() && replace_selection(inserted);
 }
 
 // Everything needed to draw the closed face of a dropdown: the box, the
@@ -256,7 +314,7 @@ GuiInput gate_input(const GuiInput& in, const Rect& r) {
     GuiInput out = in;
     out.mouse_pressed = out.mouse_released = out.mouse_held = false;
     out.typed.clear();
-    out.key_backspace = out.key_delete = false;
+    out.key_backspace = out.key_delete = out.key_clear = false;
     out.key_enter = out.key_escape = false;
     out.key_left = out.key_right = out.key_up = out.key_down = false;
     out.key_letter = 0;
@@ -764,6 +822,7 @@ bool button(const Rect& r, const std::string& text, const GuiInput& raw, bool en
     // Enter works the focused control whatever the pointer is doing, which
     // is the entire point of being able to reach one without a pointer.
     if (kb && in.key_enter) clicked = true;
+    if (clicked && g_button_sound) g_button_sound();
     return clicked;
 }
 
@@ -785,7 +844,9 @@ bool wordmark_button(const Rect& r, const GuiInput& raw) {
     draw_text(Font::Wordmark, r.x + 8, r.y + dip + text_line_height(Font::Wordmark) * 0.75f,
               "INOP", palette::text());
     if (kb) draw_focus_ring(r);
-    return (hovered && in.mouse_pressed) || (kb && in.key_enter);
+    const bool clicked = (hovered && in.mouse_pressed) || (kb && in.key_enter);
+    if (clicked && g_button_sound) g_button_sound();
+    return clicked;
 }
 
 namespace {
@@ -798,7 +859,10 @@ std::vector<std::string> wrap_lines_uncached(float box_w, const std::string& tex
     std::string cur;
     float cur_w = 0;
     size_t last_space = std::string::npos;
-    for (char c : text) {
+    for (size_t at = 0; at < text.size();) {
+        const size_t begin = at;
+        const auto c = read_utf8(text, at);
+        const std::string glyph = text.substr(begin, at - begin);
         if (c == '\n') {
             lines.push_back(cur);
             cur.clear();
@@ -806,7 +870,7 @@ std::vector<std::string> wrap_lines_uncached(float box_w, const std::string& tex
             last_space = std::string::npos;
             continue;
         }
-        float cw = text_width(Font::Body, std::string(1, c));
+        float cw = text_width(Font::Body, glyph);
         if (cur_w + cw > avail && !cur.empty()) {
             if (c == ' ') {
                 lines.push_back(cur);
@@ -827,7 +891,7 @@ std::vector<std::string> wrap_lines_uncached(float box_w, const std::string& tex
             }
         }
         if (c == ' ') last_space = cur.size();
-        cur.push_back(c);
+        cur += glyph;
         cur_w += cw;
     }
     if (!cur.empty() || lines.empty()) lines.push_back(cur);
@@ -895,9 +959,16 @@ std::vector<FieldRow> field_rows(float avail, const std::string& text) {
     std::vector<FieldRow> rows;
     size_t begin = 0, last_space = std::string::npos;
     float w = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
+    for (size_t i = 0; i < text.size(); i = next_utf8(text, i)) {
         const char c = text[i];
-        const float cw = text_width(Font::Body, std::string(1, c));
+        const float cw = text_width(Font::Body, text.substr(i, next_utf8(text, i) - i));
+        if (c == '\n') {
+            rows.push_back(FieldRow{begin, i + 1});
+            begin = i + 1;
+            last_space = std::string::npos;
+            w = 0;
+            continue;
+        }
         // i > begin keeps a row from coming out empty when the box is
         // narrower than one character, which would never end.
         if (w + cw > avail && i > begin) {
@@ -1054,7 +1125,7 @@ bool toggle(const Rect& r, bool& value, const std::string& text, const GuiInput&
 bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold,
                  const std::string& placeholder, bool center_text, int lines,
-                 const std::string& caption, bool fold_marks) {
+                 const std::string& caption, bool unicode_text) {
     // Focus Mode takes the typed characters out along with the clicks, so
     // a box that already held the caret when the gate went up stops
     // accepting text as well. Which box holds the caret is remembered
@@ -1088,9 +1159,9 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
     // The value can change under the caret without a keystroke -- a Load
     // rewrites a whole panel, a Clear empties one box -- so every index is
     // brought back inside the string before it is used for anything.
-    if (ed.caret > value.size()) ed.caret = value.size();
-    if (ed.anchor > value.size()) ed.anchor = value.size();
-    if (ed.view_start > value.size()) ed.view_start = value.size();
+    ed.caret = utf8_boundary(value, ed.caret);
+    ed.anchor = utf8_boundary(value, ed.anchor);
+    ed.view_start = utf8_boundary(value, ed.view_start);
 
     const float avail = r.w - 2 * PAD;
     // Centred boxes are the single character plugboard cells, which never
@@ -1106,11 +1177,11 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
         float x = text_origin();
         size_t i = ed.view_start;
         while (i < value.size()) {
-            float cw = text_width(Font::Body, std::string(1, value[i]));
+            float cw = text_width(Font::Body, value.substr(i, next_utf8(value, i) - i));
             if (mx < static_cast<double>(x) + cw * 0.5) return i;
             x += cw;
-            if (x > r.x + r.w - PAD) return i + 1;
-            ++i;
+            if (x > r.x + r.w - PAD) return next_utf8(value, i);
+            i = next_utf8(value, i);
         }
         return value.size();
     };
@@ -1145,8 +1216,8 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
         size_t ri = ed.first_row + static_cast<size_t>(vis);
         if (ri >= rows.size()) ri = rows.size() - 1;
         float x = r.x + PAD;
-        for (size_t i = rows[ri].begin; i < rows[ri].end; ++i) {
-            const float cw = text_width(Font::Body, std::string(1, value[i]));
+        for (size_t i = rows[ri].begin; i < rows[ri].end; i = next_utf8(value, i)) {
+            const float cw = text_width(Font::Body, value.substr(i, next_utf8(value, i) - i));
             if (mx < static_cast<double>(x) + cw * 0.5) return i;
             x += cw;
         }
@@ -1188,12 +1259,12 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
                 // A selection collapses to its near edge rather than
                 // stepping from the caret, which is what puts a wrong
                 // selection right in one key.
-                ed.caret = (lo != hi) ? lo : (ed.caret > 0 ? ed.caret - 1 : 0);
+                ed.caret = (lo != hi) ? lo : (previous_utf8(value, ed.caret));
                 ed.anchor = ed.caret;
             }
             if (in.key_right) {
                 ed.caret = (lo != hi) ? hi
-                                      : (ed.caret < value.size() ? ed.caret + 1 : ed.caret);
+                                      : (next_utf8(value, ed.caret));
                 ed.anchor = ed.caret;
             }
             if (in.key_up || in.key_down) {
@@ -1207,7 +1278,7 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
                     if (in.key_up && cur > 0) tgt = cur - 1;
                     if (in.key_down && cur + 1 < rows.size()) tgt = cur + 1;
                     const size_t want = rows[tgt].begin + col;
-                    ed.caret = want < rows[tgt].end ? want : rows[tgt].end;
+                    ed.caret = utf8_boundary(value, std::min(want, rows[tgt].end));
                 } else {
                     // A box of one line has no row above or below it, so
                     // the two keys mean its two ends instead.
@@ -1218,128 +1289,10 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
             }
         }
 
-        if (in.ctrl_held && in.key_letter == 'Z') {
-            if (!ed.undo.empty()) {
-                ed.redo.push_back(value);
-                if (ed.redo.size() > kUndoSteps) ed.redo.erase(ed.redo.begin());
-                value = ed.undo.back();
-                ed.undo.pop_back();
-                ed.caret = ed.anchor = value.size();
-                changed = true;
-            }
-        } else if (in.ctrl_held && in.key_letter == 'Y') {
-            if (!ed.redo.empty()) {
-                ed.undo.push_back(value);
-                if (ed.undo.size() > kUndoSteps) ed.undo.erase(ed.undo.begin());
-                value = ed.redo.back();
-                ed.redo.pop_back();
-                ed.caret = ed.anchor = value.size();
-                changed = true;
-            }
-        } else {
-            if (in.key_backspace) {
-                if (sel_lo() != sel_hi()) {
-                    push_undo(ed, value);
-                    const size_t lo = sel_lo();
-                    value.erase(lo, sel_hi() - lo);
-                    ed.caret = ed.anchor = lo;
-                    changed = true;
-                } else if (ed.caret > 0) {
-                    push_undo(ed, value);
-                    value.erase(ed.caret - 1, 1);
-                    --ed.caret;
-                    ed.anchor = ed.caret;
-                    changed = true;
-                }
-            }
-            if (in.key_delete) {
-                if (sel_lo() != sel_hi()) {
-                    push_undo(ed, value);
-                    const size_t lo = sel_lo();
-                    value.erase(lo, sel_hi() - lo);
-                    ed.caret = ed.anchor = lo;
-                    changed = true;
-                } else if (ed.caret < value.size()) {
-                    push_undo(ed, value);
-                    value.erase(ed.caret, 1);
-                    changed = true;
-                }
-            }
-            // Control is a shortcut prefix everywhere else in here, so a
-            // character that arrived with it held is not text.
-            if (!in.ctrl_held) {
-                bool first = true;
-                for (unsigned int cp : in.typed) {
-                    if (cp < 32) continue;
-                    // What this one keystroke puts in the box. Plainly the
-                    // character itself, until folding is on: then it is the
-                    // code that stands in for the character, which can be
-                    // several characters long and only means anything
-                    // whole.
-                    std::string ins;
-                    if (fold_marks) {
-                        if (cp == ' ') {
-                            // transform() trims a lone space away, having
-                            // no text to hang it on. In a box being typed
-                            // into there is text on either side of it.
-                            ins = " ";
-                        } else {
-                            // One call answers for the whole scheme: a
-                            // letter comes back as itself, a capital gains
-                            // its 0, a marked letter becomes its code, and
-                            // punctuation comes back empty and is dropped,
-                            // which is what happens to it everywhere else.
-                            ins = transform(utf8_of(cp));
-                            if (ins.empty()) continue;
-                        }
-                    } else {
-                        if (cp > 127) continue;
-                        char c = static_cast<char>(cp);
-                        if (case_fold == CaseFold::ToLower && c >= 'A' && c <= 'Z')
-                            c = static_cast<char>(c - 'A' + 'a');
-                        else if (case_fold == CaseFold::ToUpper && c >= 'a' && c <= 'z')
-                            c = static_cast<char>(c - 'a' + 'A');
-                        ins.assign(1, c);
-                    }
-                    // A code the box cannot hold every character of is not
-                    // written at all: half a code reads back as something
-                    // else entirely.
-                    bool holds = true;
-                    for (char c : ins)
-                        if (allowed.find(c) == std::string::npos) holds = false;
-                    if (!holds) continue;
-                    // One undo step for a burst of typing in the same
-                    // frame, not one per character.
-                    if (first) {
-                        push_undo(ed, value);
-                        if (sel_lo() != sel_hi()) {
-                            const size_t lo = sel_lo();
-                            value.erase(lo, sel_hi() - lo);
-                            ed.caret = ed.anchor = lo;
-                            changed = true;
-                        }
-                        first = false;
-                    }
-                    // Asked here and not above, because clearing the
-                    // selection has just changed what sits in front of the
-                    // caret, and that is the whole of the question.
-                    if (fold_marks && ins[0] >= '0' && ins[0] <= '9' &&
-                        digit_reads_as_mark(value, ed.caret)) {
-                        if (allowed.find('/') == std::string::npos) continue;
-                        ins.insert(0, "//");
-                    }
-                    if (value.size() + ins.size() > max_len) continue;
-                    value.insert(ed.caret, ins);
-                    ed.caret += ins.size();
-                    ed.anchor = ed.caret;
-                    changed = true;
-                    // Typing is the one way into superfocus, so the arrows
-                    // never change meaning without a character having gone
-                    // into the box first.
-                    g_superfocus = &value;
-                    g_superfocus_seen = true;
-                }
-            }
+        if (edit_text_input(value, ed, in, allowed, max_len, case_fold, unicode_text)) {
+            changed = true;
+            g_superfocus = &value;
+            g_superfocus_seen = true;
         }
         if (ed.caret > value.size()) ed.caret = value.size();
         if (ed.anchor > value.size()) ed.anchor = value.size();
@@ -1367,10 +1320,10 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
         while (ed.view_start < ed.caret &&
                text_width(Font::Body, value.substr(ed.view_start, ed.caret - ed.view_start)) >
                    avail)
-            ++ed.view_start;
+            ed.view_start = next_utf8(value, ed.view_start);
         // And no empty space on the right when the text would fit.
-        while (ed.view_start > 0 && text_width(Font::Body, value.substr(ed.view_start - 1)) <= avail)
-            --ed.view_start;
+        while (ed.view_start > 0 && text_width(Font::Body, value.substr(previous_utf8(value, ed.view_start))) <= avail)
+            ed.view_start = previous_utf8(value, ed.view_start);
     } else {
         ed.view_start = 0;
     }
@@ -1438,10 +1391,10 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
             float used = 0;
             size_t fit = 0;
             while (fit < shown.size()) {
-                float cw = text_width(Font::Body, std::string(1, shown[fit]));
+                float cw = text_width(Font::Body, shown.substr(fit, next_utf8(shown, fit) - fit));
                 if (used + cw > avail) break;
                 used += cw;
-                ++fit;
+                fit = next_utf8(shown, fit);
             }
             if (fit < shown.size()) shown.resize(fit);
         }
@@ -1473,13 +1426,107 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
     return changed;
 }
 
+void set_text_clipboard(std::function<std::string()> read,
+                        std::function<void(const std::string&)> write) {
+    g_clipboard_read = std::move(read);
+    g_clipboard_write = std::move(write);
+}
+
+void set_button_sound(std::function<void()> play) { g_button_sound = std::move(play); }
+
+void text_edit_self_test(const std::function<void(bool, const std::string&)>& check) {
+    std::string clipboard;
+    set_text_clipboard([&]() { return clipboard; }, [&](const std::string& text) { clipboard = text; });
+    std::string value;
+    FieldEdit ed;
+    GuiInput in;
+    in.typed = {'a', 'A', 0xE9, 0x1ED9, '5', ',', '!', 0xD55C};
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    const std::string original = "aA\xC3\xA9\xE1\xBB\x99" "5,!\xED\x95\x9C";
+    check(value == original, "GUI typing retains case, diacritics, numbers, punctuation and Unicode");
+    in = GuiInput{};
+    in.ctrl_held = true;
+    in.key_letter = 'A';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(ed.anchor == 0 && ed.caret == value.size(), "Ctrl+A selects the focused field");
+    in.key_letter = 'C';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(clipboard == original && value == original, "Ctrl+C copies the selection without editing");
+    in.key_letter = 'X';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value.empty() && clipboard == original, "Ctrl+X cuts selected Unicode text");
+    in.key_letter = 'V';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == original, "Ctrl+V restores readable Unicode text");
+    ed.anchor = 1;
+    ed.caret = 2;
+    clipboard = "Z";
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == "aZ" + original.substr(2), "Paste replaces only the selected text");
+    in.key_letter = 'Z';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == original, "Paste can be undone as one edit");
+    in = GuiInput{};
+    in.key_backspace = true;
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == original.substr(0, original.size() - 3), "Backspace removes a complete Unicode codepoint");
+    ed.caret = ed.anchor = 2;
+    in.key_backspace = false;
+    in.key_delete = true;
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == "aA\xE1\xBB\x99" "5,!", "Delete removes a complete accented character");
+    const std::string before_clear = value;
+    in = GuiInput{};
+    in.ctrl_held = true;
+    in.key_letter = 'Q';
+    in.key_clear = true;
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value.empty(), "Clear shortcut empties the focused field");
+    in.key_clear = false;
+    in.key_letter = 'Z';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == before_clear, "Clear shortcut supports undo");
+    ed.anchor = 0;
+    ed.caret = value.size();
+    clipboard = "unchanged";
+    in.key_letter = 'C';
+    in.shift_held = true;
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(clipboard == "unchanged", "Ctrl+Shift+C remains available to composite copy");
+    in.shift_held = false;
+    in.alt_held = true;
+    in.key_letter = 'X';
+    edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
+    check(value == before_clear, "Alt application shortcuts do not cut editable text");
+    in.alt_held = false;
+    in.key_letter = 'V';
+    clipboard = "12x34";
+    value.clear();
+    ed = FieldEdit{};
+    edit_text_input(value, ed, in, "0123456789", 4, CaseFold::None, false);
+    check(value == "1234", "Paste respects numeric field restrictions");
+    clipboard = "56789";
+    ed.anchor = 0;
+    edit_text_input(value, ed, in, "0123456789", 4, CaseFold::None, false);
+    check(value == "1234", "Oversized paste preserves the existing selection and value");
+    const std::string sample = "A\xC3\xA9\xE1\xBB\x99";
+    check(next_utf8(sample, 1) == 3 && previous_utf8(sample, 6) == 3 &&
+          utf8_boundary(sample, 4) == 3, "Caret indices stay on UTF-8 boundaries");
+    add_focus_gate(Rect{0, 0, 10, 10});
+    in.key_clear = true;
+    const GuiInput blocked = gate_input(in, Rect{20, 20, 10, 10});
+    edit_text_input(value, ed, blocked, "0123456789", 4, CaseFold::None, false);
+    check(value == "1234", "Focus gating blocks clipboard and Clear commands outside the active control");
+    clear_focus_gate();
+    set_text_clipboard({}, {});
+}
+
 bool clear_focused_field() {
-    if (!g_focus_field || g_focus_field->empty()) return false;
+    if (!g_focus_field) return false;
     FieldEdit& e = g_edits[g_focus_field];
-    push_undo(e, *g_focus_field);
-    g_focus_field->clear();
-    e.caret = e.anchor = e.view_start = e.first_row = 0;
-    return true;
+    GuiInput in;
+    in.key_clear = true;
+    return edit_text_input(*g_focus_field, e, in, "", 0, CaseFold::None, true);
 }
 
 bool a_field_has_focus() { return g_focus_field != nullptr; }

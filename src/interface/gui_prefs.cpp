@@ -1,14 +1,21 @@
 #include "gui_prefs.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif !defined(_WIN32)
+#include <unistd.h>
+#endif
+
 #include <nlohmann/json.hpp>
 
-// Only for effective_theme(), which has to ask Windows which way the
-// system theme is set. Nothing else in this file touches the platform.
+// Windows theme lookup, executable location, and folder opening use this
+// platform layer.
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -88,17 +95,66 @@ WindowMode window_mode_from(const std::string& s) {
     return WindowMode::Windowed;
 }
 
-std::string system_fonts_dir() {
+std::vector<std::filesystem::path> system_font_dirs() {
+#if defined(_WIN32)
     const char* windir = std::getenv("WINDIR");
-    return windir ? std::string(windir) + "\\Fonts\\" : std::string("C:\\Windows\\Fonts\\");
+    return {windir ? std::filesystem::path(windir) / "Fonts"
+                   : std::filesystem::path("C:/Windows/Fonts")};
+#elif defined(__APPLE__)
+    std::vector<std::filesystem::path> dirs{"/System/Library/Fonts", "/Library/Fonts"};
+    if (const char* user_home = std::getenv("HOME"))
+        dirs.push_back(std::filesystem::path(user_home) / "Library/Fonts");
+    return dirs;
+#else
+    std::vector<std::filesystem::path> dirs{"/usr/share/fonts", "/usr/local/share/fonts"};
+    if (const char* data_home = std::getenv("XDG_DATA_HOME"))
+        dirs.push_back(std::filesystem::path(data_home) / "fonts");
+    if (const char* user_home = std::getenv("HOME")) {
+        dirs.push_back(std::filesystem::path(user_home) / ".local/share/fonts");
+        dirs.push_back(std::filesystem::path(user_home) / ".fonts");
+    }
+    return dirs;
+#endif
 }
 
 // The faces that travel with the program rather than with the operating
-// system, because Crimson Pro and SGA are on no machine by default. The
-// path is relative, so it resolves against the working directory — the
-// same rule kPrefsPath already follows, and the same limitation with it:
-// launched from elsewhere, neither one is found.
-const char* const kBundledFontsDir = "fonts/";
+// system. The working directory is checked first, then the executable
+// directory so installed and build-tree launches find the same bundle.
+const char* const kBundledFontsDir = "fonts";
+
+std::filesystem::path executable_dir() {
+#if defined(_WIN32)
+    std::vector<wchar_t> path(32768);
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length > 0 && length < path.size())
+        return std::filesystem::path(std::wstring(path.data(), length)).parent_path();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> path(size);
+    if (_NSGetExecutablePath(path.data(), &size) == 0)
+        return std::filesystem::weakly_canonical(path.data()).parent_path();
+#else
+    std::vector<char> path(4096);
+    const ssize_t length = readlink("/proc/self/exe", path.data(), path.size() - 1);
+    if (length > 0) {
+        path[static_cast<size_t>(length)] = '\0';
+        return std::filesystem::path(path.data()).parent_path();
+    }
+#endif
+    std::error_code ec;
+    return std::filesystem::current_path(ec);
+}
+
+std::filesystem::path bundled_fonts_path() {
+    const std::filesystem::path local(kBundledFontsDir);
+    std::error_code ec;
+    if (std::filesystem::is_directory(local, ec)) return local;
+    const std::filesystem::path beside = executable_dir() / kBundledFontsDir;
+    ec.clear();
+    if (std::filesystem::is_directory(beside, ec)) return beside;
+    return local;
+}
 
 bool readable(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
@@ -108,14 +164,25 @@ bool readable(const std::string& path) {
 }  // namespace
 
 std::string font_path(const std::string& file) {
-    const std::string bundled = std::string(kBundledFontsDir) + file;
-    if (readable(bundled)) return bundled;
-    const std::string installed = system_fonts_dir() + file;
-    if (readable(installed)) return installed;
+    const std::filesystem::path bundled = bundled_fonts_path() / file;
+    if (readable(bundled.string())) return bundled.string();
+    for (const std::filesystem::path& dir : system_font_dirs()) {
+        const std::filesystem::path direct = dir / file;
+        if (readable(direct.string())) return direct.string();
+        std::error_code ec;
+        std::filesystem::recursive_directory_iterator it(
+            dir, std::filesystem::directory_options::skip_permission_denied, ec);
+        const std::filesystem::recursive_directory_iterator end;
+        while (!ec && it != end) {
+            if (it->is_regular_file(ec) && it->path().filename() == file)
+                return it->path().string();
+            it.increment(ec);
+        }
+    }
     return std::string();
 }
 
-const char* bundled_fonts_dir() { return kBundledFontsDir; }
+std::string bundled_fonts_dir() { return bundled_fonts_path().string() + std::string(1, std::filesystem::path::preferred_separator); }
 
 Theme effective_theme(Theme t) {
     if (t != Theme::System) return t;
@@ -199,7 +266,8 @@ void refresh_available_fonts() {
     // named above are exempt because their licences ship with INOP.
     g_unlicensed.clear();
     std::error_code ec;
-    std::filesystem::directory_iterator it(kBundledFontsDir, ec);
+    const std::filesystem::path bundled_dir = bundled_fonts_path();
+    std::filesystem::directory_iterator it(bundled_dir, ec);
     if (ec) return;
     for (const std::filesystem::directory_entry& e : it) {
         if (!e.is_regular_file(ec)) continue;
@@ -209,7 +277,7 @@ void refresh_available_fonts() {
         for (const FontChoice& c : g_fonts)
             if (c.file == file) already = true;
         if (already) continue;
-        if (!readable(std::string(kBundledFontsDir) + licence_filename(file))) {
+        if (!readable((bundled_dir / licence_filename(file)).string())) {
             g_unlicensed.push_back(file);
             continue;
         }
@@ -220,6 +288,7 @@ void refresh_available_fonts() {
 const std::vector<std::string>& unlicensed_font_files() { return g_unlicensed; }
 
 std::string licence_filename(const std::string& font_file) {
+    if (font_file == "CrimsonPro.ttf") return "crimsonpro-license.txt";
     return font_file.substr(0, font_file.find_last_of('.')) + "-license.txt";
 }
 
@@ -236,7 +305,7 @@ void open_bundled_fonts_folder() {
     // The folder is opened, not a file run, so there is nothing here that
     // could execute anything the operator put in it.
     std::error_code ec;
-    const std::filesystem::path dir = std::filesystem::absolute(kBundledFontsDir, ec);
+    const std::filesystem::path dir = std::filesystem::absolute(bundled_fonts_path(), ec);
     if (ec) return;
     std::filesystem::create_directories(dir, ec);
     ShellExecuteW(nullptr, L"open", dir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -267,10 +336,23 @@ const std::vector<int>& zoom_steps() {
 // control lie about what it can do.
 const int kMaxSupportedZoom = 200;
 
+const std::vector<int>& frame_rate_limits() {
+    static const std::vector<int> limits{0, 30, 60, 120, 144, 180};
+    return limits;
+}
+
+double frame_delay_seconds(int limit, double elapsed) {
+    const auto& limits = frame_rate_limits();
+    if (limit == 0 || std::find(limits.begin(), limits.end(), limit) == limits.end()) return 0;
+    return std::max(0.0, 1.0 / static_cast<double>(limit) - std::max(0.0, elapsed));
+}
+
 bool operator==(const GuiPrefs& a, const GuiPrefs& b) {
     return a.theme == b.theme && a.colourblind == b.colourblind &&
            a.window_mode == b.window_mode && a.font_file == b.font_file &&
+           a.vsync == b.vsync && a.frame_rate_limit == b.frame_rate_limit &&
            a.zoom_percent == b.zoom_percent && a.reduced_motion == b.reduced_motion &&
+           a.audio_muted == b.audio_muted && a.audio_volume == b.audio_volume &&
            a.tutorial_done == b.tutorial_done && a.tutorial_section == b.tutorial_section &&
            a.tutorial_launches == b.tutorial_launches;
 }
@@ -283,6 +365,11 @@ bool load_prefs(GuiPrefs& p, const std::string& path) {
     if (j.is_discarded() || !j.is_object()) return false;
 
     GuiPrefs read;
+    if (j.contains("vsync") && j["vsync"].is_boolean())
+        read.vsync = j["vsync"].get<bool>();
+    if (j.contains("frame_rate_limit") && j["frame_rate_limit"].is_number_integer())
+        for (int limit : frame_rate_limits())
+            if (j["frame_rate_limit"] == limit) read.frame_rate_limit = limit;
     if (j.contains("theme") && j["theme"].is_string())
         read.theme = theme_from(j["theme"].get<std::string>());
     if (j.contains("colourblind") && j["colourblind"].is_string())
@@ -312,6 +399,16 @@ bool load_prefs(GuiPrefs& p, const std::string& path) {
     if (j.contains("reduced_motion") && j["reduced_motion"].is_boolean())
         read.reduced_motion = j["reduced_motion"].get<bool>();
 
+    if (j.contains("audio") && j["audio"].is_object()) {
+        const nlohmann::json& audio = j["audio"];
+        if (audio.contains("muted") && audio["muted"].is_boolean())
+            read.audio_muted = audio["muted"].get<bool>();
+        if (audio.contains("volume") && audio["volume"].is_number_integer()) {
+            const int volume = std::clamp(audio["volume"].get<int>(), 0, 100);
+            read.audio_volume = ((volume + 5) / 10) * 10;
+        }
+    }
+
     // Nested rather than three flat keys, because the three only mean
     // anything together. A file written before the tutorial existed has
     // no object here and reads as a tutorial never started, which is the
@@ -340,9 +437,12 @@ bool save_prefs(const GuiPrefs& p, const std::string& path) {
     j["theme"] = theme_name(p.theme);
     j["colourblind"] = colourblind_name(p.colourblind);
     j["window_mode"] = window_mode_name(p.window_mode);
+    j["vsync"] = p.vsync;
+    j["frame_rate_limit"] = p.frame_rate_limit;
     j["font"] = p.font_file;
     j["zoom"] = p.zoom_percent;
     j["reduced_motion"] = p.reduced_motion;
+    j["audio"] = {{"muted", p.audio_muted}, {"volume", std::clamp(p.audio_volume, 0, 100)}};
     j["tutorial"] = {{"done", p.tutorial_done},
                      {"section", p.tutorial_section},
                      {"launches", p.tutorial_launches}};

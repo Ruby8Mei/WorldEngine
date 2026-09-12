@@ -110,11 +110,13 @@ are JSON:
 g++ -std=c++23 -O2 -Isrc/logic -Isrc/settings -Isrc/interface -o inop \
     src/logic/inop.cpp src/logic/registry.cpp src/logic/pipeline.cpp \
     src/logic/rng.cpp src/logic/generator.cpp src/logic/languages.cpp \
+    src/logic/transform.cpp \
     src/settings/settings.cpp src/interface/batch.cpp \
     src/interface/gui_stub.cpp src/interface/main.cpp             # POSIX
 g++ -std=c++23 -O2 -Isrc/logic -Isrc/settings -Isrc/interface -o INOP.exe ^
     src/logic/inop.cpp src/logic/registry.cpp src/logic/pipeline.cpp ^
     src/logic/rng.cpp src/logic/generator.cpp src/logic/languages.cpp ^
+    src/logic/transform.cpp ^
     src/settings/settings.cpp src/interface/batch.cpp ^
     src/interface/gui_stub.cpp src/interface/main.cpp -lbcrypt    # Windows
 ```
@@ -141,6 +143,12 @@ GUI-only; `nlohmann-json` is the one that is now needed everywhere. This
 stays a deliberate, bounded exception: it doesnt touch the cipher core and
 doesnt open the door to a general GUI framework. The header comment in
 `src/interface/gui.hpp` draws the boundary.
+
+Settings → Graphics provides V-Sync and a frame-rate limit of 30, 60, 120,
+144, or 180 FPS, plus Unlimited. Apply saves both choices and updates the
+running window. V-Sync is on by default; Unlimited removes the additional
+frame cap, while V-Sync can still limit presentation to the display refresh
+rate. Reset to default restores those initial choices.
 
 ### First session
 
@@ -182,25 +190,24 @@ so.
 
 A few features exist that are worth knowing about before you start:
 
-- **The numeral-suffix diacritic scheme.** INOP-38s alphabet has no accented
-  letters, so an accented character folds to its base letter plus a digit
-  naming which mark it carried. é becomes `e2`, for instance, and nothing
-  gets dropped. It supports 48 languages by name, is fully reversible, and
-  needs no special handling for Pinyin input, which already speaks this
-  scheme natively. `fold_diacritics()` and `resubstitute()` in
-  `src/logic/languages.cpp` are the entry points, and the full digit table
-  and language list are in that same file. How much the scheme costs,
-  measured against real corpus text in 48 languages, is in
-  [measurements/](measurements/).
+- **The universal text transformer.** INOP-38s alphabet has no accented
+  letters, so `transform()` folds supported Unicode letters to a base letter
+  plus one or more numeral codes. A single slash joins multiple mark codes on
+  one letter. A double slash introduces literal digits after a letter or mark.
+  Code `0` carries capitalization, so `untransform()` restores case as well as
+  marks. The transformer takes no language and lives in
+  `src/logic/transform.cpp`; `src/logic/languages.cpp` contains the supported
+  interface language list only. How much the wire grammar costs, measured
+  against real corpus text in 48 languages, is in [measurements/](measurements/).
 - **Morse, hex, binary** are not a separate input mode. INOP-38s alphabet
   already contains `0-9`, the hex letters `a-f`, and letters generally, so
   a hex string or a binary string is already valid plaintext. Try
   `deadbeef` or `101100111` at the message prompt.
-- **Human-readable decrypt.** Raw INOP-38 ciphertext decrypts back to raw
-  INOP-38 plaintext, numeral suffixes and all. `resubstitute()` turns that
-  back into normal text automatically, driven by a 3-letter language tag
-  appended unencrypted to the end of the transmitted ciphertext.
-  Capitalization is not restored, and output stays lowercase.
+- **Human-readable decrypt.** Raw INOP-38 ciphertext decrypts back to folded
+  INOP-38 plaintext, numeral suffixes and all. `untransform()` restores the
+  supported Unicode text automatically. The displayed 3-letter language tag
+  identifies interface context but does not control decoding. Capitalization
+  is restored when the folded text contains code `0`.
 - **Batch processing** (`:b`) reads a set of pasted or file-based messages
   and enciphers each one under a rotor configuration pulled from
   `inop_keysheet.json`, either one indexed entry for every message or

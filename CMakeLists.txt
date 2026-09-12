@@ -62,8 +62,12 @@ if(INOP_WITH_GUI)
   find_package(glfw3 CONFIG REQUIRED)
   find_package(OpenGL REQUIRED)
   find_path(STB_INCLUDE_DIR NAMES stb_truetype.h)
+  find_path(MINIAUDIO_INCLUDE_DIR NAMES miniaudio.h)
   if(NOT STB_INCLUDE_DIR)
     message(FATAL_ERROR "stb_truetype.h not found — is vcpkg's 'stb' port installed via the toolchain file?")
+  endif()
+  if(NOT MINIAUDIO_INCLUDE_DIR)
+    message(FATAL_ERROR "miniaudio.h not found")
   endif()
 endif()
 
@@ -85,6 +89,7 @@ set(INOP_CORE_SOURCES
 # CLI-only stub provides that symbol. No #ifdef needed in main.cpp.
 if(INOP_WITH_GUI)
   set(INOP_GUI_SOURCES
+    src/interface/audio_manager.cpp
     src/interface/gui.cpp
     src/interface/gui_render.cpp
     src/interface/gui_widgets.cpp
@@ -181,8 +186,17 @@ endforeach()
 # inop_benchmark never links the GUI — it's a headless correctness/speed
 # harness and has no reason to touch a window.
 if(INOP_WITH_GUI)
-  target_include_directories(inop PRIVATE ${STB_INCLUDE_DIR})
+  target_include_directories(inop PRIVATE ${STB_INCLUDE_DIR} ${MINIAUDIO_INCLUDE_DIR})
   target_link_libraries(inop PRIVATE glfw OpenGL::GL)
+  add_custom_command(TARGET inop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/fonts
+            $<TARGET_FILE_DIR:inop>/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/audio
+            $<TARGET_FILE_DIR:inop>/audio
+    VERBATIM
+  )
   if(MINGW)
     # Fully static, not just libgcc/libstdc++: this MinGW is the
     # posix-threads variant, so GLFW's threading support pulls in

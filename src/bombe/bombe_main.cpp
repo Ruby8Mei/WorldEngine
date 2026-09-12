@@ -459,9 +459,9 @@ int notch_sweep(size_t pool_size, size_t body_len, size_t crib_len) {
         // The same wheels every time, differing only in notch count, so the
         // sweep varies one thing.
         std::vector<Wheel> pool;
-        std::vector<std::string> ns = random_variable_notches(alpha, static_cast<int>(pool_size),
-                                                              notches);
         std::vector<Wheel> base = catalogue(su, pool_size);
+        std::vector<std::string> ns = random_variable_notches(alpha, static_cast<int>(base.size()),
+                                                              notches);
         for (size_t i = 0; i < base.size(); ++i)
             pool.push_back(Wheel{base[i].name, "", ns[i]});
 
@@ -595,19 +595,49 @@ int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::string mode;
     size_t pool = 6, body = 48, crib = 16;
+    bool arguments_ok = true;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        auto val = [&](size_t def) -> size_t {
-            return i + 1 < argc ? static_cast<size_t>(std::stoul(argv[++i])) : def;
+        auto val = [&](size_t* out) {
+            if (i + 1 >= argc) {
+                std::cerr << "missing value for " << a << "\n";
+                arguments_ok = false;
+                return;
+            }
+            const std::string text = argv[++i];
+            size_t consumed = 0;
+            try {
+                const unsigned long long parsed = std::stoull(text, &consumed);
+                if (consumed != text.size() || (!text.empty() && text[0] == '-'))
+                    throw std::invalid_argument("invalid numeric value");
+                *out = static_cast<size_t>(parsed);
+                if (static_cast<unsigned long long>(*out) != parsed)
+                    throw std::out_of_range("numeric value is too large");
+            } catch (const std::exception&) {
+                std::cerr << "invalid value for " << a << ": " << text << "\n";
+                arguments_ok = false;
+            }
         };
-        if (a == "--pool") pool = val(pool);
-        else if (a == "--body") body = val(body);
-        else if (a == "--crib") crib = val(crib);
+        if (a == "--pool") val(&pool);
+        else if (a == "--body") val(&body);
+        else if (a == "--crib") val(&crib);
         else if (a.rfind("--", 0) == 0 && mode.empty()) mode = a;
         else {
             std::cerr << "unknown argument: " << a << "\n";
             return 2;
         }
+    }
+    if (!arguments_ok) return 2;
+
+    const bool needs_pool = mode == "--inop-ablation" || mode == "--notch-sweep" ||
+                            mode == "--transposition" || mode == "--crash-elimination";
+    if (needs_pool && pool < 3) {
+        std::cerr << "bombe: --pool must be at least 3 for this mode\n";
+        return 2;
+    }
+    if (needs_pool && crib > body) {
+        std::cerr << "bombe: --crib cannot exceed --body for this mode\n";
+        return 2;
     }
 
     try {
@@ -623,7 +653,7 @@ int main(int argc, char** argv) {
     }
 
     std::cerr << "usage: inop_bombe --self-check | --legacy-phase1 | --inop-ablation"
-                 " | --notch-sweep | --transposition\n"
+                  " | --notch-sweep | --transposition | --crash-elimination\n"
                  "       [--pool N] [--body N] [--crib N]\n";
     return 2;
 }

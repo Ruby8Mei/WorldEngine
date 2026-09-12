@@ -3,16 +3,39 @@
 #include <algorithm>
 #include <exception>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "languages.hpp"
 #include "registry.hpp"
 #include "transform.hpp"
+#include "gui_text.hpp"
 
 namespace inop {
 namespace gui {
 
 namespace {
+
+class ProcessingAudioGuard {
+public:
+    ProcessingAudioGuard(const std::function<void()>& start, const std::function<void()>& stop)
+        : stop_(stop) {
+        try {
+            if (start) start();
+        } catch (...) {
+        }
+    }
+
+    ~ProcessingAudioGuard() {
+        try {
+            if (stop_) stop_();
+        } catch (...) {
+        }
+    }
+
+private:
+    std::function<void()> stop_;
+};
 
 constexpr float kMargin = 16.0f;
 constexpr float kBtnW = 150.0f;
@@ -71,6 +94,12 @@ std::vector<std::string> split_spaces(const std::string& s) {
 
 }  // namespace
 
+void EncipheringPanel::set_processing_audio(std::function<void()> start,
+                                            std::function<void()> stop) {
+    processing_audio_start_ = std::move(start);
+    processing_audio_stop_ = std::move(stop);
+}
+
 void EncipheringPanel::open(const PanelState& state) {
     // Pipeline holds a reference to the Machine, so it goes first.
     pipeline_.reset();
@@ -102,22 +131,9 @@ void EncipheringPanel::open(const PanelState& state) {
 
     Alphabet alpha(su.alphabet);
     fold_ = alpha.uses_uppercase() ? CaseFold::ToUpper : CaseFold::ToLower;
-    // A typed space becomes SPACE_SUB in preprocess(), and a typed
-    // SPACE_SUB is dropped there, so the message field takes the one and
-    // not the other. Ciphertext carries SPACE_SUB as an ordinary symbol
-    // and spaces as group separators; a marker is bare symbols.
-    allowed_message_.clear();
-    for (char c : su.alphabet)
-        if (c != SPACE_SUB) allowed_message_.push_back(c);
-    allowed_message_.push_back(' ');
     allowed_cipher_ = su.alphabet + " ";
     allowed_marker_ = su.alphabet;
-    // A folded code is letters, digits and the slash. A suite missing any
-    // of those cannot carry one, so its message box is left taking bare
-    // letters rather than writing half a code into it.
-    fold_input_ = su.alphabet.find('/') != std::string::npos;
-    for (char d = '0'; d <= '9'; ++d)
-        if (su.alphabet.find(d) == std::string::npos) fold_input_ = false;
+    transform_input_ = !su.historic_lock;
 
     std::string rotors;
     for (int i = 0; i < state.rotor_count; ++i)
@@ -167,11 +183,13 @@ void EncipheringPanel::deliver_paste(const std::string& text) {
     PasteTarget target = paste_target_;
     paste_target_ = PasteTarget::None;
     switch (target) {
-        // Pasted text goes through the same transformer the keyboard
-        // does, and in one call, which is the shape transform() is at its
-        // best in: it sees the whole run and gets every escape right.
         case PasteTarget::Message:
-            message_ = filtered(fold_input_ ? transform(text) : text, allowed_message_);
+            if (text.size() > kFieldCap) {
+                encipher_error_ = "Paste exceeds the message limit. The message was kept unchanged.";
+            } else {
+                message_ = text;
+                encipher_error_.clear();
+            }
             break;
         case PasteTarget::Ciphertext: cipher_in_ = filtered(text, allowed_cipher_); break;
         case PasteTarget::Marker:     marker_in_ = filtered(text, allowed_marker_); break;
@@ -185,11 +203,14 @@ void EncipheringPanel::on_encipher() {
     marker_out_.clear();
     check_out_.clear();
     if (!pipeline_ || message_.empty()) return;
+    ProcessingAudioGuard audio(processing_audio_start_, processing_audio_stop_);
     try {
-        Encrypted e = pipeline_->encrypt(message_);
+        const std::string prepared = prepare_gui_plaintext(message_, transform_input_);
+        Encrypted e = pipeline_->encrypt(prepared);
         cipher_out_ = group(e.ciphertext, block_);
         marker_out_ = e.marker;
-        check_out_ = pipeline_->decrypt(e.ciphertext, e.marker);
+        const std::string decoded = pipeline_->decrypt(e.ciphertext, e.marker);
+        check_out_ = transform_input_ ? untransform(decoded) : decoded;
     } catch (const std::exception& e) {
         encipher_error_ = e.what();
     }
@@ -224,8 +245,10 @@ void EncipheringPanel::on_decipher() {
         marker = marker_in_;
     }
 
+    ProcessingAudioGuard audio(processing_audio_start_, processing_audio_stop_);
     try {
-        plain_out_ = pipeline_->decrypt(clean, marker);
+        const std::string decoded = pipeline_->decrypt(clean, marker);
+        plain_out_ = transform_input_ ? untransform(decoded) : decoded;
     } catch (const std::exception& e) {
         decipher_error_ = e.what();
     }
@@ -233,9 +256,74 @@ void EncipheringPanel::on_decipher() {
 
 const char* EncipheringPanel::kBothSeparator = "     ";
 
+void EncipheringPanel::self_test(const std::function<void(bool, const std::string&)>& check) {
+    PanelState state;
+    state.reflector_name = "D";
+    state.master_key_text = "aaaaaa";
+    for (int i = 0; i < state.rotor_count; ++i) {
+        state.rotor_rows[i].rotor_name = "R" + std::to_string(i + 1);
+        state.rotor_rows[i].ring_text = "1";
+        state.rotor_rows[i].notch_box[0] = std::string(1, static_cast<char>('a' + i));
+    }
+    EncipheringPanel panel;
+    int audio_starts = 0;
+    int audio_stops = 0;
+    panel.set_processing_audio([&audio_starts] { ++audio_starts; },
+                               [&audio_stops] { ++audio_stops; });
+    panel.open(state);
+    check(panel.open_error_.empty(), "GUI plaintext regression machine opens");
+    if (!panel.pipeline_) return;
+    const std::string original = "Hello \xC3\x81" "bc \xE1\xBB\x99" "5 a0 123";
+    panel.paste_target_ = PasteTarget::Message;
+    panel.deliver_paste(original);
+    panel.on_encipher();
+    check(panel.message_ == original && panel.encipher_error_.empty() &&
+          panel.check_out_ == original, "Encipher keeps readable input and untransforms the round-trip check");
+    check(audio_starts == 1 && audio_stops == 1,
+          "processing audio stops after successful enciphering");
+    panel.cipher_in_ = panel.cipher_out_;
+    panel.marker_in_ = panel.marker_out_;
+    panel.on_decipher();
+    check(panel.plain_out_ == original && panel.decipher_error_.empty(),
+          "Decipher displays readable plaintext instead of internal codes");
+    check(audio_starts == 2 && audio_stops == 2,
+          "processing audio stops after successful deciphering");
+    const std::string prepared = prepare_gui_plaintext(original, true);
+    check(prepared == transform(original) && prepared != original,
+          "GUI boundary reuses the unchanged transformer representation");
+    panel.message_ = "Hello, world!";
+    panel.on_encipher();
+    check(panel.message_ == "Hello, world!" && panel.cipher_out_.empty() &&
+          !panel.encipher_error_.empty(), "Punctuation stays visible and is rejected before encryption");
+    check(audio_starts == 3 && audio_stops == 3,
+          "processing audio stops after an enciphering error");
+    panel.message_ = "\xED\x95\x9C";
+    panel.on_encipher();
+    check(!panel.encipher_error_.empty() && panel.message_ == "\xED\x95\x9C",
+          "Unsupported scripts remain editable without silent processing loss");
+    panel.paste_target_ = PasteTarget::Message;
+    panel.deliver_paste(std::string(kFieldCap + 1, 'a'));
+    check(panel.message_ == "\xED\x95\x9C" && !panel.encipher_error_.empty(),
+          "Oversized message button paste leaves the original text intact");
+    bool legacy_rejected = false;
+    try { prepare_gui_plaintext("HELLO!", false); }
+    catch (const std::exception&) { legacy_rejected = true; }
+    check(prepare_gui_plaintext("Hello", false) == "Hello" && legacy_rejected,
+          "Legacy input retains its suite semantics and rejects unsupported punctuation");
+    panel.set_processing_audio([] { throw std::runtime_error("audio start failed"); },
+                               [] { throw std::runtime_error("audio stop failed"); });
+    panel.message_ = original;
+    panel.on_encipher();
+    check(panel.encipher_error_.empty() && panel.check_out_ == original,
+          "audio hook failures do not affect cipher output");
+}
+
 void EncipheringPanel::draw_clear_button(const GuiInput& in, float bx, float by) {
-    if (button(Rect{bx, by, kBtnW, kBtnH}, "Clear", in, a_field_has_focus()))
-        clear_focused_field();
+    if (button(Rect{bx, by, kBtnW, kBtnH}, "Clear", in, a_field_has_focus()) &&
+        clear_focused_field()) {
+        encipher_error_.clear();
+        decipher_error_.clear();
+    }
 }
 
 void EncipheringPanel::copy_both() {
@@ -243,7 +331,9 @@ void EncipheringPanel::copy_both() {
     copy_pending_ = true;
 }
 
-void EncipheringPanel::frame(const GuiInput& in, int width, int height) {
+void EncipheringPanel::frame(const GuiInput& raw, int width, int height) {
+    GuiInput in = raw;
+    in.key_clear = in.ctrl_held && !in.shift_held && !in.alt_held && in.key_letter == 'Q';
     begin_widget_frame();
     back_clicked_ = false;
     wordmark_clicked_ = false;
@@ -420,8 +510,9 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
 
     const float input_h = text_field_height(kInputLines, true);
     set_landmark("cipher.message", Rect{x, y, field_w, input_h});
-    text_field(Rect{x, y, field_w, input_h}, message_, in, allowed_message_, kFieldCap, ready,
-               false, fold_, "", false, kInputLines, "message", fold_input_);
+    if (text_field(Rect{x, y, field_w, input_h}, message_, in, "", kFieldCap, ready,
+                   false, CaseFold::None, "", false, kInputLines, "message", true))
+        encipher_error_.clear();
     y += input_h + kGap;
 
     // The marker sits above the cipher, out of the order the two are read

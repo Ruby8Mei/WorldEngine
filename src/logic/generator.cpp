@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <iostream>
@@ -11,8 +12,17 @@
 
 #include <nlohmann/json.hpp>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "registry.hpp"
 #include "rng.hpp"
+#include "settings.hpp"
 
 namespace inop {
 namespace {
@@ -224,6 +234,19 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
     return g;
 }
 
+GeneratedSettings random_setup_settings(const Suite& s) {
+    entropy_self_check();
+    const int rotor_count = s.min_rotors + static_cast<int>(secure_below(
+                                static_cast<uint32_t>(s.max_rotors - s.min_rotors + 1)));
+    const int plug_pairs = static_cast<int>(secure_below(static_cast<uint32_t>(s.max_plug_pairs + 1)));
+    GeneratedSettings g = random_settings(s, rotor_count, plug_pairs, 1);
+    if (!s.notches_are_fixed)
+        g.notches = random_variable_notches(Alphabet(s.alphabet), rotor_count, s.max_notches);
+    g.master_key = secure_string(s.alphabet,
+                                 static_cast<size_t>(s.historic_lock ? rotor_count : rotor_count + 1));
+    return g;
+}
+
 std::string settings_to_text(const GeneratedSettings& g) {
     std::ostringstream o;
     o << "suite " << g.suite_code << "\n";
@@ -238,6 +261,51 @@ std::string settings_to_text(const GeneratedSettings& g) {
 
 // ── menu actions ────────────────────────────────────────────────────────
 std::string wheel_batch_problem(const WheelBatch& b, const Suite& s) {
+    if (b.wheels.empty()) return "wheel batch is empty";
+    if (b.wheels.size() != b.wirings.size())
+        return "wheel batch wiring index is inconsistent";
+
+    std::set<std::string> names;
+    for (size_t i = 0; i < b.wheels.size(); ++i) {
+        const GeneratedWheel& wheel = b.wheels[i];
+        if (wheel.name.empty()) return "wheel " + std::to_string(i + 1) + " has no ID";
+        if (!names.insert(wheel.name).second)
+            return "wheel batch contains duplicate ID " + wheel.name;
+        if (wheel.wiring != b.wirings[i])
+            return "wheel batch wiring index disagrees with wheel " + wheel.name;
+        if (wheel.wiring.size() != s.alphabet.size())
+            return "wheel " + wheel.name + " has the wrong wiring length";
+        std::string sorted_wiring = wheel.wiring;
+        std::string sorted_alphabet = s.alphabet;
+        std::sort(sorted_wiring.begin(), sorted_wiring.end());
+        std::sort(sorted_alphabet.begin(), sorted_alphabet.end());
+        if (sorted_wiring != sorted_alphabet)
+            return "wheel " + wheel.name + " wiring is not a suite permutation";
+
+        if (b.rotors) {
+            if (static_cast<int>(wheel.notches.size()) > s.max_notches)
+                return "rotor " + wheel.name + " has too many notch symbols";
+            std::set<char> notches;
+            for (char notch : wheel.notches) {
+                if (s.alphabet.find(notch) == std::string::npos)
+                    return "rotor " + wheel.name + " has a notch outside the suite alphabet";
+                if (!notches.insert(notch).second)
+                    return "rotor " + wheel.name + " has a duplicate notch symbol";
+            }
+        } else {
+            if (!wheel.notches.empty()) return "reflector " + wheel.name + " has notch data";
+            Alphabet alpha(s.alphabet);
+            for (size_t position = 0; position < wheel.wiring.size(); ++position) {
+                const int mapped = alpha.index(wheel.wiring[position]);
+                if (mapped == static_cast<int>(position))
+                    return "reflector " + wheel.name + " has a fixed point";
+                if (alpha.index(wheel.wiring[static_cast<size_t>(mapped)]) !=
+                    static_cast<int>(position))
+                    return "reflector " + wheel.name + " is not an involution";
+            }
+        }
+    }
+
     std::set<std::string> distinct(b.wirings.begin(), b.wirings.end());
     if (b.wirings.size() > 1 && distinct.size() < b.wirings.size())
         return "only " + std::to_string(distinct.size()) + " distinct wirings out of " +
@@ -301,6 +369,12 @@ bool write_wheel_batch(const std::string& path, const WheelBatch& b, const Suite
                     *error = path + " is not readable as JSON, so there is nothing to append to";
                 return false;
             }
+            std::vector<std::string> existing_problems;
+            if (!validate_wheel_document(existing.dump(), &existing_problems)) {
+                if (error)
+                    *error = path + " does not pass validation, so there is nothing safe to append to";
+                return false;
+            }
             doc = existing;
         }
     }
@@ -317,17 +391,57 @@ bool write_wheel_batch(const std::string& path, const WheelBatch& b, const Suite
     doc[key] = arr;
     doc["suite"] = s.name;
 
+    const std::string serialized = doc.dump(2) + "\n";
+    std::vector<std::string> proposed_problems;
+    if (!validate_wheel_document(serialized, &proposed_problems)) {
+        if (error)
+            *error = proposed_problems.empty() ? "proposed wheel catalogue failed validation"
+                                               : proposed_problems.front();
+        return false;
+    }
+
+    {
+        std::ifstream current(path, std::ios::binary);
+        if (current) {
+            std::ostringstream contents;
+            contents << current.rdbuf();
+            if (contents.str() == serialized) return true;
+        }
+    }
+
     // The whole document is assembled in memory and only then opened for
     // writing, for the same reason validation happens before the stream is
     // opened at all: opening for overwrite is itself destructive.
-    std::ofstream f(path);
+    const std::filesystem::path target(path);
+    const std::filesystem::path pending = target.string() + ".pending";
+    std::ofstream f(pending, std::ios::binary | std::ios::trunc);
     if (!f) {
         if (error) *error = "cannot write " + path;
         return false;
     }
-    f << doc.dump(2) << "\n";
+    f << serialized;
+    f.flush();
     if (!f) {
+        f.close();
+        std::error_code ignored;
+        std::filesystem::remove(pending, ignored);
         if (error) *error = "failed while writing " + path;
+        return false;
+    }
+    f.close();
+
+    std::error_code replace_error;
+#if defined(_WIN32)
+    if (!MoveFileExW(pending.wstring().c_str(), target.wstring().c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        replace_error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+#else
+    std::filesystem::rename(pending, target, replace_error);
+#endif
+    if (replace_error) {
+        std::error_code ignored;
+        std::filesystem::remove(pending, ignored);
+        if (error) *error = "cannot replace " + path + ": " + replace_error.message();
         return false;
     }
     return true;
@@ -370,6 +484,12 @@ nlohmann::json generated_settings_to_json(const GeneratedSettings& g) {
 bool write_key_sheet(const std::string& path, const Suite& s, int count, int plug_pairs,
                      int notches_per_rotor, bool random_count, int fixed_count,
                      std::string* first_entry, std::string* error) {
+    try {
+        entropy_self_check();
+    } catch (const std::exception& ex) {
+        if (error) *error = ex.what();
+        return false;
+    }
     // Built whole in memory before the target is opened, so a failure part
     // way through a long sheet cannot leave a truncated one behind.
     nlohmann::json entries = nlohmann::json::array();
@@ -529,9 +649,15 @@ void gen_settings() {
 
     std::string use = ask("load entry 1 into inop_settings.json now? (y/n)", "n");
     if (!use.empty() && (use[0] == 'y' || use[0] == 'Y')) {
-        std::ofstream s1("inop.settings");
-        if (s1) { s1 << first; std::cout << "  entry 1 written to inop.settings\n"; }
-        else std::cout << "  ! cannot write inop.settings\n";
+        Settings entry;
+        std::string load_error;
+        if (!load_keysheet_entry(path, 1, entry, &load_error)) {
+            std::cout << "  ! cannot install entry 1: " << load_error << "\n";
+        } else if (!save_settings(entry, "inop_settings.json")) {
+            std::cout << "  ! cannot install entry 1: could not write inop_settings.json\n";
+        } else {
+            std::cout << "  entry 1 written to inop_settings.json\n";
+        }
     }
 }
 

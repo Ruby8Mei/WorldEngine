@@ -1,14 +1,8 @@
 // gui_widgets.hpp — input snapshot + small immediate-mode widget set.
 //
-// Widgets both draw themselves (via gui_render) and report interaction for
-// the current frame — there is no retained widget tree. Text/numeric
-// fields filter typed codepoints at the point of entry against an
-// explicit allowed-character set, rather than accepting arbitrary
-// input and validating afterward: every field in this panel only ever
-// needs plain ASCII (both INOP alphabets are ASCII), so this sidesteps
-// IME/dead-key handling entirely.
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,6 +32,7 @@ struct GuiInput {
     // Backspace eats the character before the caret, Delete the one after
     // it. Both eat the selection instead when there is one.
     bool key_delete = false;
+    bool key_clear = false;
     bool key_enter = false;
     bool key_escape = false;
     // The four arrows move the keyboard focus from control to control, by
@@ -207,6 +202,7 @@ bool button(const Rect& r, const std::string& text, const GuiInput& in, bool ena
 // fill. Every screen that carries the wordmark draws it through this one
 // call. Returns true if clicked this frame.
 bool wordmark_button(const Rect& r, const GuiInput& in);
+void set_button_sound(std::function<void()> play);
 
 // A word that behaves like a button and looks like the plain text beside
 // it: dim at rest, in the accent colour and underlined under the pointer.
@@ -266,20 +262,10 @@ enum class CaseFold { None, ToLower, ToUpper };
 // box width instead, the rows scroll vertically to follow the caret, and a
 // click lands on whichever row it was over. Give the Rect the matching
 // height from text_field_height(), or the rows will not fit inside it.
-// `fold_marks` sends every keystroke through transform() before it is
-// written, so a key the machine alphabet has no room for arrives as the
-// code that stands in for it: a-acute becomes a2, a capital A becomes a0.
-// It is what lets a box take diacritics and capitals at all, since the
-// font atlas can draw neither and the rotors have no key for either.
-// Punctuation folds to nothing and is dropped, which is what transform()
-// does with it everywhere else. A field whose alphabet cannot hold a
-// whole code leaves this false and keeps the plain per-character
-// behaviour, `case_fold` included; with it true `case_fold` is ignored,
-// because case is carried in the code instead of being folded away.
 bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std::string& allowed,
                  size_t max_len, bool enabled, bool invalid, CaseFold case_fold = CaseFold::None,
                  const std::string& placeholder = "", bool center_text = false, int lines = 1,
-                 const std::string& caption = "", bool fold_marks = false);
+                 const std::string& caption = "", bool unicode_text = false);
 
 // The height a text_field needs to show `lines` rows. One line answers the
 // same 30 pixels every single-line field on every screen already uses, so
@@ -292,6 +278,9 @@ float text_field_height(int lines, bool with_caption = false);
 // from the box it clears and so cannot name it. Nothing happens when no
 // field has the focus, or when the one that has it is already empty.
 bool clear_focused_field();
+void set_text_clipboard(std::function<std::string()> read,
+                        std::function<void(const std::string&)> write);
+void text_edit_self_test(const std::function<void(bool, const std::string&)>& check);
 
 // Whether any writable field has the focus. A Clear button asks so that it
 // can grey itself out rather than sitting there doing nothing.

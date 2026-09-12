@@ -112,6 +112,11 @@ std::uint32_t next_codepoint(const std::string& s, std::size_t& i) {
         }
         cp = (cp << 6) | (t & 0x3Fu);
     }
+    const std::uint32_t minimum = len == 2 ? 0x80u : (len == 3 ? 0x800u : 0x10000u);
+    if (cp < minimum || (cp >= 0xD800u && cp <= 0xDFFFu) || cp > 0x10FFFFu) {
+        ++i;
+        return kBadCodepoint;
+    }
     i += len;
     return cp;
 }
@@ -119,7 +124,112 @@ std::uint32_t next_codepoint(const std::string& s, std::size_t& i) {
 bool is_ascii_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
+TransformValidationResult validation(TransformValidationStatus status, std::size_t offset,
+                                     const std::string& reason) {
+    TransformValidationResult result;
+    result.status = status;
+    result.offset = offset;
+    result.reason = reason;
+    return result;
+}
+
 }  // namespace
+
+TransformValidationResult validate_transform_input(const std::string& text) {
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t offset = i;
+        const std::uint32_t cp = next_codepoint(text, i);
+        if (cp == kBadCodepoint)
+            return validation(TransformValidationStatus::InvalidUtf8, offset,
+                              "invalid UTF-8 sequence");
+        if (cp < 0x80) {
+            const char c = static_cast<char>(cp);
+            if (is_ascii_letter(c) || is_digit(c) || c == ' ' || c == '\t' || c == '\n' ||
+                c == '\r' || c == '\f' || c == '\v')
+                continue;
+            return validation(TransformValidationStatus::UnsupportedInput, offset,
+                              "unsupported ASCII character");
+        }
+        if (!fold_of(cp))
+            return validation(TransformValidationStatus::UnsupportedInput, offset,
+                              "unsupported Unicode character");
+    }
+    return {};
+}
+
+TransformValidationResult validate_transformed_data(const std::string& text) {
+    bool literal = false;
+    std::size_t literal_offset = 0;
+    std::size_t i = 0;
+    const std::map<std::string, std::uint32_t>& rev = reverse_table();
+    while (i < text.size()) {
+        const unsigned char uc = static_cast<unsigned char>(text[i]);
+        if (uc >= 0x80)
+            return validation(TransformValidationStatus::MalformedData, i,
+                              "transformed data must be ASCII");
+
+        const char c = text[i];
+        if (c >= 'a' && c <= 'z') {
+            std::string key(1, c);
+            std::size_t j = i + 1;
+            bool has_code = false;
+            while (j < text.size() && is_digit(text[j])) {
+                has_code = true;
+                while (j < text.size() && is_digit(text[j])) key += text[j++];
+                if (j < text.size() && text[j] == '/') {
+                    if (j + 1 >= text.size())
+                        return validation(TransformValidationStatus::MalformedData, j,
+                                          "truncated transform marker");
+                    if (text[j + 1] == '/') break;
+                    if (!is_digit(text[j + 1]))
+                        return validation(TransformValidationStatus::MalformedData, j,
+                                          "transform modifier must contain digits");
+                    key += '/';
+                    ++j;
+                    continue;
+                }
+                break;
+            }
+
+            if (has_code && key != std::string(1, c) + "0" && rev.find(key) == rev.end())
+                return validation(TransformValidationStatus::MalformedData, i,
+                                  "unknown transform code");
+
+            if (j < text.size() && text[j] == '/') {
+                if (j + 1 >= text.size())
+                    return validation(TransformValidationStatus::MalformedData, j,
+                                      "truncated transform marker");
+                if (text[j + 1] != '/')
+                    return validation(TransformValidationStatus::MalformedData, j,
+                                      "modifier marker has no preceding code");
+                if (j + 2 >= text.size() || !is_digit(text[j + 2]))
+                    return validation(TransformValidationStatus::MalformedData, j,
+                                      "literal number marker must be followed by digits");
+                j += 2;
+                while (j < text.size() && is_digit(text[j])) ++j;
+            }
+            i = j;
+            continue;
+        }
+
+        if ((c >= 'A' && c <= 'Z') || c == '/' || c == '#' ||
+            (c != ' ' && !is_digit(c))) {
+            if (!literal) literal_offset = i;
+            literal = true;
+        } else if (c == ' ' &&
+                   (i == 0 || i + 1 == text.size() || text[i - 1] == ' ')) {
+            if (!literal) literal_offset = i;
+            literal = true;
+        }
+        ++i;
+    }
+
+    if (literal)
+        return validation(TransformValidationStatus::LiteralContent, literal_offset,
+                          "literal content is not canonical transformed data");
+    return {};
+}
 
 std::string transform(const std::string& text) {
     std::string out;
@@ -175,6 +285,9 @@ std::string transform(const std::string& text) {
 }
 
 std::string untransform(const std::string& text) {
+    if (validate_transformed_data(text).status == TransformValidationStatus::MalformedData)
+        return text;
+
     std::string out;
     out.reserve(text.size());
 
@@ -210,7 +323,7 @@ std::string untransform(const std::string& text) {
         if (key.size() == 1) {
             out += c;
             i = j;
-        } else if (key == std::string(1, c) + "0") {
+        } else if (c >= 'a' && c <= 'z' && key == std::string(1, c) + "0") {
             // No mark, only the case code.
             out += static_cast<char>(c - 'a' + 'A');
             i = j;

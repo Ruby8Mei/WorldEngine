@@ -61,13 +61,11 @@ std::string font_path(const std::string& file);
 // The folder INOP ships fonts in, with its trailing separator. Anything
 // bundled with the program is in here and nothing else is, which is what
 // makes it the answer to "which font licences do we have to show".
-const char* bundled_fonts_dir();
+std::string bundled_fonts_dir();
 
 // Every face this build knows how to offer, filtered down to the ones
 // font_path() can actually find — a machine missing Harlow should not be
-// shown Harlow. Courier New is first and is the default; if even that is
-// missing the list comes back empty and the font row has nothing to
-// offer.
+// shown Harlow.
 const std::vector<FontChoice>& available_fonts();
 
 // Rebuilds that list from disk. Called when the font list is opened, so a
@@ -100,7 +98,9 @@ struct GuiPrefs {
     Theme theme = Theme::System;
     ColourblindMode colourblind = ColourblindMode::Full;
     WindowMode window_mode = WindowMode::BorderlessFullscreen;
-    std::string font_file = "cour.ttf";
+    bool vsync = true;
+    int frame_rate_limit = 0;
+    std::string font_file = "CrimsonPro.ttf";
     // Whole-interface scale as a percentage, so the stored value reads the
     // same as the control that sets it. Kept as an int rather than a float
     // because it only ever takes the fixed steps the dropdown offers, and
@@ -111,6 +111,8 @@ struct GuiPrefs {
     // fade, nothing that moves position moves. Off by default, because
     // the motion is the point of having built it.
     bool reduced_motion = false;
+    bool audio_muted = false;
+    int audio_volume = 70;
 
     // -- the first-launch tutorial --------------------------------------
     //
@@ -136,6 +138,8 @@ struct GuiPrefs {
 
 // The steps the zoom control offers, 50 to 250 in 25s.
 const std::vector<int>& zoom_steps();
+const std::vector<int>& frame_rate_limits();
+double frame_delay_seconds(int limit, double elapsed);
 
 // Above this, the layouts do not fit a normal window and the setting is
 // refused with a notice rather than applied. See gui.cpp, which owns that

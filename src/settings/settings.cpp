@@ -1,7 +1,9 @@
 #include "settings.hpp"
 
 #include <cctype>
+#include <algorithm>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -98,16 +100,53 @@ bool validate_settings(const Settings& s, std::string* error) {
     if (static_cast<int>(count) < su.min_rotors || static_cast<int>(count) > su.max_rotors)
         return fail("rotor count " + std::to_string(count) + " is outside " + su.name +
                     "'s range " + std::to_string(su.min_rotors) + "-" + std::to_string(su.max_rotors));
+    const std::vector<std::string> rotor_pool = available_rotors(su);
+    std::set<std::string> rotor_names;
+    for (const std::string& name : s.rotors) {
+        if (std::find(rotor_pool.begin(), rotor_pool.end(), name) == rotor_pool.end())
+            return fail("rotor " + name + " is not available for " + su.name);
+        if (!rotor_names.insert(name).second)
+            return fail("rotor " + name + " is used more than once");
+    }
+    const std::vector<std::string> reflector_pool = available_reflectors(su);
+    if (std::find(reflector_pool.begin(), reflector_pool.end(), s.reflector) == reflector_pool.end())
+        return fail("reflector " + s.reflector + " is not available for " + su.name);
     if (s.rings.size() != count)
         return fail("rings count (" + std::to_string(s.rings.size()) +
                     ") does not match rotor count (" + std::to_string(count) + ")");
+    Alphabet alpha(su.alphabet);
+    for (int ring : s.rings)
+        if (ring < 1 || ring > alpha.size())
+            return fail("ring value " + std::to_string(ring) + " is outside 1-" +
+                        std::to_string(alpha.size()));
     if (!su.notches_are_fixed && s.notches.size() != count)
         return fail("notches count (" + std::to_string(s.notches.size()) +
                     ") does not match rotor count (" + std::to_string(count) + ")");
+    if (!su.notches_are_fixed) {
+        for (const std::string& notches : s.notches) {
+            if (notches.empty() || static_cast<int>(notches.size()) > su.max_notches)
+                return fail("each rotor needs 1-" + std::to_string(su.max_notches) + " notch symbols");
+            for (char symbol : notches)
+                if (!alpha.contains(symbol))
+                    return fail("notch symbol is outside the " + su.name + " alphabet");
+        }
+        const std::string duplicates = duplicate_notch_symbols(s.notches);
+        if (!duplicates.empty()) return fail("notch symbols are repeated across rotors");
+    }
+    if (static_cast<int>(s.plugs.size()) > su.max_plug_pairs)
+        return fail("plugboard pair count exceeds " + std::to_string(su.max_plug_pairs));
+    try {
+        Plugboard probe(s.plugs, alpha);
+        (void)probe;
+    } catch (const std::exception& ex) {
+        return fail(ex.what());
+    }
     const size_t need_key = su.historic_lock ? count : count + 1;
     if (s.master_key.size() != need_key && !(su.historic_lock && s.master_key.size() == need_key + 1))
         return fail("key length (" + std::to_string(s.master_key.size()) +
                     ") does not match rotor count (" + std::to_string(count) + ")");
+    for (char symbol : s.master_key)
+        if (!alpha.contains(symbol)) return fail("master key symbol is outside the " + su.name + " alphabet");
     return true;
 }
 
@@ -124,42 +163,63 @@ bool settings_from_json(const nlohmann::json& j, Settings& out, std::string* err
         if (error) *error = "not a JSON object";
         return false;
     }
-    out = Settings{};
-    if (j.contains("suite_code") && j["suite_code"].is_string())
-        out.suite_code = j["suite_code"].get<std::string>();
-    if (j.contains("reflector") && j["reflector"].is_string())
-        out.reflector = j["reflector"].get<std::string>();
-    if (j.contains("master_key") && j["master_key"].is_string())
-        out.master_key = j["master_key"].get<std::string>();
+    auto fail = [&](const std::string& msg) { if (error) *error = msg; return false; };
+    if (!j.contains("suite_code") || !j["suite_code"].is_string())
+        return fail("suite_code must be a string");
+    if (!j.contains("reflector") || !j["reflector"].is_string())
+        return fail("reflector must be a string");
+    if (!j.contains("master_key") || !j["master_key"].is_string())
+        return fail("master_key must be a string");
+    if (!j.contains("rotors") || !j["rotors"].is_array())
+        return fail("rotors must be an array");
 
-    if (j.contains("rotors") && j["rotors"].is_array()) {
-        for (const auto& r : j["rotors"]) {
-            if (!r.is_object()) continue;
-            out.rotors.push_back(upper(r.value("name", std::string())));
+    Settings parsed;
+    parsed.suite_code = j["suite_code"].get<std::string>();
+    parsed.reflector = j["reflector"].get<std::string>();
+    parsed.master_key = j["master_key"].get<std::string>();
+
+    for (const auto& r : j["rotors"]) {
+            if (!r.is_object()) return fail("each rotor must be an object");
+            if (!r.contains("name") || !r["name"].is_string())
+                return fail("rotor name must be a string");
+            if (!r.contains("ring")) return fail("rotor ring is missing");
+            if (r.contains("notches") && !r["notches"].is_string())
+                return fail("rotor notches must be a string");
+            parsed.rotors.push_back(upper(r["name"].get<std::string>()));
             // The GUI writes ring as a string because the control behind it
             // is a text field; anything thinking in integers writes a
             // number. Both are accepted rather than making one interface
             // wrong.
-            int ring = 1;
-            if (r.contains("ring")) {
-                if (r["ring"].is_string()) {
-                    const std::string t = r["ring"].get<std::string>();
-                    try {
-                        ring = std::stoi(t);
-                    } catch (...) {
-                        ring = 1;
-                    }
-                } else if (r["ring"].is_number_integer()) {
-                    ring = r["ring"].get<int>();
+            int ring = 0;
+            if (r["ring"].is_string()) {
+                const std::string t = r["ring"].get<std::string>();
+                size_t consumed = 0;
+                try {
+                    ring = std::stoi(t, &consumed);
+                } catch (const std::exception&) {
+                    return fail("rotor ring must be an integer");
                 }
+                if (consumed != t.size()) return fail("rotor ring must be an integer");
+            } else if (r["ring"].is_number_integer()) {
+                try {
+                    ring = r["ring"].get<int>();
+                } catch (const std::exception&) {
+                    return fail("rotor ring is outside the integer range");
+                }
+            } else {
+                return fail("rotor ring must be an integer or integer string");
             }
-            out.rings.push_back(ring);
-            out.notches.push_back(r.value("notches", std::string()));
+            parsed.rings.push_back(ring);
+            parsed.notches.push_back(r.contains("notches") ? r["notches"].get<std::string>() : std::string());
+    }
+    if (j.contains("plugboard")) {
+        if (!j["plugboard"].is_array()) return fail("plugboard must be an array");
+        for (const auto& p : j["plugboard"]) {
+            if (!p.is_string()) return fail("each plugboard pair must be a string");
+            parsed.plugs.push_back(p.get<std::string>());
         }
     }
-    if (j.contains("plugboard") && j["plugboard"].is_array())
-        for (const auto& p : j["plugboard"])
-            if (p.is_string()) out.plugs.push_back(p.get<std::string>());
+    out = std::move(parsed);
     return true;
 }
 
@@ -245,6 +305,8 @@ bool migrate_settings_from_text(const std::string& txt_path, const std::string& 
 }
 
 Machine build_machine(const Settings& s, std::string* note) {
+    std::string error;
+    if (!validate_settings(s, &error)) throw std::invalid_argument(error);
     const Suite& su = suite(s.suite_code);
     Alphabet alpha(su.alphabet);
 
@@ -284,7 +346,7 @@ namespace {
 // One parse of the whole document, shared by the two functions below. A key
 // sheet is an object with an "entries" array, each entry the same shape as
 // a settings file, so one reader understands both.
-bool read_keysheet(const std::string& path, nlohmann::json& out) {
+bool read_keysheet_json(const std::string& path, nlohmann::json& out) {
     std::ifstream f(path);
     if (!f) return false;
     nlohmann::json j = nlohmann::json::parse(f, nullptr, false);
@@ -298,29 +360,48 @@ bool read_keysheet(const std::string& path, nlohmann::json& out) {
 
 int count_keysheet_entries(const std::string& path) {
     nlohmann::json j;
-    if (!read_keysheet(path, j)) return 0;
+    if (!read_keysheet_json(path, j)) return 0;
     return static_cast<int>(j["entries"].size());
 }
 
-bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error) {
+bool load_keysheet(const std::string& path, std::vector<KeySheetEntry>& entries,
+                   std::string* error) {
     nlohmann::json j;
-    if (!read_keysheet(path, j)) {
+    if (!read_keysheet_json(path, j)) {
         if (error) *error = path + " is not a readable key sheet";
         return false;
     }
+    std::vector<KeySheetEntry> parsed;
     const nlohmann::json& arr = j["entries"];
-    if (index < 1 || index > static_cast<int>(arr.size())) {
+    parsed.reserve(arr.size());
+    for (size_t i = 0; i < arr.size(); ++i) {
+        KeySheetEntry entry;
+        std::string entry_error;
+        if (settings_from_json(arr[i], entry.settings, &entry_error) &&
+            validate_settings(entry.settings, &entry_error)) {
+            entry.valid = true;
+        } else {
+            entry.error = entry_error + " (entry " + std::to_string(i + 1) + " in " + path + ")";
+        }
+        parsed.push_back(std::move(entry));
+    }
+    entries = std::move(parsed);
+    return true;
+}
+
+bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error) {
+    std::vector<KeySheetEntry> entries;
+    if (!load_keysheet(path, entries, error)) return false;
+    if (index < 1 || index > static_cast<int>(entries.size())) {
         if (error) *error = "no entry " + std::to_string(index) + " in " + path;
         return false;
     }
-    Settings s;
-    if (!settings_from_json(arr[static_cast<size_t>(index - 1)], s, error)) return false;
-    std::string err;
-    if (!validate_settings(s, &err)) {
-        if (error) *error = err + " (entry " + std::to_string(index) + " in " + path + ")";
+    const KeySheetEntry& entry = entries[static_cast<size_t>(index - 1)];
+    if (!entry.valid) {
+        if (error) *error = entry.error;
         return false;
     }
-    out = s;
+    out = entry.settings;
     return true;
 }
 

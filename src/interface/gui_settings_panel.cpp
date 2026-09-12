@@ -3,6 +3,7 @@
 #include "gui_form.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <vector>
 
 namespace inop {
@@ -48,6 +49,31 @@ constexpr int kIdTheme = 5;
 constexpr int kIdLanguage = 6;
 constexpr int kIdZoom = 7;
 constexpr int kIdScript = 8;
+constexpr int kIdAudioVolume = 9;
+constexpr int kIdFrameRate = 10;
+
+const std::vector<std::string>& frame_rate_options() {
+    static const std::vector<std::string> options = [] {
+        std::vector<std::string> labels;
+        for (int limit : frame_rate_limits())
+            labels.push_back(limit == 0 ? "Unlimited" : std::to_string(limit) + " FPS");
+        return labels;
+    }();
+    return options;
+}
+
+int frame_rate_at(int index) {
+    const auto& limits = frame_rate_limits();
+    return index >= 0 && index < static_cast<int>(limits.size())
+               ? limits[static_cast<size_t>(index)] : 0;
+}
+
+int index_of_frame_rate(int limit) {
+    const auto& limits = frame_rate_limits();
+    for (size_t i = 0; i < limits.size(); ++i)
+        if (limits[i] == limit) return static_cast<int>(i);
+    return 0;
+}
 
 // The clinical names, each with the plain meaning after it: the operator
 // who knows their diagnosis finds it by name, and the operator who does
@@ -107,6 +133,35 @@ int index_of_zoom(int percent) {
         if (steps[i] == 100) fallback = static_cast<int>(i);
     }
     return fallback;
+}
+
+const std::vector<int>& audio_volume_steps() {
+    static const std::vector<int> v{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    return v;
+}
+
+const std::vector<std::string>& audio_volume_options() {
+    static const std::vector<std::string> v = [] {
+        std::vector<std::string> out;
+        for (int step : audio_volume_steps()) out.push_back(std::to_string(step) + "%");
+        return out;
+    }();
+    return v;
+}
+
+int audio_volume_at(int idx) {
+    const std::vector<int>& steps = audio_volume_steps();
+    if (idx < 0 || idx >= static_cast<int>(steps.size())) return 70;
+    return steps[static_cast<std::size_t>(idx)];
+}
+
+int index_of_audio_volume(int percent) {
+    const std::vector<int>& steps = audio_volume_steps();
+    int closest = 0;
+    for (std::size_t i = 0; i < steps.size(); ++i)
+        if (std::abs(steps[i] - percent) < std::abs(steps[static_cast<std::size_t>(closest)] - percent))
+            closest = static_cast<int>(i);
+    return closest;
 }
 
 const std::vector<std::string>& language_options() {
@@ -229,15 +284,6 @@ struct KeybindRow {
     const char* key;
     const char* meaning;
 };
-// Every shortcut the interface actually answers, read off the code that
-// answers it rather than off the roadmap. Four of the roadmap row --
-// Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A -- have nothing built for them yet and
-// are left out rather than listed as coming: a list of shortcuts is only
-// worth reading if pressing what it names does what it says.
-//
-// Grouped the way an operator meets them: moving about first, then
-// jumping straight to a screen, then the ones that only mean something
-// inside a box, then the modifier that is held rather than pressed.
 const KeybindRow kKeybinds[] = {
     {"Arrow keys", "Move between the controls on the screen. An open list takes them for itself."},
     {"Enter", "Press whichever control has the focus."},
@@ -260,6 +306,11 @@ const KeybindRow kKeybinds[] = {
     {"Ctrl+Shift+S", "On the setup screen, save the setup as a new preset."},
     {"Ctrl+Shift+C", "On the enciphering screen, copy the ciphertext and the marker together."},
 
+    {"Ctrl+A", "Select all text in the focused editable field."},
+    {"Ctrl+Q", "On the enciphering screen, clear the focused editable field."},
+    {"Ctrl+C", "Copy selected text from the focused editable field."},
+    {"Ctrl+X", "Cut selected text from the focused editable field."},
+    {"Ctrl+V", "Paste into the focused editable field."},
     {"Ctrl+Z", "Undo, inside a text box."},
     {"Ctrl+Y", "Redo, inside a text box."},
     {"Backspace", "Rub out the character before the caret, or the selection."},
@@ -302,6 +353,8 @@ void SettingsPanel::open(const GuiPrefs& current) {
     theme_idx_ = index_of_theme(pending_.theme);
     font_idx_ = index_of_font(pending_.font_file);
     zoom_idx_ = index_of_zoom(pending_.zoom_percent);
+    frame_rate_idx_ = index_of_frame_rate(pending_.frame_rate_limit);
+    audio_volume_idx_ = index_of_audio_volume(pending_.audio_volume);
     open_dropdown_id_ = -1;
     status_.clear();
     status_error_ = false;
@@ -343,6 +396,8 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     pending_.window_mode = window_mode_at(window_mode_idx_);
     pending_.theme = theme_at(theme_idx_);
     pending_.zoom_percent = zoom_at(zoom_idx_);
+    pending_.frame_rate_limit = frame_rate_at(frame_rate_idx_);
+    pending_.audio_volume = audio_volume_at(audio_volume_idx_);
     const std::vector<FontChoice>& fonts = available_fonts();
     if (!fonts.empty() && font_idx_ >= 0 && font_idx_ < static_cast<int>(fonts.size()))
         pending_.font_file = fonts[static_cast<size_t>(font_idx_)].file;
@@ -399,7 +454,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     y = draw_accessibility(in, x, y);
     y = draw_graphics(in, x, y);
     y = draw_appearance(in, x, y);
-    y = draw_audio(x, y);
+    y = draw_audio(in, x, y);
     y = draw_interface(in, x, y);
     y = draw_help(in, x, y);
     y = draw_keyboard(x, y);
@@ -442,6 +497,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
         theme_idx_ = index_of_theme(pending_.theme);
         font_idx_ = index_of_font(pending_.font_file);
         zoom_idx_ = index_of_zoom(pending_.zoom_percent);
+        frame_rate_idx_ = index_of_frame_rate(pending_.frame_rate_limit);
         status_.clear();
     }
 
@@ -491,6 +547,8 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     pending_.window_mode = window_mode_at(window_mode_idx_);
     pending_.theme = theme_at(theme_idx_);
     pending_.zoom_percent = zoom_at(zoom_idx_);
+    pending_.frame_rate_limit = frame_rate_at(frame_rate_idx_);
+    pending_.audio_volume = audio_volume_at(audio_volume_idx_);
     if (!fonts.empty() && font_idx_ >= 0 && font_idx_ < static_cast<int>(fonts.size()))
         pending_.font_file = fonts[static_cast<size_t>(font_idx_)].file;
 
@@ -535,13 +593,28 @@ float SettingsPanel::draw_accessibility(const GuiInput& in, float x, float y) {
 }
 
 float SettingsPanel::draw_graphics(const GuiInput& in, float x, float y) {
-    if (!shown("Display mode") && !shown("Zoom") && !shown("Reduced motion")) return y;
+    if (!shown("Display mode") && !shown("Zoom") && !shown("Reduced motion") &&
+        !shown("V-Sync") && !shown("Frame rate limit")) return y;
     y = heading(x, y + kSectionGap, "Graphics");
 
     if (shown("Display mode")) {
         row_label(x, y, "Display mode", false);
         dropdown(control_rect(x, y), display_mode_options(), window_mode_idx_, kIdDisplayMode,
                  open_dropdown_id_, in, true);
+        y += kRowH + kRowGap;
+    }
+
+    if (shown("V-Sync")) {
+        row_label(x, y, "V-Sync", false);
+        toggle(control_rect(x, y), pending_.vsync, "sync with display refresh", in, true);
+        y += kRowH + kRowGap;
+    }
+
+    if (shown("Frame rate limit")) {
+        row_label(x, y, "Frame rate limit", false);
+        dropdown(control_rect(x, y), frame_rate_options(), frame_rate_idx_, kIdFrameRate,
+                 open_dropdown_id_, in, true);
+        row_note(x, y, "V-Sync can limit the rate further.");
         y += kRowH + kRowGap;
     }
 
@@ -623,15 +696,24 @@ float SettingsPanel::draw_appearance(const GuiInput& in, float x, float y) {
     return y - kRowGap;
 }
 
-float SettingsPanel::draw_audio(float x, float y) {
-    // No rows, so there is no label for a search to match. It goes whole
-    // rather than sitting there as a heading over a sentence nobody was
-    // looking for.
-    if (!search_.empty()) return y;
+float SettingsPanel::draw_audio(const GuiInput& in, float x, float y) {
+    if (!shown("Mute") && !shown("Master volume")) return y;
     y = heading(x, y + kSectionGap, "Audio");
-    label(Rect{x, y, g_form.col_w, kRowH}, "The application makes no sound yet, so there is nothing here.",
-          true);
-    return y + kRowH;
+
+    if (shown("Mute")) {
+        row_label(x, y, "Mute", false);
+        toggle(control_rect(x, y), pending_.audio_muted, "all application audio", in, true);
+        y += kRowH + kRowGap;
+    }
+
+    if (shown("Master volume")) {
+        row_label(x, y, "Master volume", false);
+        dropdown(control_rect(x, y), audio_volume_options(), audio_volume_idx_, kIdAudioVolume,
+                 open_dropdown_id_, in, true);
+        y += kRowH + kRowGap;
+    }
+
+    return y - kRowGap;
 }
 
 float SettingsPanel::draw_interface(const GuiInput& in, float x, float y) {

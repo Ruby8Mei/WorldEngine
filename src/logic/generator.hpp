@@ -95,6 +95,8 @@ struct GeneratedSettings {
 GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
                                    int notches_per_rotor);
 
+GeneratedSettings random_setup_settings(const Suite& s);
+
 // Serialise in the same directive format main.cpp reads.
 std::string settings_to_text(const GeneratedSettings& g);
 

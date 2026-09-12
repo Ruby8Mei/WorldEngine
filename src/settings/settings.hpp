@@ -23,6 +23,12 @@ struct Settings {
     std::string master_key;
 };
 
+struct KeySheetEntry {
+    Settings settings;
+    std::string error;
+    bool valid = false;
+};
+
 // Reads directive lines (suite/rotors/reflector/rings/notches/plugs/key)
 // from `in`, skipping blank lines and '#' comments, stopping once a "key"
 // line has been read (every record ends with one) or at EOF. Leaves `in`
@@ -52,6 +58,9 @@ Machine build_machine(const Settings& s, std::string* note = nullptr);
 // A key sheet is JSON as of 2.3.0: an object with an "entries" array, each
 // entry the same shape as a settings file.
 int count_keysheet_entries(const std::string& path);
+
+bool load_keysheet(const std::string& path, std::vector<KeySheetEntry>& entries,
+                   std::string* error);
 
 // Parses entry `index` (1-based) out of a key sheet and validates it.
 //

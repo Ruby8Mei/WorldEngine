@@ -17,10 +17,13 @@
 // on are registered by focus_register(), which the header does not expose;
 // widening the public interface for a test would be the wrong trade.
 #include <cstdio>
+#include <cmath>
 #include <fstream>
 #include <string>
 
 #include "gui.hpp"
+#include "audio_manager.hpp"
+#include "gui_enciphering_panel.hpp"
 #include "gui_config_store.hpp"
 #include "gui_prefs.hpp"
 #include "gui_script.hpp"
@@ -49,6 +52,9 @@ void drop_temp(const std::string& path) { std::remove(path.c_str()); }
 
 void gui_self_test(const SelfTestCheck& check) {
     using namespace inop::gui;
+    text_edit_self_test(check);
+    audio_self_test(check);
+    EncipheringPanel::self_test(check);
 
     // ── preferences ────────────────────────────────────────────────────
     {
@@ -56,8 +62,12 @@ void gui_self_test(const SelfTestCheck& check) {
         wrote.theme = Theme::Light;
         wrote.colourblind = ColourblindMode::Tritanopia;
         wrote.window_mode = WindowMode::Windowed;
+        wrote.vsync = false;
+        wrote.frame_rate_limit = 180;
         wrote.zoom_percent = 135;
         wrote.reduced_motion = true;
+        wrote.audio_muted = true;
+        wrote.audio_volume = 40;
         const std::string path = "inop_selftest_prefs.json";
         const bool saved = save_prefs(wrote, path);
         GuiPrefs read;
@@ -66,13 +76,64 @@ void gui_self_test(const SelfTestCheck& check) {
         check(saved && loaded && read == wrote, "prefs survive a save and a load unchanged");
     }
     {
+        bool roundtrips = true;
+        for (int limit : frame_rate_limits()) {
+            for (bool vsync : {false, true}) {
+                GuiPrefs wrote;
+                wrote.vsync = vsync;
+                wrote.frame_rate_limit = limit;
+                const std::string path = "inop_selftest_frame_prefs.json";
+                const bool saved = save_prefs(wrote, path);
+                GuiPrefs read;
+                const bool loaded = load_prefs(read, path);
+                drop_temp(path);
+                roundtrips = roundtrips && saved && loaded && read == wrote;
+            }
+        }
+        check(roundtrips, "every frame limit, including 180 FPS and Unlimited, persists with either V-Sync mode");
+        const std::string path = write_temp("old_frame_prefs.json", "{}");
+        GuiPrefs old;
+        old.vsync = false;
+        old.frame_rate_limit = 30;
+        const bool loaded = load_prefs(old, path);
+        drop_temp(path);
+        check(loaded && old.vsync && old.frame_rate_limit == 0,
+              "older preferences keep V-Sync on with no additional frame cap");
+        bool invalid_ignored = true;
+        for (const std::string value : {"-1", "181", "180.5", "true", "\"180\"", "18446744073709551615"}) {
+            const std::string invalid_path = write_temp("invalid_frame_prefs.json",
+                "{\"vsync\":\"off\",\"frame_rate_limit\":" + value + "}");
+            GuiPrefs p;
+            invalid_ignored = load_prefs(p, invalid_path) && p.vsync &&
+                              p.frame_rate_limit == 0 && invalid_ignored;
+            drop_temp(invalid_path);
+        }
+        check(invalid_ignored, "malformed or unsupported frame settings safely retain defaults");
+        GuiPrefs changed;
+        changed.vsync = false;
+        check(changed != GuiPrefs{}, "a V-Sync edit enables Apply");
+        changed = GuiPrefs{};
+        changed.frame_rate_limit = 180;
+        check(changed != GuiPrefs{}, "a frame-limit edit enables Apply");
+        bool pacing = frame_delay_seconds(0, 0) == 0 && frame_delay_seconds(-1, 0) == 0;
+        for (int limit : frame_rate_limits()) {
+            if (limit == 0) continue;
+            const double budget = 1.0 / static_cast<double>(limit);
+            pacing = pacing && std::abs(frame_delay_seconds(limit, budget / 4) - 3 * budget / 4) < 1e-10 &&
+                     frame_delay_seconds(limit, budget) == 0 &&
+                     frame_delay_seconds(limit, budget * 2) == 0;
+        }
+        check(pacing, "frame pacing subtracts rendering and V-Sync time and never delays a late or unlimited frame");
+    }
+    {
         // Every field here is one a hand edited file could carry and the
         // control could not produce. None of them may be taken at face
         // value: a zoom of 900 would scale the interface past any way back
         // to the settings screen that could undo it.
         const std::string path = write_temp(
             "prefs_bad.json",
-            "{\"zoom\":900,\"font\":\"no-such-face.ttf\",\"colourblind\":\"red-green\"}");
+            "{\"zoom\":900,\"font\":\"no-such-face.ttf\",\"colourblind\":\"red-green\","
+            "\"audio\":{\"muted\":true,\"volume\":900}}");
         GuiPrefs p;
         const bool loaded = load_prefs(p, path);
         drop_temp(path);
@@ -81,6 +142,8 @@ void gui_self_test(const SelfTestCheck& check) {
               "a font this machine does not have falls back to the default");
         check(loaded && p.colourblind == ColourblindMode::Deuteranopia,
               "the older red-green name still reads as deuteranopia");
+        check(loaded && p.audio_muted && p.audio_volume == 100,
+              "audio preferences validate mute and clamp master volume");
     }
     {
         const std::string path = write_temp("prefs_off.json", "{\"colourblind\":\"off\"}");
@@ -105,8 +168,8 @@ void gui_self_test(const SelfTestCheck& check) {
 
     // ── where a font file is looked for ────────────────────────────────
     {
-        check(!font_path("cour.ttf").empty(),
-              "font_path finds a face in the system font folder");
+        check(!font_path(GuiPrefs{}.font_file).empty(),
+              "font_path finds the portable default face");
         check(font_path("definitely-not-a-face.ttf").empty(),
               "font_path comes back empty for a face nobody has");
     }

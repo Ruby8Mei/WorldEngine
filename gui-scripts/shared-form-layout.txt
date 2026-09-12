@@ -1,11 +1,10 @@
 # Both screens after they were put on one shared row layout.
 #
-# Settings should carry no Back button: the wordmark went to the same
-# place, so the screen had two controls that meant one thing. Its title
-# recentres in the space that leaves.
+# Both screens use the clickable wordmark as their return control and carry
+# no separate Back button. Each title is centred in the shared header.
 #
-# Maintenance keeps its Back button and should now use the same growing
-# column as Settings, where it was stuck at a fixed 840 before.
+# Maintenance should use the same growing column as Settings, where it was
+# stuck at a fixed 840 before.
 move -5000 -5000
 wait 0.6
 key down

@@ -1,0 +1,40 @@
+wait 0.5
+alt on
+key s
+alt off
+wait 0.3
+ctrl on
+key f
+ctrl off
+type Frame rate limit
+wait 0.2
+move 500 184
+click
+wait 0.2
+shot frame-options
+key down
+key down
+key down
+key down
+key down
+key enter
+wait 0.2
+shot frame-180-pending
+move 200 850
+click
+wait 0.2
+ctrl on
+key f
+key a
+ctrl off
+type V-Sync
+wait 0.2
+move 410 184
+click
+wait 0.2
+shot vsync-off-pending
+move 200 850
+click
+wait 0.3
+shot frame-settings-applied
+quit

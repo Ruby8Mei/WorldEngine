@@ -64,14 +64,9 @@ def print_report(rows, csv_path):
                   f"len {r['input_length']}): {r['failure_detail']}")
 
 
-# A test case is identified by its position in the matrix (language,
-# category, config_index, message_index), not by its exact message text —
-# the RNG seed is fixed, so the same position means the same generated
-# settings/category run across two invocations, even if corpus content
-# changed slightly between them. That's what makes "did this position
-# regress" a meaningful question instead of an exact-string match.
 def test_key(r):
-    return (r["language"], r["category"], r["config_index"], r["message_index"])
+    return (r["language"], r["category"], r["config_index"], r["message_index"],
+            r.get("settings_id", ""))
 
 
 def compare(rows, baseline_rows):
@@ -89,14 +84,14 @@ def print_comparison(regressions, fixes, new_tests, removed_tests):
     print("\n--- Comparison against baseline ---")
     if regressions:
         print(f"REGRESSIONS ({len(regressions)}) — passed in baseline, now failing:")
-        for lang, cat, ci, mi in regressions:
-            print(f"  {lang}/{cat} config={ci} msg={mi}")
+        for lang, cat, ci, mi, settings_id in regressions:
+            print(f"  {lang}/{cat} config={ci} msg={mi} settings={settings_id}")
     else:
         print("No regressions.")
     if fixes:
         print(f"\nFixed ({len(fixes)}) — failed in baseline, now passing:")
-        for lang, cat, ci, mi in fixes:
-            print(f"  {lang}/{cat} config={ci} msg={mi}")
+        for lang, cat, ci, mi, settings_id in fixes:
+            print(f"  {lang}/{cat} config={ci} msg={mi} settings={settings_id}")
     if new_tests:
         print(f"\n{len(new_tests)} test case(s) present now but not in baseline "
               "(e.g. a new language or a longer corpus).")

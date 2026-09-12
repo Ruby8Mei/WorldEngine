@@ -127,7 +127,7 @@ int& wheel_generation() {
 
 Rotor make_rotor(const std::string& name, const Alphabet& alpha) {
     auto lit = loaded_rotors().find(name);
-    if (lit != loaded_rotors().end())
+    if (lit != loaded_rotors().end() && static_cast<int>(lit->second.wiring.size()) == alpha.size())
         return Rotor(name, lit->second.wiring, lit->second.notches, alpha);
     auto it = rotor_wirings().find(name);
     if (it == rotor_wirings().end()) throw std::invalid_argument("unknown rotor: " + name);
@@ -136,7 +136,8 @@ Rotor make_rotor(const std::string& name, const Alphabet& alpha) {
 
 Reflector make_reflector(const std::string& name, const Alphabet& alpha) {
     auto lit = loaded_reflectors().find(name);
-    if (lit != loaded_reflectors().end()) return Reflector(name, lit->second, alpha);
+    if (lit != loaded_reflectors().end() && static_cast<int>(lit->second.size()) == alpha.size())
+        return Reflector(name, lit->second, alpha);
     auto it = reflector_wirings().find(name);
     if (it == reflector_wirings().end()) throw std::invalid_argument("unknown reflector: " + name);
     return Reflector(name, it->second, alpha);
@@ -194,18 +195,44 @@ namespace {
 
 // The 2.2.x plain-text wheel file. Kept only so an existing one can be
 // converted on first run — nothing writes this format any more.
-void parse_wheel_text(std::istream& f, std::map<std::string, Wiring>& rot,
-                      std::map<std::string, std::string>& refl) {
+bool parse_wheel_text(std::istream& f, std::map<std::string, Wiring>& rot,
+                      std::map<std::string, std::string>& refl,
+                      std::vector<std::string>* problems) {
     std::string line;
+    std::size_t line_number = 0;
+    bool valid = true;
     while (std::getline(f, line)) {
+        ++line_number;
         if (line.empty() || line[0] == '#') continue;
         std::istringstream is(line);
         std::string kind, name, wiring, notches;
-        if (!(is >> kind >> name >> wiring)) continue;
-        is >> notches;  // optional, rotors only
-        if (kind == "rotor")          rot[name] = Wiring{wiring, notches};
-        else if (kind == "reflector") refl[name] = wiring;
+        if (!(is >> kind >> name >> wiring)) {
+            note(problems, "line " + std::to_string(line_number) + ": incomplete wheel entry");
+            valid = false;
+            continue;
+        }
+        is >> notches;
+        if (kind == "rotor") {
+            if (!rot.emplace(name, Wiring{wiring, notches}).second) {
+                note(problems, "line " + std::to_string(line_number) + ": duplicate rotor ID");
+                valid = false;
+            }
+        } else if (kind == "reflector") {
+            if (!notches.empty()) {
+                note(problems, "line " + std::to_string(line_number) +
+                                   ": reflector entry has notch data");
+                valid = false;
+            }
+            if (!refl.emplace(name, wiring).second) {
+                note(problems, "line " + std::to_string(line_number) + ": duplicate reflector ID");
+                valid = false;
+            }
+        } else {
+            note(problems, "line " + std::to_string(line_number) + ": unknown wheel kind");
+            valid = false;
+        }
     }
+    return valid;
 }
 
 // The JSON wheel format. Both arrays are optional, which is what lets the
@@ -221,35 +248,103 @@ bool parse_wheel_json(std::istream& f, std::map<std::string, Wiring>& rot,
         note(problems, "not readable as JSON");
         return false;
     }
-    if (j.contains("rotors") && j["rotors"].is_array()) {
-        for (const auto& e : j["rotors"]) {
-            if (!e.is_object() || !e.contains("name") || !e.contains("wiring")) continue;
-            if (!e["name"].is_string() || !e["wiring"].is_string()) continue;
+    bool valid = true;
+    bool has_catalogue = false;
+    if (j.contains("rotors")) {
+        has_catalogue = true;
+        if (!j["rotors"].is_array()) {
+            note(problems, "rotors must be an array");
+            valid = false;
+        } else for (std::size_t index = 0; index < j["rotors"].size(); ++index) {
+            const auto& e = j["rotors"][index];
+            const std::string where = "rotor entry " + std::to_string(index + 1);
+            if (!e.is_object()) {
+                note(problems, where + " is not an object");
+                valid = false;
+                continue;
+            }
+            if (!e.contains("name") || !e["name"].is_string() ||
+                e["name"].get<std::string>().empty()) {
+                note(problems, where + " has no valid ID");
+                valid = false;
+                continue;
+            }
+            if (!e.contains("wiring") || !e["wiring"].is_string() ||
+                e["wiring"].get<std::string>().empty()) {
+                note(problems, where + " has no valid wiring");
+                valid = false;
+                continue;
+            }
             std::string notches;
-            if (e.contains("notches") && e["notches"].is_string())
+            if (e.contains("notches")) {
+                if (!e["notches"].is_string()) {
+                    note(problems, where + " has non-string notch data");
+                    valid = false;
+                    continue;
+                }
                 notches = e["notches"].get<std::string>();
-            rot[e["name"].get<std::string>()] = Wiring{e["wiring"].get<std::string>(), notches};
+            }
+            if (!rot.emplace(e["name"].get<std::string>(),
+                             Wiring{e["wiring"].get<std::string>(), notches}).second) {
+                note(problems, where + " duplicates a rotor ID");
+                valid = false;
+            }
         }
     }
-    if (j.contains("reflectors") && j["reflectors"].is_array()) {
-        for (const auto& e : j["reflectors"]) {
-            if (!e.is_object() || !e.contains("name") || !e.contains("wiring")) continue;
-            if (!e["name"].is_string() || !e["wiring"].is_string()) continue;
-            refl[e["name"].get<std::string>()] = e["wiring"].get<std::string>();
+    if (j.contains("reflectors")) {
+        has_catalogue = true;
+        if (!j["reflectors"].is_array()) {
+            note(problems, "reflectors must be an array");
+            valid = false;
+        } else for (std::size_t index = 0; index < j["reflectors"].size(); ++index) {
+            const auto& e = j["reflectors"][index];
+            const std::string where = "reflector entry " + std::to_string(index + 1);
+            if (!e.is_object()) {
+                note(problems, where + " is not an object");
+                valid = false;
+                continue;
+            }
+            if (!e.contains("name") || !e["name"].is_string() ||
+                e["name"].get<std::string>().empty()) {
+                note(problems, where + " has no valid ID");
+                valid = false;
+                continue;
+            }
+            if (!e.contains("wiring") || !e["wiring"].is_string() ||
+                e["wiring"].get<std::string>().empty()) {
+                note(problems, where + " has no valid wiring");
+                valid = false;
+                continue;
+            }
+            if (e.contains("notches")) {
+                note(problems, where + " has notch data");
+                valid = false;
+                continue;
+            }
+            if (!refl.emplace(e["name"].get<std::string>(),
+                              e["wiring"].get<std::string>()).second) {
+                note(problems, where + " duplicates a reflector ID");
+                valid = false;
+            }
         }
     }
-    return true;
+    if (!has_catalogue) {
+        note(problems, "document contains no wheel catalogue");
+        valid = false;
+    } else if (rot.empty() && refl.empty()) {
+        note(problems, "wheel catalogue is empty");
+        valid = false;
+    }
+    return valid;
 }
 
 // Validation and installation, shared by every parser above. Unchanged
 // from when it was inline in load_wheel_file: it only ever looked at the
 // parsed maps, never at the file, which is why the format could change
 // without it moving.
-int install_wheels(std::map<std::string, Wiring>& rot, std::map<std::string, std::string>& refl,
-                   std::vector<std::string>* problems) {
-    if (rot.empty() && refl.empty()) return 0;
-
-    // ---- validate before anything is trusted -------------------------
+bool wheel_maps_valid(const std::map<std::string, Wiring>& rot,
+                      const std::map<std::string, std::string>& refl,
+                      std::vector<std::string>* problems) {
     bool bad = false;
 
     std::map<std::string, std::vector<std::string> > by_wiring;
@@ -277,6 +372,28 @@ int install_wheels(std::map<std::string, Wiring>& rot, std::map<std::string, std
             bad = true;
             note(problems, "rotor " + it->second.front() +
                  " is a rotation of the alphabet, not a permutation — a shift cipher");
+        } else {
+            const std::string& notches = rot.find(it->second.front())->second.notches;
+            if (static_cast<int>(notches.size()) > s->max_notches) {
+                bad = true;
+                note(problems, "rotor " + it->second.front() + ": too many notch symbols");
+            }
+            std::string seen;
+            for (char notch : notches) {
+                if (s->alphabet.find(notch) == std::string::npos) {
+                    bad = true;
+                    note(problems, "rotor " + it->second.front() +
+                                       ": notch is outside the suite alphabet");
+                    break;
+                }
+                if (seen.find(notch) != std::string::npos) {
+                    bad = true;
+                    note(problems, "rotor " + it->second.front() +
+                                       ": duplicate notch symbol");
+                    break;
+                }
+                seen += notch;
+            }
         }
     }
 
@@ -301,13 +418,31 @@ int install_wheels(std::map<std::string, Wiring>& rot, std::map<std::string, std
             bad = true;
             note(problems, "reflector " + it->second.front() +
                  ": wiring is not a permutation of the " + s->name + " alphabet");
+        } else {
+            Alphabet alpha(s->alphabet);
+            for (size_t i = 0; i < wiring.size(); ++i) {
+                const int mapped = alpha.index(wiring[i]);
+                if (mapped == static_cast<int>(i)) {
+                    bad = true;
+                    note(problems, "reflector " + it->second.front() + ": wiring has a fixed point");
+                    break;
+                }
+                if (alpha.index(wiring[static_cast<size_t>(mapped)]) != static_cast<int>(i)) {
+                    bad = true;
+                    note(problems, "reflector " + it->second.front() + ": wiring is not an involution");
+                    break;
+                }
+            }
         }
     }
 
-    if (bad) {
-        note(problems, "file rejected — regenerate it, and discard anything enciphered with it");
-        return 0;
-    }
+    if (bad) note(problems, "file rejected — regenerate it, and discard anything enciphered with it");
+    return !bad;
+}
+
+int install_wheels(std::map<std::string, Wiring>& rot, std::map<std::string, std::string>& refl,
+                   std::vector<std::string>* problems) {
+    if (!wheel_maps_valid(rot, refl, problems)) return 0;
 
     for (std::map<std::string, Wiring>::const_iterator it = rot.begin(); it != rot.end(); ++it)
         loaded_rotors()[it->first] = it->second;
@@ -363,6 +498,26 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
     return install_wheels(rot, refl, problems);
 }
 
+bool validate_wheel_file(const std::string& path, std::vector<std::string>* problems) {
+    std::ifstream f(path);
+    if (!f) {
+        note(problems, "cannot read wheel file");
+        return false;
+    }
+    std::map<std::string, Wiring> rot;
+    std::map<std::string, std::string> refl;
+    if (!parse_wheel_json(f, rot, refl, problems)) return false;
+    return wheel_maps_valid(rot, refl, problems);
+}
+
+bool validate_wheel_document(const std::string& json, std::vector<std::string>* problems) {
+    std::istringstream input(json);
+    std::map<std::string, Wiring> rot;
+    std::map<std::string, std::string> refl;
+    if (!parse_wheel_json(input, rot, refl, problems)) return false;
+    return wheel_maps_valid(rot, refl, problems);
+}
+
 int migrate_wheels_from_text(const std::string& txt_path, const std::string& rotors_path,
                              const std::string& reflectors_path,
                              std::vector<std::string>* problems) {
@@ -376,8 +531,9 @@ int migrate_wheels_from_text(const std::string& txt_path, const std::string& rot
 
     std::map<std::string, Wiring> rot;
     std::map<std::string, std::string> refl;
-    parse_wheel_text(src, rot, refl);
+    if (!parse_wheel_text(src, rot, refl, problems)) return 0;
     if (rot.empty() && refl.empty()) return 0;
+    if (!wheel_maps_valid(rot, refl, problems)) return 0;
 
     // The originals are never deleted. They are key material, and a
     // conversion that eats the only copy of the wheels a message was

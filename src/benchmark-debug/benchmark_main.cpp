@@ -9,6 +9,7 @@
 // speed.
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -202,6 +203,7 @@ struct Result {
     long long test_id;
     std::string language, category;
     int config_index, message_index;
+    std::string settings_id;
     size_t input_length;
     double encrypt_us, decrypt_us;
     size_t chars_processed;
@@ -212,7 +214,7 @@ struct Result {
 
 void write_row(std::ofstream& log, const Result& r) {
     log << r.test_id << ',' << r.language << ',' << r.category << ',' << r.config_index << ','
-        << r.message_index << ',' << r.input_length << ',' << r.encrypt_us << ',' << r.decrypt_us
+        << r.message_index << ',' << r.settings_id << ',' << r.input_length << ',' << r.encrypt_us << ',' << r.decrypt_us
         << ',' << r.chars_processed << ',' << r.chars_per_sec << ',' << (r.success ? 1 : 0) << ','
         << csv_escape(r.detail) << "\n";
 }
@@ -222,6 +224,39 @@ Machine machine_from_generated(const GeneratedSettings& g) {
     Settings s;
     parse_settings_block(iss, s, nullptr);
     return build_machine(s);
+}
+
+GeneratedSettings benchmark_settings(const Suite& su, const std::string& identity) {
+    std::vector<std::uint32_t> seed{0xC0FFEEu, 1u};
+    for (unsigned char c : identity) seed.push_back(c);
+    std::seed_seq sequence(seed.begin(), seed.end());
+    std::mt19937 rng(sequence);
+    Alphabet alpha(su.alphabet);
+
+    GeneratedSettings g;
+    g.suite_code = su.code;
+    std::vector<std::string> rotors = available_rotors(su);
+    std::shuffle(rotors.begin(), rotors.end(), rng);
+    g.rotors.assign(rotors.begin(), rotors.begin() + su.min_rotors);
+    const std::vector<std::string> reflectors = available_reflectors(su);
+    g.reflector = reflectors[rng() % reflectors.size()];
+    for (int i = 0; i < su.min_rotors; ++i)
+        g.rings.push_back(1 + static_cast<int>(rng() % static_cast<std::uint32_t>(alpha.size())));
+
+    std::string notch_symbols = alpha.str();
+    std::shuffle(notch_symbols.begin(), notch_symbols.end(), rng);
+    for (int i = 0; i < su.min_rotors; ++i)
+        g.notches.push_back(std::string(1, notch_symbols[static_cast<size_t>(i)]));
+
+    std::string plug_symbols = alpha.str();
+    std::shuffle(plug_symbols.begin(), plug_symbols.end(), rng);
+    const int plug_pairs = su.max_plug_pairs / 2;
+    for (int i = 0; i < plug_pairs; ++i)
+        g.plugs.push_back(plug_symbols.substr(static_cast<size_t>(i * 2), 2));
+
+    for (int i = 0; i < su.min_rotors + 1; ++i)
+        g.master_key.push_back(alpha.at(static_cast<int>(rng() % static_cast<std::uint32_t>(alpha.size()))));
+    return g;
 }
 
 // ── rotor movement survey ───────────────────────────────────────────────
@@ -340,7 +375,7 @@ int main(int argc, char** argv) {
 
     std::ofstream log(args.out);
     if (!log) { std::cerr << "cannot write " << args.out << "\n"; return 1; }
-    log << "test_id,language,category,config_index,message_index,input_length,"
+    log << "test_id,language,category,config_index,message_index,settings_id,input_length,"
            "encrypt_time_us,decrypt_time_us,chars_processed,chars_per_sec,success,"
            "failure_detail\n";
 
@@ -371,7 +406,9 @@ int main(int argc, char** argv) {
             if (cat == "edge_case") edges = edge_cases();
 
             for (int ci = 0; ci < args.configs; ++ci) {
-                GeneratedSettings g = random_settings(su, su.min_rotors, su.max_plug_pairs / 2, 1);
+                const std::string settings_id = "v1:" + lang + ":" + cat + ":" +
+                                                std::to_string(ci + 1);
+                GeneratedSettings g = benchmark_settings(su, settings_id);
                 Machine machine = machine_from_generated(g);
                 Pipeline pipe(machine, cfg);
                 const Alphabet& alpha = machine.alphabet();
@@ -402,6 +439,7 @@ int main(int argc, char** argv) {
                     r.category = cat;
                     r.config_index = ci + 1;
                     r.message_index = mi + 1;
+                    r.settings_id = settings_id;
                     r.input_length = raw.size();
                     r.success = false;
                     ++total;
@@ -471,7 +509,7 @@ int main(int argc, char** argv) {
         }
         std::string text(std::istreambuf_iterator<char>(f), (std::istreambuf_iterator<char>()));
 
-        GeneratedSettings g = random_settings(su, su.min_rotors, su.max_plug_pairs / 2, 1);
+        GeneratedSettings g = benchmark_settings(su, "v1:hamlet:1");
         Machine machine = machine_from_generated(g);
         Pipeline pipe(machine, cfg);
         std::string folded = transform(text);

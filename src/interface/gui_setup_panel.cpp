@@ -310,8 +310,14 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
         // first keystroke starts a clean field instead of appending to a
         // suggestion they'd otherwise have to backspace through first.
         const Suite& su = suite(state_.suite_code);
-        master_key_placeholder_ =
-            secure_string(su.alphabet, static_cast<size_t>(validity_.master_key_needed_len));
+        try {
+            entropy_self_check();
+            master_key_placeholder_ =
+                secure_string(su.alphabet, static_cast<size_t>(validity_.master_key_needed_len));
+        } catch (const std::exception& e) {
+            master_key_placeholder_.clear();
+            std::cout << "[gui] key suggestion unavailable: " << e.what() << "\n";
+        }
         state_.master_key_prefilled = true;
     } else if (!unlocked) {
         state_.master_key_prefilled = false;
@@ -904,17 +910,8 @@ void SetupPanel::on_generate_clicked() {
         // the operator might have picked by hand, not always the biggest
         // one possible. (Legacy's rotor count is fixed min==max, so this is
         // a no-op there.)
-        int rotor_count = su.min_rotors + static_cast<int>(secure_below(
-                               static_cast<uint32_t>(su.max_rotors - su.min_rotors + 1)));
-        int plug_pairs = static_cast<int>(secure_below(static_cast<uint32_t>(su.max_plug_pairs + 1)));
-
-        // notches_per_rotor=1 here is just a safe placeholder for
-        // random_settings()'s own (fixed-count-for-everyone) notch fill —
-        // it gets discarded below in favor of random_variable_notches(),
-        // which draws each rotor's count independently.
-        GeneratedSettings g = random_settings(su, rotor_count, plug_pairs, /*notches_per_rotor=*/1);
-        if (!su.notches_are_fixed)
-            g.notches = random_variable_notches(Alphabet(su.alphabet), rotor_count, su.max_notches);
+        GeneratedSettings g = random_setup_settings(su);
+        int rotor_count = static_cast<int>(g.rotors.size());
         state_.rotor_count = rotor_count;
 
         for (int i = 0; i < kMaxRotors; ++i) {
@@ -945,12 +942,7 @@ void SetupPanel::on_generate_clicked() {
             state_.plug_right[i] = std::string(1, g.plugs[i][1]);
         }
 
-        // random_settings() always sizes the key rotor_count+1, but
-        // historic-lock suites (Legacy/Enigma) need exactly rotor_count —
-        // regenerate at the length this panel's own validity rule expects
-        // instead of reusing g.master_key verbatim.
-        FieldValidity v = derive_validity(state_);
-        state_.master_key_text = secure_string(su.alphabet, static_cast<size_t>(v.master_key_needed_len));
+        state_.master_key_text = g.master_key;
         state_.master_key_prefilled = true;
 
         // Same-frame resync, per the on_load_tile_picked pattern — must not

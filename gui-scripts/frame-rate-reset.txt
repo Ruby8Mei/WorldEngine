@@ -1,0 +1,15 @@
+wait 0.5
+alt on
+key s
+alt off
+wait 0.3
+shot frame-settings-reopened
+move 400 850
+click
+wait 0.2
+shot frame-defaults-pending
+move 200 850
+click
+wait 0.4
+shot frame-defaults-applied
+quit

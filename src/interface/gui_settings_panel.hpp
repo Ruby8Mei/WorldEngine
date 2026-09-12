@@ -70,7 +70,7 @@ private:
     float draw_accessibility(const GuiInput& in, float x, float y);
     float draw_graphics(const GuiInput& in, float x, float y);
     float draw_appearance(const GuiInput& in, float x, float y);
-    float draw_audio(float x, float y);
+    float draw_audio(const GuiInput& in, float x, float y);
     float draw_interface(const GuiInput& in, float x, float y);
     // One row, above the keyboard list: the tutorial, and a button that
     // plays it again.
@@ -96,6 +96,8 @@ private:
     int theme_idx_ = 0;
     int font_idx_ = 0;
     int zoom_idx_ = 0;
+    int frame_rate_idx_ = 0;
+    int audio_volume_idx_ = 0;
 
     // The font row's own entries, held rather than built where they are
     // needed, because the dropdown keeps a pointer to the list it was

@@ -91,6 +91,11 @@ std::string duplicate_notch_symbols(const std::vector<std::string>& notches_per_
 // go through this one reader.
 int load_wheel_file(const std::string& path, std::vector<std::string>* problems = 0);
 
+bool validate_wheel_file(const std::string& path, std::vector<std::string>* problems = 0);
+
+bool validate_wheel_document(const std::string& json,
+                             std::vector<std::string>* problems = 0);
+
 // The two files loaded automatically at startup. Rotors and reflectors are
 // kept apart so a bad reflector cannot cost you every rotor: a wheel file
 // is rejected whole, and splitting them halves what one bad entry takes
