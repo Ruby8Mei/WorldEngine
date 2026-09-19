@@ -62,6 +62,12 @@ struct FieldEdit {
 const size_t kUndoSteps = 5;
 std::map<const void*, FieldEdit> g_edits;
 
+size_t clamped_first_row(size_t first, size_t row_count, int visible_rows) {
+    const size_t shown = visible_rows > 0 ? static_cast<size_t>(visible_rows) : 0;
+    const size_t maximum = row_count > shown ? row_count - shown : 0;
+    return std::min(first, maximum);
+}
+
 FieldEdit& edit_state(const std::string& value) { return g_edits[&value]; }
 
 void push_undo(FieldEdit& e, const std::string& before) {
@@ -199,6 +205,7 @@ struct PendingDropdown {
     const std::vector<std::string>* options = nullptr;
     const std::vector<std::string>* item_fonts = nullptr;
     int* selected = nullptr;
+    DropdownSearchState* search = nullptr;
     DropdownFace face;
 };
 PendingDropdown g_pending;
@@ -316,6 +323,7 @@ GuiInput gate_input(const GuiInput& in, const Rect& r) {
     out.typed.clear();
     out.key_backspace = out.key_delete = out.key_clear = false;
     out.key_enter = out.key_escape = false;
+    out.key_tab = false;
     out.key_left = out.key_right = out.key_up = out.key_down = false;
     out.key_letter = 0;
     out.scroll_y = 0;
@@ -1229,14 +1237,19 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
         return multiline ? index_at_xy(mx, my) : index_at_x(mx);
     };
 
+    bool keep_caret_visible = false;
     if (focused) {
         // Click places the caret, and holding and moving selects from
         // there. The press already took the focus above.
         if (hit && in.mouse_pressed) {
             ed.caret = ed.anchor = index_at_pointer(in.mouse_x, in.mouse_y);
             ed.dragging = true;
+            keep_caret_visible = true;
         }
-        if (ed.dragging && in.mouse_held) ed.caret = index_at_pointer(in.mouse_x, in.mouse_y);
+        if (ed.dragging && in.mouse_held) {
+            ed.caret = index_at_pointer(in.mouse_x, in.mouse_y);
+            keep_caret_visible = true;
+        }
         if (!in.mouse_held) ed.dragging = false;
 
         auto sel_lo = [&]() { return ed.caret < ed.anchor ? ed.caret : ed.anchor; };
@@ -1261,11 +1274,13 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
                 // selection right in one key.
                 ed.caret = (lo != hi) ? lo : (previous_utf8(value, ed.caret));
                 ed.anchor = ed.caret;
+                keep_caret_visible = true;
             }
             if (in.key_right) {
                 ed.caret = (lo != hi) ? hi
                                       : (next_utf8(value, ed.caret));
                 ed.anchor = ed.caret;
+                keep_caret_visible = true;
             }
             if (in.key_up || in.key_down) {
                 if (multiline && !rows.empty()) {
@@ -1286,11 +1301,13 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
                     if (in.key_down) ed.caret = value.size();
                 }
                 ed.anchor = ed.caret;
+                keep_caret_visible = true;
             }
         }
 
         if (edit_text_input(value, ed, in, allowed, max_len, case_fold, unicode_text)) {
             changed = true;
+            keep_caret_visible = true;
             g_superfocus = &value;
             g_superfocus_seen = true;
         }
@@ -1306,15 +1323,29 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& raw, const st
     // the baked atlas has no kerning.
     if (multiline) {
         ed.view_start = 0;
-        const size_t cr = row_of(ed.caret);
-        if (cr < ed.first_row) ed.first_row = cr;
-        if (cr >= ed.first_row + static_cast<size_t>(lines))
-            ed.first_row = cr - static_cast<size_t>(lines) + 1;
-        // And no blank rows under the text when the text would fit.
-        const size_t max_first = rows.size() > static_cast<size_t>(lines)
-                                     ? rows.size() - static_cast<size_t>(lines)
-                                     : 0;
-        if (ed.first_row > max_first) ed.first_row = max_first;
+        if (in.scroll_y != 0.0 && rect_contains(r, in.mouse_x, in.mouse_y)) {
+            long movement = static_cast<long>(std::round(-in.scroll_y));
+            if (movement == 0) movement = in.scroll_y < 0.0 ? 1 : -1;
+            const size_t maximum = rows.size() > static_cast<size_t>(lines)
+                                       ? rows.size() - static_cast<size_t>(lines)
+                                       : 0;
+            if (movement < 0) {
+                const size_t amount = static_cast<size_t>(-movement);
+                ed.first_row = amount > ed.first_row ? 0 : ed.first_row - amount;
+            } else {
+                const size_t amount = static_cast<size_t>(movement);
+                ed.first_row = amount > maximum - std::min(ed.first_row, maximum)
+                                   ? maximum : ed.first_row + amount;
+            }
+        }
+        ed.first_row = clamped_first_row(ed.first_row, rows.size(), lines);
+        if (keep_caret_visible) {
+            const size_t cr = row_of(ed.caret);
+            if (cr < ed.first_row) ed.first_row = cr;
+            if (cr >= ed.first_row + static_cast<size_t>(lines))
+                ed.first_row = cr - static_cast<size_t>(lines) + 1;
+            ed.first_row = clamped_first_row(ed.first_row, rows.size(), lines);
+        }
     } else if (!center_text) {
         if (ed.view_start > ed.caret) ed.view_start = ed.caret;
         while (ed.view_start < ed.caret &&
@@ -1492,7 +1523,7 @@ void text_edit_self_test(const std::function<void(bool, const std::string&)>& ch
     in.key_letter = 'C';
     in.shift_held = true;
     edit_text_input(value, ed, in, "", 4096, CaseFold::None, true);
-    check(clipboard == "unchanged", "Ctrl+Shift+C remains available to composite copy");
+    check(clipboard == "unchanged", "Ctrl+Shift+C does not alter editable text");
     in.shift_held = false;
     in.alt_held = true;
     in.key_letter = 'X';
@@ -1579,11 +1610,83 @@ void draw_dropdown_face(const DropdownFace& f) {
     label(Rect{f.box.x + f.box.w - 16, f.box.y, 14, f.box.h}, f.open ? "^" : "v", f.dim);
 }
 
+std::string ascii_lower(std::string value) {
+    for (char& c : value)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return value;
+}
+
+std::vector<int> dropdown_matches(const std::vector<std::string>& options,
+                                  const std::string& query) {
+    std::vector<int> matches;
+    const std::string folded = ascii_lower(query);
+    for (size_t i = 0; i < options.size(); ++i)
+        if (ascii_lower(options[i]).find(folded) != std::string::npos)
+            matches.push_back(static_cast<int>(i));
+    return matches;
+}
+
+void reset_dropdown_search(DropdownSearchState& search, int selected) {
+    search.query.clear();
+    search.highlighted = selected;
+}
+
+struct SearchUpdate {
+    bool close = false;
+    bool changed = false;
+};
+
+SearchUpdate update_dropdown_search(const std::vector<std::string>& options,
+                                    DropdownSearchState& search, int& selected,
+                                    const GuiInput& in) {
+    SearchUpdate result;
+    for (unsigned int cp : in.typed) {
+        if (cp >= 32 && cp <= 126) {
+            search.query.push_back(static_cast<char>(cp));
+            result.changed = true;
+        }
+    }
+    if (in.key_backspace && !search.query.empty()) {
+        search.query.pop_back();
+        result.changed = true;
+    }
+    if (in.key_delete && !search.query.empty()) {
+        search.query.clear();
+        result.changed = true;
+    }
+
+    const std::vector<int> matches = dropdown_matches(options, search.query);
+    auto at = std::find(matches.begin(), matches.end(), search.highlighted);
+    if (result.changed || at == matches.end()) {
+        search.highlighted = matches.empty() ? -1 : matches.front();
+        at = matches.begin();
+    }
+    if (!matches.empty()) {
+        int position = static_cast<int>(std::distance(matches.begin(), at));
+        if (in.key_up && position > 0) --position;
+        if (in.key_down && position + 1 < static_cast<int>(matches.size())) ++position;
+        search.highlighted = matches[static_cast<size_t>(position)];
+    }
+
+    if (in.key_tab && search.highlighted >= 0) {
+        search.query = options[static_cast<size_t>(search.highlighted)];
+        result.changed = true;
+    }
+
+    if (in.key_escape) result.close = true;
+    if (in.key_enter && search.highlighted >= 0) {
+        selected = search.highlighted;
+        result.close = true;
+    }
+    return result;
+}
+
 }  // namespace
 
-void dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
-              int& open_dropdown_id, const GuiInput& raw, bool enabled, bool invalid,
-              const std::vector<std::string>* item_fonts) {
+static void dropdown_impl(const Rect& r, const std::vector<std::string>& options, int& selected,
+                          int id, int& open_dropdown_id, const GuiInput& raw, bool enabled,
+                          bool invalid, const std::vector<std::string>* item_fonts,
+                          DropdownSearchState* search) {
     // The list itself is not gated. It can only be open because a gated
     // dropdown opened it, and it is drawn later in the frame over the top
     // of everything, so the rows have to stay clickable where they are.
@@ -1629,12 +1732,16 @@ void dropdown(const Rect& r, const std::vector<std::string>& options, int& selec
         open_dropdown_id = is_open ? -1 : id;
         g_click_consumed_this_frame = true;
         is_open = !is_open;
+        if (search) reset_dropdown_search(*search, selected);
+        if (search && is_open) g_popup_scroll = 0.0f;
     }
     // Enter opens the list, and Enter inside it takes what is highlighted
     // and closes again -- see draw_open_dropdown_popup().
     if (kb && in.key_enter) {
         open_dropdown_id = is_open ? -1 : id;
         is_open = !is_open;
+        if (search) reset_dropdown_search(*search, selected);
+        if (search && is_open) g_popup_scroll = 0.0f;
     }
 
     if (is_open) {
@@ -1644,14 +1751,144 @@ void dropdown(const Rect& r, const std::vector<std::string>& options, int& selec
         g_pending.options = &options;
         g_pending.item_fonts = item_fonts;
         g_pending.selected = &selected;
+        g_pending.search = search;
         g_pending.face = face;
     }
 }
 
+void dropdown(const Rect& r, const std::vector<std::string>& options, int& selected, int id,
+              int& open_dropdown_id, const GuiInput& raw, bool enabled, bool invalid,
+              const std::vector<std::string>* item_fonts) {
+    dropdown_impl(r, options, selected, id, open_dropdown_id, raw, enabled, invalid, item_fonts,
+                  nullptr);
+}
+
+void searchable_dropdown(const Rect& r, const std::vector<std::string>& options, int& selected,
+                         int id, int& open_dropdown_id, DropdownSearchState& search,
+                         const GuiInput& raw, bool enabled, bool invalid) {
+    dropdown_impl(r, options, selected, id, open_dropdown_id, raw, enabled, invalid, nullptr,
+                  &search);
+}
+
 bool dropdown_popup_open() { return g_popup_drawn_this_frame; }
+
+static void draw_searchable_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
+    if (g_pending.id != g_popup_scroll_owner) {
+        g_popup_scroll = 0.0f;
+        g_popup_scroll_owner = g_pending.id;
+        g_popup_open_t = 0.0f;
+    }
+
+    const auto& options = *g_pending.options;
+    DropdownSearchState& search = *g_pending.search;
+    const float row_h = g_pending.box.h;
+    const float max_visible = 8.0f;
+    const bool list_was_up = g_popup_shown_last;
+    SearchUpdate update;
+    if (list_was_up) update = update_dropdown_search(options, search, *g_pending.selected, in);
+    if (update.changed) g_popup_scroll = 0.0f;
+
+    const std::vector<int> matches = dropdown_matches(options, search.query);
+    const float result_rows = matches.empty()
+                                  ? 1.0f
+                                  : std::min<float>(static_cast<float>(matches.size()), max_visible);
+    const float results_h = row_h * result_rows;
+    const float full_h = row_h + results_h;
+
+    g_popup_open_t += frame_dt();
+    float roll = 1.0f;
+    if (motion_enabled()) {
+        roll = std::clamp(g_popup_open_t / kPopupRollSeconds, 0.0f, 1.0f);
+        roll = 1.0f - (1.0f - roll) * (1.0f - roll);
+    }
+    const float list_h = full_h * roll;
+    Rect popup{g_pending.box.x, g_pending.box.y + g_pending.box.h, g_pending.box.w, list_h};
+    g_popup_rect_last = popup;
+    g_popup_drawn_this_frame = true;
+
+    const float max_scroll = matches.empty()
+                                 ? 0.0f
+                                 : std::max(0.0f, static_cast<float>(matches.size()) * row_h -
+                                                        results_h);
+    g_popup_scroll -= static_cast<float>(in.scroll_y) * row_h;
+    g_popup_scroll = std::clamp(g_popup_scroll, 0.0f, max_scroll);
+
+    if (list_was_up && (in.key_up || in.key_down) && search.highlighted >= 0) {
+        const auto found = std::find(matches.begin(), matches.end(), search.highlighted);
+        if (found != matches.end()) {
+            const float highlight_y = row_h * static_cast<float>(found - matches.begin());
+            if (highlight_y < g_popup_scroll) g_popup_scroll = highlight_y;
+            if (highlight_y + row_h > g_popup_scroll + results_h)
+                g_popup_scroll = highlight_y + row_h - results_h;
+            g_popup_scroll = std::clamp(g_popup_scroll, 0.0f, max_scroll);
+        }
+    }
+    if (update.close) open_dropdown_id = -1;
+
+    draw_rect(popup.x, popup.y, popup.w, popup.h, palette::panel());
+    draw_rect_outline(popup.x, popup.y, popup.w, popup.h, palette::accent());
+
+    begin_scissor(popup.x, popup.y, popup.w, popup.h);
+    const std::string search_text = search.query.empty() ? "Search: type to filter"
+                                                         : "Search: " + search.query;
+    label(Rect{popup.x + PAD, popup.y, popup.w - 2 * PAD, row_h}, search_text, false);
+    draw_rect(popup.x, popup.y + row_h - 1.0f, popup.w, 1.0f, palette::border());
+
+    bool clicked_inside = false;
+    const float results_y = popup.y + row_h;
+    if (matches.empty()) {
+        label(Rect{popup.x + PAD, results_y, popup.w - 2 * PAD, row_h},
+              "No matching languages", true);
+    } else {
+        for (size_t visible = 0; visible < matches.size(); ++visible) {
+            const int actual = matches[visible];
+            const float row_y = results_y + row_h * static_cast<float>(visible) - g_popup_scroll;
+            if (row_y + row_h < results_y || row_y > results_y + results_h) continue;
+            Rect row{popup.x, row_y, popup.w, row_h};
+            const bool hovered = rect_contains(row, in.mouse_x, in.mouse_y) &&
+                                 rect_contains(popup, in.mouse_x, in.mouse_y) &&
+                                 in.mouse_y >= results_y;
+            if (hovered) draw_rect(row.x, row.y, row.w, row.h, palette::border());
+            else if (actual == search.highlighted)
+                draw_rect(row.x, row.y, row.w, row.h,
+                          mix(palette::panel(), palette::border(), 0.5f));
+            label(Rect{row.x + PAD, row.y, row.w - 2 * PAD, row.h},
+                  options[static_cast<size_t>(actual)], false);
+            if (hovered && in.mouse_pressed) {
+                *g_pending.selected = actual;
+                open_dropdown_id = -1;
+                clicked_inside = true;
+            }
+        }
+    }
+    end_scissor();
+
+    if (max_scroll > 0.0f && results_h > 0.0f) {
+        const float content_h = static_cast<float>(matches.size()) * row_h;
+        const float thumb_h = std::max(12.0f, results_h * (results_h / content_h));
+        const float thumb_y = results_y + (results_h - thumb_h) * (g_popup_scroll / max_scroll);
+        draw_rect(popup.x + popup.w - 4, thumb_y, 3, thumb_h, palette::accent());
+    }
+
+    draw_dropdown_face(g_pending.face);
+
+    bool closed_outside = false;
+    if (in.mouse_pressed && !clicked_inside &&
+        !rect_contains(g_pending.box, in.mouse_x, in.mouse_y) &&
+        !rect_contains(popup, in.mouse_x, in.mouse_y)) {
+        open_dropdown_id = -1;
+        closed_outside = true;
+    }
+    if (update.close || clicked_inside || closed_outside)
+        reset_dropdown_search(search, *g_pending.selected);
+}
 
 void draw_open_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
     if (!g_pending.active || !g_pending.options) return;
+    if (g_pending.search) {
+        draw_searchable_dropdown_popup(in, open_dropdown_id);
+        return;
+    }
     if (g_pending.id != g_popup_scroll_owner) {
         g_popup_scroll = 0.0f;
         g_popup_scroll_owner = g_pending.id;
@@ -1765,31 +2002,191 @@ void draw_open_dropdown_popup(const GuiInput& in, int& open_dropdown_id) {
     }
 }
 
+void dropdown_search_self_test(const std::function<void(bool, const std::string&)>& check) {
+    const std::vector<std::string> options{"English", "French", "German", "Greek", "Spanish"};
+    DropdownSearchState search;
+    int selected = 0;
+    reset_dropdown_search(search, selected);
+
+    GuiInput in;
+    in.typed = {'f'};
+    SearchUpdate update = update_dropdown_search(options, search, selected, in);
+    check(search.query == "f" && search.highlighted == 1,
+          "language filtering matches displayed names without case sensitivity");
+    check(selected == 0 && !update.close,
+          "language filtering preserves the current selection while typing");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'G', 'r'};
+    update_dropdown_search(options, search, selected, in);
+    check(search.query == "Gr" && search.highlighted == 3,
+          "each language search character narrows the visible results");
+
+    in = GuiInput{};
+    in.key_backspace = true;
+    update_dropdown_search(options, search, selected, in);
+    check(search.query == "G" && search.highlighted == 0,
+          "Backspace removes the final language search character");
+
+    in = GuiInput{};
+    in.key_down = true;
+    update_dropdown_search(options, search, selected, in);
+    check(search.highlighted == 2 && selected == 0,
+          "language arrows move only through filtered results");
+
+    in = GuiInput{};
+    in.key_enter = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(update.close && selected == 2,
+          "Enter selects the highlighted filtered language");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'s'};
+    update_dropdown_search(options, search, selected, in);
+    in = GuiInput{};
+    in.key_escape = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(update.close && selected == 2,
+          "Escape closes language search without changing the selection");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'z', 'z'};
+    update = update_dropdown_search(options, search, selected, in);
+    check(search.highlighted == -1 && selected == 2 && !update.close,
+          "a language search with no results preserves the selection");
+    in = GuiInput{};
+    in.key_enter = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(!update.close && selected == 2,
+          "Enter cannot select from an empty language result list");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'s', 'p'};
+    update_dropdown_search(options, search, selected, in);
+    in = GuiInput{};
+    in.key_tab = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(search.query == "Spanish" && search.highlighted == 4 && selected == 2 && !update.close,
+          "Tab completes a unique language result without selecting it");
+    in = GuiInput{};
+    in.key_delete = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(search.query.empty() && selected == 2 && !update.close,
+          "Delete clears a completed language query without selecting it");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'e'};
+    update_dropdown_search(options, search, selected, in);
+    in = GuiInput{};
+    in.key_down = true;
+    update_dropdown_search(options, search, selected, in);
+    const int multiple_highlight = search.highlighted;
+    in = GuiInput{};
+    in.key_tab = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(multiple_highlight >= 0 &&
+              search.query == options[static_cast<size_t>(multiple_highlight)] && selected == 2 &&
+              !update.close,
+          "Tab completes the highlighted language among multiple results without selecting it");
+
+    reset_dropdown_search(search, selected);
+    in = GuiInput{};
+    in.typed = {'z', 'z'};
+    update_dropdown_search(options, search, selected, in);
+    in = GuiInput{};
+    in.key_tab = true;
+    update = update_dropdown_search(options, search, selected, in);
+    check(search.query == "zz" && search.highlighted == -1 && selected == 2 && !update.close,
+          "Tab leaves a zero-result language query and selection unchanged");
+}
+
 // ── scrolling ───────────────────────────────────────────────────────────
 
 namespace {
 
 constexpr float kScrollStep = 48.0f;
-constexpr float kScrollBarW = 4.0f;
+constexpr float kScrollBarW = 12.0f;
+constexpr float kScrollThumbMinH = 28.0f;
+
+float* g_scroll_drag_owner = nullptr;
+float g_scroll_drag_grab = 0.0f;
 
 float scroll_span(float top, float height, float content_height) {
     float view_h = height - top;
     return content_height > view_h ? content_height - view_h : 0.0f;
 }
 
+float clamped_scroll(float scroll, float maximum) {
+    return std::clamp(scroll, 0.0f, maximum);
+}
+
+struct ScrollGeometry {
+    float maximum = 0.0f;
+    float view_h = 0.0f;
+    float track_x = 0.0f;
+    float thumb_h = 0.0f;
+    float thumb_y = 0.0f;
+};
+
+ScrollGeometry scroll_geometry(float top, float width, float height, float scroll,
+                               float content_height) {
+    ScrollGeometry out;
+    out.maximum = scroll_span(top, height, content_height);
+    out.view_h = std::max(0.0f, height - top);
+    out.track_x = width - kScrollBarW - 2.0f;
+    if (out.maximum <= 0.0f || out.view_h <= 0.0f) return out;
+    out.thumb_h = std::min(out.view_h,
+                           std::max(kScrollThumbMinH, out.view_h * (out.view_h / content_height)));
+    const float travel = out.view_h - out.thumb_h;
+    out.thumb_y = top + travel * (clamped_scroll(scroll, out.maximum) / out.maximum);
+    return out;
+}
+
+void update_scroll_region(float top, float width, float height, float& scroll,
+                          float content_height, const GuiInput& in) {
+    ScrollGeometry geo = scroll_geometry(top, width, height, scroll, content_height);
+    scroll = clamped_scroll(scroll, geo.maximum);
+
+    const bool pointer_inside = in.mouse_x >= 0.0 && in.mouse_x <= width &&
+                                in.mouse_y >= top && in.mouse_y <= height;
+    if (in.scroll_y != 0.0 && pointer_inside)
+        scroll = clamped_scroll(scroll - static_cast<float>(in.scroll_y) * kScrollStep,
+                                geo.maximum);
+
+    geo = scroll_geometry(top, width, height, scroll, content_height);
+    const Rect thumb{geo.track_x, geo.thumb_y, kScrollBarW, geo.thumb_h};
+    if (geo.maximum > 0.0f && in.mouse_pressed &&
+        rect_contains(thumb, in.mouse_x, in.mouse_y)) {
+        g_scroll_drag_owner = &scroll;
+        g_scroll_drag_grab = static_cast<float>(in.mouse_y) - geo.thumb_y;
+        g_click_consumed_this_frame = true;
+    }
+
+    if (g_scroll_drag_owner == &scroll) {
+        if (!in.mouse_held) {
+            g_scroll_drag_owner = nullptr;
+        } else {
+            const float travel = geo.view_h - geo.thumb_h;
+            const float thumb_y = std::clamp(static_cast<float>(in.mouse_y) - g_scroll_drag_grab,
+                                             top, top + travel);
+            scroll = travel > 0.0f ? (thumb_y - top) * geo.maximum / travel : 0.0f;
+        }
+    }
+
+    scroll = clamped_scroll(scroll, geo.maximum);
+    if (geo.maximum <= 0.0f && g_scroll_drag_owner == &scroll) g_scroll_drag_owner = nullptr;
+}
+
 }  // namespace
 
 float begin_scroll_region(float top, float width, float height, float& scroll,
                           float content_height, const GuiInput& in) {
-    const float max_scroll = scroll_span(top, height, content_height);
-
-    // Only while the pointer is actually over the region, so a wheel event
-    // meant for something else does not move the page underneath it.
-    if (in.scroll_y != 0.0 && in.mouse_y >= top)
-        scroll -= static_cast<float>(in.scroll_y) * kScrollStep;
-
-    if (scroll > max_scroll) scroll = max_scroll;
-    if (scroll < 0.0f) scroll = 0.0f;
+    update_scroll_region(top, width, height, scroll, content_height, in);
 
     begin_scissor(0.0f, top, width, height - top);
     return top - scroll;
@@ -1799,16 +2196,40 @@ void end_scroll_region(float top, float width, float height, float scroll,
                        float content_height) {
     end_scissor();
 
-    const float max_scroll = scroll_span(top, height, content_height);
-    if (max_scroll <= 0.0f) return;  // everything fits; no bar to draw
+    const ScrollGeometry geo = scroll_geometry(top, width, height, scroll, content_height);
+    if (geo.maximum <= 0.0f) return;
+    draw_rect(geo.track_x, top, kScrollBarW, geo.view_h, palette::disabled_bg());
+    draw_rect(geo.track_x, geo.thumb_y, kScrollBarW, geo.thumb_h, palette::accent());
+}
 
-    const float view_h = height - top;
-    const float track_x = width - kScrollBarW - 2.0f;
-    draw_rect(track_x, top, kScrollBarW, view_h, palette::disabled_bg());
+void scroll_region_self_test(const std::function<void(bool, const std::string&)>& check) {
+    check(clamped_first_row(7, 3, 2) == 1 && clamped_first_row(4, 1, 2) == 0,
+          "multiline field scroll clamps after content changes");
 
-    float thumb_h = std::max(24.0f, view_h * (view_h / content_height));
-    float thumb_y = top + (view_h - thumb_h) * (scroll / max_scroll);
-    draw_rect(track_x, thumb_y, kScrollBarW, thumb_h, palette::accent());
+    float scroll = 900.0f;
+    GuiInput in;
+    update_scroll_region(100.0f, 800.0f, 600.0f, scroll, 400.0f, in);
+    check(scroll == 0.0f, "panel scroll clamps when resize or zoom makes content fit");
+
+    scroll = 240.0f;
+    const ScrollGeometry start = scroll_geometry(100.0f, 800.0f, 600.0f, scroll, 1100.0f);
+    in.mouse_x = start.track_x + 1.0f;
+    in.mouse_y = start.thumb_y + 4.0f;
+    in.mouse_pressed = true;
+    in.mouse_held = true;
+    update_scroll_region(100.0f, 800.0f, 600.0f, scroll, 1100.0f, in);
+    in.mouse_pressed = false;
+    in.mouse_y = 1000.0f;
+    update_scroll_region(100.0f, 800.0f, 600.0f, scroll, 1100.0f, in);
+    const bool bottom = scroll == 600.0f;
+    in.mouse_y = -100.0f;
+    update_scroll_region(100.0f, 800.0f, 600.0f, scroll, 1100.0f, in);
+    const bool top_clamped = scroll == 0.0f;
+    in.mouse_held = false;
+    in.mouse_released = true;
+    update_scroll_region(100.0f, 800.0f, 600.0f, scroll, 1100.0f, in);
+    check(bottom && top_clamped && g_scroll_drag_owner == nullptr,
+          "scroll thumb drag clamps outside the track and releases cleanly");
 }
 
 // ── modals ──────────────────────────────────────────────────────────────

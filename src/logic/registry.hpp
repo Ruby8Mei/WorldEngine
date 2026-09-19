@@ -116,5 +116,7 @@ int migrate_wheels_from_text(const std::string& txt_path, const std::string& rot
 // Every wheel usable with this suite — built in and loaded — sorted.
 std::vector<std::string> available_rotors(const Suite& s);
 std::vector<std::string> available_reflectors(const Suite& s);
+bool normal_rotor_name_is_eligible(const Suite& s, const std::string& name);
+bool normal_reflector_name_is_eligible(const Suite& s, const std::string& name);
 
 }  // namespace inop

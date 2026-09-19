@@ -35,6 +35,7 @@ struct GuiInput {
     bool key_clear = false;
     bool key_enter = false;
     bool key_escape = false;
+    bool key_tab = false;
     // The four arrows move the keyboard focus from control to control, by
     // position rather than by draw order -- see resolve_focus() below. An
     // open dropdown takes them for its own list instead.
@@ -321,6 +322,17 @@ void dropdown(const Rect& r, const std::vector<std::string>& options, int& selec
               int& open_dropdown_id, const GuiInput& in, bool enabled, bool invalid = false,
               const std::vector<std::string>* item_fonts = nullptr);
 
+struct DropdownSearchState {
+    std::string query;
+    int highlighted = -1;
+};
+
+void searchable_dropdown(const Rect& r, const std::vector<std::string>& options, int& selected,
+                         int id, int& open_dropdown_id, DropdownSearchState& search,
+                         const GuiInput& in, bool enabled, bool invalid = false);
+
+void dropdown_search_self_test(const std::function<void(bool, const std::string&)>& check);
+
 // Whether a dropdown list is open on screen. gui.cpp asks so that Escape
 // closes the list rather than leaving the screen: with a list open the key
 // plainly means the list, and answering both would do two things at once.
@@ -355,6 +367,7 @@ float begin_scroll_region(float top, float width, float height, float& scroll,
 // than being clipped by it.
 void end_scroll_region(float top, float width, float height, float scroll,
                        float content_height);
+void scroll_region_self_test(const std::function<void(bool, const std::string&)>& check);
 
 // ── modals ──────────────────────────────────────────────────────────────
 //

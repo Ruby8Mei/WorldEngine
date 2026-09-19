@@ -16,7 +16,7 @@ namespace inop {
 namespace gui {
 
 struct SavedConfigInfo {
-    std::string filename;  // e.g. "INOP-7.json" or "Enigma-42.json"
+    std::string filename;
     std::string path;       // setup/<filename>
     // Read from the file's own "suite_code" field (not guessed from the
     // filename — a custom-named save wouldn't follow the INOP-x/Enigma-x
@@ -24,6 +24,7 @@ struct SavedConfigInfo {
     // at all (still listed; clicking it surfaces the usual corruption
     // popup via load_config()).
     std::string suite_code;
+    bool legacy = false;
 };
 
 // One hard-coded, load-only reference configuration — shown in its own
@@ -43,9 +44,10 @@ const std::vector<DeveloperPreset>& developer_presets();
 // in setup/ and one more tile in the Load Setup panel, so
 // this keeps suggest_filename() from proposing unbounded numbers.
 constexpr int kMaxSavedPerSuite = 360;
+constexpr const char* kSetupExtension = ".inop";
+constexpr const char* kSetupFormatIdentity = "INOP_SETUP_PRESET";
+constexpr int kSetupFormatVersion = 2;
 
-// Ensures setup/ exists (creating it if absent) and returns
-// every *.json file found there, sorted by filename.
 std::vector<SavedConfigInfo> list_configs();
 
 bool config_exists(const std::string& filename);
@@ -57,8 +59,6 @@ bool config_exists(const std::string& filename);
 // operator can still type an arbitrary custom name via the same field.
 std::string suggest_filename(const PanelState& state);
 
-// Writes state as JSON to setup/<filename>. `filename` should
-// already include ".json". Returns false + *error on I/O failure.
 bool save_config(const PanelState& state, const std::string& filename, std::string* error);
 
 // Parses `path`, then re-runs the same validation rules used live
@@ -68,7 +68,8 @@ bool save_config(const PanelState& state, const std::string& filename, std::stri
 // not modify `out`. This is the sole authority for "is this file
 // corrupted" — the Load/Overwrite tile panel shows the corruption popup
 // exactly when this returns false.
-bool load_config(const std::string& path, PanelState& out, std::string* error);
+bool load_config(const std::string& path, PanelState& out, std::string* error,
+                 bool* migration_import = nullptr);
 
 // Removes the file at `path`. Returns false + *error on failure (e.g. the
 // file is already gone, or is locked by another process).

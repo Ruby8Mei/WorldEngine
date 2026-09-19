@@ -56,6 +56,8 @@ FieldValidity derive_validity(const PanelState& state) {
     FieldValidity v;
     const Suite& su = suite(state.suite_code);
     Alphabet alpha(su.alphabet);
+    v.marker_ok = su.historic_lock ? state.marker_text.empty()
+                                   : setup_marker_valid(state.marker_text, alpha);
 
     v.rotor_count_ok = state.rotor_count >= su.min_rotors && state.rotor_count <= su.max_rotors;
 
@@ -235,6 +237,7 @@ Settings settings_from_panel(const PanelState& state) {
         if (pair.size() == 2) s.plugs.push_back(pair);
     }
     s.master_key = state.master_key_text;
+    s.marker = state.marker_text;
     return s;
 }
 
@@ -275,6 +278,7 @@ void SetupPanel::sync_state_from_indices() {
         if (new_suite != state_.suite_code) {
             state_.suite_code = new_suite;
             on_suite_changed(state_);
+            ui_.marker_note.clear();
             return;  // suite change already re-clamped/cleared everything below
         }
     }
@@ -336,6 +340,7 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
         in.mouse_released = false;
         in.typed.clear();
         in.key_backspace = in.key_enter = in.key_escape = false;
+        in.key_tab = false;
         // The arrows and the shortcut letter go too, the same way gui.cpp
         // empties them for the screen under its own modals. The focus
         // itself is held by the overlay's modal layer rather than by this,
@@ -352,7 +357,8 @@ void SetupPanel::frame(const GuiInput& real_in, int width, int height) {
     // setup complete enough to be worth writing, which is the same test
     // the Save Setup button uses. key_letter is already empty when a
     // modal is up, so neither can fire behind one.
-    const bool savable = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
+    const bool savable = validity_.all_mandatory_ok && validity_.marker_ok &&
+                         master_key_valid(state_, validity_);
     if (in.ctrl_held && in.key_letter == 'S' && savable) {
         if (in.shift_held) {
             open_create_name_modal();
@@ -442,7 +448,8 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
         label(Rect{16, pad + word_th + 6.0f, 400.0f, 18.0f}, line, true);
     }
 
-    bool next_enabled = validity_.all_mandatory_ok && master_key_valid(state_, validity_);
+    bool next_enabled = validity_.all_mandatory_ok && validity_.marker_ok &&
+                        master_key_valid(state_, validity_);
     float btn_w = 150, btn_h = 30, gap = 6;
     Rect next_r{width - btn_w - 16, pad, btn_w, btn_h};
     // Named for the tutorial. See gui_widgets.hpp -- a landmark is a
@@ -509,7 +516,8 @@ void SetupPanel::draw_top_row(const GuiInput& in, float width, float y, float h)
         float lang_w = dropdown_content_width(language_labels_, 120.0f, 220.0f);
         Rect lang_r{left.x, left.y + 78, lang_w, 30};
         set_landmark("setup.language", lang_r);
-        dropdown(lang_r, language_labels_, language_idx_, 1, ui_.open_dropdown_id, in, true);
+        searchable_dropdown(lang_r, language_labels_, language_idx_, 1, ui_.open_dropdown_id,
+                            ui_.language_search, in, true);
     }
 
     draw_master_key(in, center);
@@ -550,6 +558,37 @@ void SetupPanel::draw_master_key(const GuiInput& in, Rect area) {
     std::string hint = unlocked ? ("length " + std::to_string(validity_.master_key_needed_len))
                                  : "locked - fill every other field first";
     label(Rect{area.x, area.y + 54, area.w, 16}, hint, true);
+
+    if (su.historic_lock) {
+        label(Rect{area.x, area.y + 86, area.w, 18}, "setup marker disabled in Legacy", true);
+        return;
+    }
+
+    label(Rect{area.x, area.y + 82, area.w, 18}, "setup marker");
+    const float marker_w = std::min(area.w - 148.0f, 280.0f);
+    Rect marker_r{area.x, area.y + 104, marker_w, 30};
+    set_landmark("setup.marker", marker_r);
+    if (text_field(marker_r, state_.marker_text, in, su.alphabet, kSetupMarkerLength,
+                   true, !state_.marker_text.empty() && !validity_.marker_ok, fold))
+        ui_.marker_note.clear();
+    Rect random_r{marker_r.x + marker_r.w + 8.0f, marker_r.y, 132.0f, 30.0f};
+    if (button(random_r, "Random marker", in, true)) {
+        try {
+            entropy_self_check();
+            state_.marker_text = secure_string(su.alphabet, kSetupMarkerLength);
+            ui_.marker_note = "random marker generated and shown";
+        } catch (const std::exception& e) {
+            ui_.marker_note = std::string("marker unavailable: ") + e.what();
+        }
+    }
+    std::string marker_note = ui_.marker_note;
+    if (marker_note.empty()) {
+        if (state_.marker_text.empty()) marker_note = "required and stored with Setup";
+        else if (!validity_.marker_ok) marker_note = "marker needs exactly 16 suite symbols";
+        else marker_note = marker_reliability_warning(state_.marker_text);
+    }
+    if (!marker_note.empty())
+        label(Rect{area.x, area.y + 140, area.w, 18}, marker_note, true);
 }
 
 void SetupPanel::draw_bottom_row(const GuiInput& in, float width, float y, float h) {
@@ -823,7 +862,7 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         draw_rect(box.x, box.y, box.w, box.h, palette::panel());
         draw_rect_outline(box.x, box.y, box.w, box.h, palette::accent(), 2.0f);
         label(Rect{box.x + 16, box.y + 10, box.w - 32, 24}, "new setup file name");
-        float ext_w = text_width(Font::Body, ".json") + 16.0f;
+        float ext_w = text_width(Font::Body, kSetupExtension) + 16.0f;
         Rect field_r{box.x + 16, box.y + 44, box.w - 32 - ext_w - 4, 32};
         if (ui_.create_name_focus_pending) {
             set_keyboard_focus(field_r);
@@ -832,12 +871,10 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
         text_field(field_r, ui_.create_name_text, under_in,
                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ", 64, true,
                    !ui_.create_name_error.empty());
-        // .json is fixed, not editable — the only way this could ever be
-        // anything but a setup JSON is if the extension were typeable.
         Rect ext_r{field_r.x + field_r.w + 4, field_r.y, ext_w, 32};
         draw_rect(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::disabled_bg());
         draw_rect_outline(ext_r.x, ext_r.y, ext_r.w, ext_r.h, palette::border());
-        label(Rect{ext_r.x + 6, ext_r.y, ext_r.w - 12, ext_r.h}, ".json", true);
+        label(Rect{ext_r.x + 6, ext_r.y, ext_r.w - 12, ext_r.h}, kSetupExtension, true);
         if (!ui_.create_name_error.empty())
             label(Rect{box.x + 16, box.y + 80, box.w - 32, 20}, ui_.create_name_error);
         Rect confirm_r{box.x + 16, box.y + box.h - 44, 120, 32};
@@ -864,11 +901,11 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
     if (alert_up) begin_modal_layer();
 
     if (ui_.show_corruption_popup) {
-        Rect box{w / 2 - 220, h / 2 - 60, 440, 120};
+        Rect box{w / 2 - 260, h / 2 - 80, 520, 160};
         draw_rect(box.x, box.y, box.w, box.h, palette::error_bg());
         draw_rect_outline(box.x, box.y, box.w, box.h, palette::error_text(), 2.0f);
-        label(Rect{box.x + 16, box.y + 16, box.w - 32, 40},
-              "Corruption error, please pick another setting file");
+        label(Rect{box.x + 16, box.y + 12, box.w - 32, 28}, "Setup file error");
+        label(Rect{box.x + 16, box.y + 44, box.w - 32, 50}, ui_.corruption_error);
         Rect ok_r{box.x + box.w / 2 - 50, box.y + box.h - 44, 100, 30};
         if (button(ok_r, "OK", in, true)) ui_.show_corruption_popup = false;
         if (esc) {
@@ -944,6 +981,7 @@ void SetupPanel::on_generate_clicked() {
 
         state_.master_key_text = g.master_key;
         state_.master_key_prefilled = true;
+        state_.marker_text = g.marker;
 
         // Same-frame resync, per the on_load_tile_picked pattern — must not
         // wait for next frame's top-of-frame sync or this gets stomped back.
@@ -959,12 +997,15 @@ void SetupPanel::open() {
     ui_.show_overwrite_panel = false;
     ui_.show_create_name_modal = false;
     ui_.show_corruption_popup = false;
+    ui_.corruption_error.clear();
     ui_.show_delete_confirm = false;
     ui_.create_name_text.clear();
     ui_.create_name_error.clear();
     ui_.delete_confirm_path.clear();
     ui_.file_panel_scroll = 0.0f;
     ui_.open_dropdown_id = -1;
+    ui_.language_search = DropdownSearchState{};
+    ui_.marker_note.clear();
 }
 
 namespace {
@@ -986,9 +1027,12 @@ void SetupPanel::on_save_clicked() { ui_.show_save_chooser = true; }
 void SetupPanel::on_load_tile_picked(const std::string& path) {
     PanelState loaded;
     std::string err;
-    if (load_config(path, loaded, &err)) {
+    bool migration_import = false;
+    if (load_config(path, loaded, &err, &migration_import)) {
         state_ = loaded;
-        ui_.current_preset = basename_of(path);
+        ui_.current_preset = migration_import ? "" : basename_of(path);
+        if (migration_import)
+            set_save_note("older setup imported; add marker and save as version 2");
         // sync_state_from_indices() runs later this same frame and would
         // otherwise overwrite these freshly-loaded rotor/reflector names
         // right back to whatever the STALE (pre-load) index members held —
@@ -997,6 +1041,7 @@ void SetupPanel::on_load_tile_picked(const std::string& path) {
         sync_indices_from_state();
         ui_.show_load_panel = false;
     } else {
+        ui_.corruption_error = err.empty() ? "setup file could not be loaded" : err;
         ui_.show_corruption_popup = true;  // load panel stays open, per spec
     }
 }
@@ -1025,7 +1070,7 @@ void SetupPanel::on_create_confirmed() {
         ui_.create_name_error = "name cannot be empty";
         return;
     }
-    name += ".json";  // fixed suffix — the field can't contain '.' itself
+    name += kSetupExtension;
     if (config_exists(name)) {
         ui_.create_name_error = "a file with that name already exists";
         return;
@@ -1061,13 +1106,8 @@ void SetupPanel::on_save_current() {
 void SetupPanel::open_create_name_modal() {
     ui_.show_create_name_modal = true;
     ui_.create_name_focus_pending = true;
-    // suggest_filename() returns a full "INOP-1.json" filename (it has to,
-    // to compare against files already on disk) — the field itself only
-    // ever holds the bare name, since ".json" is a fixed suffix appended
-    // once on confirm; strip it here or the field would show "INOP-1.json"
-    // and end up saved as "INOP-1.json.json".
     std::string suggested = suggest_filename(state_);
-    const std::string ext = ".json";
+    const std::string ext = kSetupExtension;
     if (suggested.size() > ext.size() &&
         suggested.compare(suggested.size() - ext.size(), ext.size(), ext) == 0)
         suggested.resize(suggested.size() - ext.size());

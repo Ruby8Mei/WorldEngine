@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <iostream>
 #include <sstream>
@@ -20,6 +21,7 @@
 #include <windows.h>
 #endif
 
+#include "pipeline.hpp"
 #include "registry.hpp"
 #include "rng.hpp"
 #include "settings.hpp"
@@ -231,6 +233,7 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
     }
 
     g.master_key = secure_string(s.alphabet, static_cast<size_t>(rotor_count) + 1);
+    if (!s.historic_lock) g.marker = secure_string(s.alphabet, kSetupMarkerLength);
     return g;
 }
 
@@ -255,6 +258,7 @@ std::string settings_to_text(const GeneratedSettings& g) {
     o << "rings";     for (int r : g.rings)           o << " " << r; o << "\n";
     o << "notches";   for (const auto& n : g.notches) o << " " << (n.empty() ? "-" : n); o << "\n";
     o << "plugs";     for (const auto& p : g.plugs)   o << " " << p; o << "\n";
+    if (!g.marker.empty()) o << "marker " << g.marker << "\n";
     o << "key " << g.master_key << "\n";
     return o.str();
 }
@@ -320,8 +324,59 @@ std::string wheel_batch_problem(const WheelBatch& b, const Suite& s) {
     return "";
 }
 
-WheelBatch build_wheel_batch(const Suite& s, bool rotors, int count,
-                             const std::string& prefix, int start, int notch_n) {
+const char* canonical_wheel_prefix(bool rotors) { return rotors ? "U" : "K"; }
+
+bool canonical_wheel_start(const std::string& path, bool rotors, bool append, int count,
+                           int* start, std::string* error) {
+    if (!start || count < 1) {
+        if (error) *error = "invalid canonical wheel range request";
+        return false;
+    }
+    *start = 1;
+    if (!append) return true;
+
+    std::ifstream in(path);
+    if (!in) return true;
+    nlohmann::json doc = nlohmann::json::parse(in, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        if (error) *error = path + " is not readable as JSON, so there is nothing to append to";
+        return false;
+    }
+    std::vector<std::string> problems;
+    if (!validate_wheel_document(doc.dump(), &problems)) {
+        if (error) *error = path + " does not pass validation, so there is nothing safe to append to";
+        return false;
+    }
+
+    const char* key = rotors ? "rotors" : "reflectors";
+    const std::string prefix = canonical_wheel_prefix(rotors);
+    long long highest = 0;
+    if (doc.contains(key) && doc[key].is_array()) {
+        for (const auto& entry : doc[key]) {
+            if (!entry.is_object() || !entry.contains("name") || !entry["name"].is_string()) continue;
+            const std::string name = entry["name"].get<std::string>();
+            if (name.size() <= prefix.size() || name.compare(0, prefix.size(), prefix) != 0) continue;
+            const std::string number = name.substr(prefix.size());
+            if (number.empty() || number[0] < '1' || number[0] > '9') continue;
+            if (!std::all_of(number.begin(), number.end(), [](unsigned char c) { return c >= '0' && c <= '9'; }))
+                continue;
+            try {
+                highest = std::max(highest, std::stoll(number));
+            } catch (...) {
+                if (error) *error = "canonical wheel numbering exceeds the supported range";
+                return false;
+            }
+        }
+    }
+    if (highest > static_cast<long long>(std::numeric_limits<int>::max()) - count) {
+        if (error) *error = "canonical wheel numbering exceeds the supported range";
+        return false;
+    }
+    *start = static_cast<int>(highest + 1);
+    return true;
+}
+
+WheelBatch build_wheel_batch(const Suite& s, bool rotors, int count, int start, int notch_n) {
     // Before generation, not after. A batch drawn from a dead source looks
     // exactly like a good one and would be discovered only by whoever
     // tried to use it.
@@ -334,7 +389,7 @@ WheelBatch build_wheel_batch(const Suite& s, bool rotors, int count,
     b.wirings.reserve(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {
         GeneratedWheel g;
-        g.name = prefix + std::to_string(start + i);
+        g.name = std::string(canonical_wheel_prefix(rotors)) + std::to_string(start + i);
         g.wiring = rotors ? random_rotor_wiring(alpha) : random_reflector_wiring(alpha);
         if (rotors && notch_n > 0) g.notches = random_notches(alpha, notch_n);
         b.wirings.push_back(g.wiring);
@@ -461,6 +516,7 @@ nlohmann::json generated_settings_to_json(const GeneratedSettings& g) {
     j["suite_code"] = g.suite_code;
     j["reflector"] = g.reflector;
     j["master_key"] = g.master_key;
+    j["marker"] = g.marker;
     j["rotor_count"] = static_cast<int>(g.rotors.size());
 
     nlohmann::json rotors = nlohmann::json::array();
@@ -536,16 +592,6 @@ void gen_wheels(bool rotors) {
     const char* what = rotors ? "rotors" : "reflectors";
 
     int count = ask_int(std::string("how many ") + what, rotors ? 50 : 10, 1, 500);
-    // 'U' for a generated rotor, 'K' for a generated reflector, both
-    // numbered from 1. Neither can shadow a factory wheel by reusing its
-    // name: the built-in INOP-38 rotors are R1-R10 and its reflectors are
-    // D-H (A-C on Legacy), so no generated name collides with one. That
-    // matters because make_rotor()/make_reflector() look in the loaded pool
-    // first, so a name clash would silently replace a factory wheel rather
-    // than being reported.
-    std::string prefix = ask("name prefix", rotors ? "U" : "K");
-    int start = ask_int("first number", 1, 0, 100000);
-
     int notch_n = 0;
     if (rotors && !s.notches_are_fixed)
         notch_n = ask_int("notches per rotor (0 = leave blank, set per message)", 0, 0, s.max_notches);
@@ -557,31 +603,15 @@ void gen_wheels(bool rotors) {
     std::string mode = ask("(a)ppend or (o)verwrite", "a");
     bool append = !mode.empty() && (mode[0] == 'a' || mode[0] == 'A');
 
-    // Appending to a file that is already rejected as a whole would bury
-    // good wheels behind bad ones: load_wheel_file() throws out an entire
-    // file on a single duplicate or rotation, so one degenerate batch
-    // already sitting in there invalidates everything appended after it
-    // too. Checked before anything is generated, so a refusal costs
-    // nothing. A file that does not exist yet reports no problems.
-    if (append) {
-        std::vector<std::string> problems;
-        load_wheel_file(path, &problems);
-        if (!problems.empty()) {
-            std::cout << "  !! " << path << " does not pass validation as it stands:\n";
-            for (size_t i = 0; i < problems.size(); ++i)
-                std::cout << "     " << problems[i] << "\n";
-            std::cout << "  !! appending cannot fix that — every wheel in the file, old and\n"
-                         "  !! new, is rejected together on load. Overwrite it, or write to a\n"
-                         "  !! fresh path instead.\n";
-            return;
-        }
+    int start = 1;
+    std::string err;
+    if (!canonical_wheel_start(path, rotors, append, count, &start, &err)) {
+        std::cout << "  !! " << err << ".\n"
+                  << "  !! Nothing was written; " << path << " is untouched.\n";
+        return;
     }
 
-    // Generation and validation both live in build_wheel_batch() /
-    // write_wheel_batch() now, so the refusal path is reachable from the
-    // self-test instead of only from a broken entropy source.
-    WheelBatch batch = build_wheel_batch(s, rotors, count, prefix, start, notch_n);
-    std::string err;
+    WheelBatch batch = build_wheel_batch(s, rotors, count, start, notch_n);
     if (!write_wheel_batch(path, batch, s, append, &err)) {
         std::cout << "  !! " << err << ".\n"
                   << "  !! Nothing was written; " << path << " is untouched.\n";

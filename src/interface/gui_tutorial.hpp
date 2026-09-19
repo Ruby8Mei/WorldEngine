@@ -64,7 +64,6 @@ struct TutorialFacts {
     bool has_message = false;
     bool has_cipher = false;
     bool cipher_pasted = false;
-    bool marker_pasted = false;
     bool has_plain = false;
 };
 

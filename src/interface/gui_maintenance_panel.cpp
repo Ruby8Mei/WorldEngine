@@ -47,10 +47,6 @@ constexpr int kIdReflectorMode = 2;
 constexpr int kIdSheetSuite = 3;
 constexpr int kIdSheetCountMode = 4;
 
-// Wheel names are whitespace-delimited tokens in the wheel file, and every
-// factory name is uppercase letters, so a generated prefix is held to the
-// same shape rather than to whatever the field would otherwise accept.
-const char* const kPrefixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const char* const kPathChars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-";
 
@@ -124,15 +120,11 @@ void draw_status(float x, float y, const std::string& text, bool error) {
 void MaintenancePanel::open() {
     rotor_ = WheelForm{};
     rotor_.count = "50";
-    rotor_.prefix = "U";
-    rotor_.start = "1";
     rotor_.notches = "0";
     rotor_.path = kRotorsPath;
 
     reflector_ = WheelForm{};
     reflector_.count = "10";
-    reflector_.prefix = "K";
-    reflector_.start = "1";
     reflector_.path = kReflectorsPath;
 
     sheet_ = SheetForm{};
@@ -204,13 +196,9 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
     row_note(x, y, "INOP-38 only; Legacy wheels are historic, never generated");
     y += kRowH + kRowGap;
 
-    row_label(x, y, "Name prefix");
-    bool prefix_ok = !f.prefix.empty();
-    changed |= text_field(ctrl_rect(x, y), f.prefix, in, kPrefixChars, 4, true, !prefix_ok,
-                          CaseFold::ToUpper);
-    row_label(x + kPairDX, y, "First number");
-    bool start_ok = parse_int(f.start, 0, 100000, nullptr);
-    changed |= numeric_field(ctrl_rect(x + kPairDX, y), f.start, in, 6, true, !start_ok);
+    row_label(x, y, "Identifiers", true);
+    std::string identifiers = rotors ? "U plus sequential number" : "K plus sequential number";
+    text_field(Rect{x + kLabelW + kGap, y, kPathW, kRowH}, identifiers, in, "", 0, false, false);
     y += kRowH + kRowGap;
 
     bool notch_ok = true;
@@ -242,7 +230,7 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
     }
     if (changed) f.status.clear();
 
-    bool valid = count_ok && prefix_ok && start_ok && notch_ok && path_ok;
+    bool valid = count_ok && notch_ok && path_ok;
     std::string caption = f.confirm ? "Overwrite " + f.path : "Generate";
     const Rect generate_r{x, y, f.confirm ? kWideBtnW : kBtnW, kBtnH};
     if (rotors) set_landmark("maint.rotor_generate", generate_r);
@@ -373,8 +361,8 @@ void MaintenancePanel::generate_wheels(bool rotors) {
     const Suite& s = suite("38");
     const char* what = rotors ? "rotors" : "reflectors";
 
-    int count = 0, start = 0, notch_n = 0;
-    if (!parse_int(f.count, 1, 500, &count) || !parse_int(f.start, 0, 100000, &start) ||
+    int count = 0, start = 1, notch_n = 0;
+    if (!parse_int(f.count, 1, 500, &count) ||
         (rotors && !parse_int(f.notches, 0, s.max_notches, &notch_n))) {
         f.status = "One of the values is out of range.";
         f.status_error = true;
@@ -383,28 +371,18 @@ void MaintenancePanel::generate_wheels(bool rotors) {
 
     bool append = f.mode_idx == 1;
 
-    // Appending to a file that is already rejected as a whole would bury
-    // good wheels behind bad ones: load_wheel_file() throws out an entire
-    // file on a single duplicate or rotation, so one degenerate batch
-    // already sitting in there invalidates everything appended after it
-    // too. Checked before anything is generated, exactly as the terminal
-    // menu does, so a refusal costs nothing.
-    if (append) {
-        std::vector<std::string> problems;
-        load_wheel_file(f.path, &problems);
-        if (!problems.empty()) {
-            f.status = f.path + " does not pass validation as it stands, and appending cannot "
-                                "fix that. Overwrite it, or write to a fresh path.";
-            f.status_error = true;
-            return;
-        }
+    std::string range_error;
+    if (!canonical_wheel_start(f.path, rotors, append, count, &start, &range_error)) {
+        f.status = range_error + ". Nothing was written; " + f.path + " is untouched.";
+        f.status_error = true;
+        return;
     }
 
     try {
         // build_wheel_batch() runs entropy_self_check() before it draws
         // anything, so a dead entropy source is refused here rather than
         // producing plausible-looking wheels.
-        WheelBatch batch = build_wheel_batch(s, rotors, count, f.prefix, start, notch_n);
+        WheelBatch batch = build_wheel_batch(s, rotors, count, start, notch_n);
         std::string err;
         if (!write_wheel_batch(f.path, batch, s, append, &err)) {
             f.status = err + ". Nothing was written; " + f.path + " is untouched.";

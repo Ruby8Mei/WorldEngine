@@ -63,6 +63,9 @@ struct FontAtlas {
 FontAtlas g_body;
 FontAtlas g_wordmark;
 FontAtlas g_body_large;
+FontAtlas g_hangul_body;
+FontAtlas g_hangul_wordmark;
+FontAtlas g_hangul_body_large;
 
 // One preview atlas per typeface, keyed by the same filename the settings
 // screen and font_path() use. Kept across a typeface change, unlike the
@@ -101,8 +104,10 @@ bool bake_font(const std::string& path, float pixel_height, FontAtlas& out, int 
     const int bw = side, bh = side;
     std::vector<unsigned char> bitmap(static_cast<size_t>(bw) * bh);
     out.chars.resize(96);
-    int result = stbtt_BakeFontBitmap(ttf.data(), 0, pixel_height, bitmap.data(), bw, bh, 32, 96,
-                                       out.chars.data());
+    const int font_offset = stbtt_GetFontOffsetForIndex(ttf.data(), 0);
+    if (font_offset < 0) return false;
+    int result = stbtt_BakeFontBitmap(ttf.data(), font_offset, pixel_height, bitmap.data(), bw, bh,
+                                     32, 96, out.chars.data());
     if (result <= 0) {
         std::cerr << "gui: font atlas bake failed for '" << path << "'\n";
         return false;
@@ -175,12 +180,21 @@ void free_atlases() {
     free_unicode(g_body);
     free_unicode(g_wordmark);
     free_unicode(g_body_large);
+    free_unicode(g_hangul_body);
+    free_unicode(g_hangul_wordmark);
+    free_unicode(g_hangul_body_large);
     if (g_body.texture) glDeleteTextures(1, &g_body.texture);
     if (g_wordmark.texture) glDeleteTextures(1, &g_wordmark.texture);
     if (g_body_large.texture) glDeleteTextures(1, &g_body_large.texture);
+    if (g_hangul_body.texture) glDeleteTextures(1, &g_hangul_body.texture);
+    if (g_hangul_wordmark.texture) glDeleteTextures(1, &g_hangul_wordmark.texture);
+    if (g_hangul_body_large.texture) glDeleteTextures(1, &g_hangul_body_large.texture);
     g_body = FontAtlas{};
     g_wordmark = FontAtlas{};
     g_body_large = FontAtlas{};
+    g_hangul_body = FontAtlas{};
+    g_hangul_wordmark = FontAtlas{};
+    g_hangul_body_large = FontAtlas{};
 }
 
 const FontAtlas& atlas_for(Font font) {
@@ -192,6 +206,64 @@ const FontAtlas& atlas_for(Font font) {
         default:
             return g_body;
     }
+}
+
+const FontAtlas& hangul_atlas_for(Font font) {
+    switch (font) {
+        case Font::Wordmark:
+            return g_hangul_wordmark;
+        case Font::BodyLarge:
+            return g_hangul_body_large;
+        default:
+            return g_hangul_body;
+    }
+}
+
+bool is_hangul_codepoint(unsigned int cp) {
+    return (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F) ||
+           (cp >= 0xAC00 && cp <= 0xD7A3);
+}
+
+bool atlas_has_codepoint(const FontAtlas& atlas, unsigned int cp) {
+    if (atlas.font_data.empty()) return false;
+    stbtt_fontinfo info;
+    if (!stbtt_InitFont(&info, atlas.font_data.data(),
+                        stbtt_GetFontOffsetForIndex(atlas.font_data.data(), 0)))
+        return false;
+    return stbtt_FindGlyphIndex(&info, static_cast<int>(cp)) != 0;
+}
+
+const FontAtlas& atlas_for_codepoint(Font font, unsigned int cp) {
+    const FontAtlas& primary = atlas_for(font);
+    if (!is_hangul_codepoint(cp) || atlas_has_codepoint(primary, cp)) return primary;
+    const FontAtlas& fallback = hangul_atlas_for(font);
+    return atlas_has_codepoint(fallback, cp) ? fallback : primary;
+}
+
+std::string hangul_font_path() {
+#if defined(_WIN32)
+    const char* candidates[] = {"malgun.ttf", "GOTHIC.TTF", "ARIALUNI.TTF"};
+#elif defined(__APPLE__)
+    const char* candidates[] = {"AppleSDGothicNeo.ttc", "Arial Unicode.ttf"};
+#else
+    const char* candidates[] = {"NotoSansCJK-Regular.ttc", "NotoSansKR-Regular.ttf",
+                                "NotoSansCJKkr-Regular.otf", "NanumGothic.ttf",
+                                "UnDotum.ttf"};
+#endif
+    for (const char* candidate : candidates) {
+        const std::string path = font_path(candidate);
+        if (!path.empty()) return path;
+    }
+    return {};
+}
+
+bool load_hangul_fonts() {
+    const std::string path = hangul_font_path();
+    if (path.empty()) return false;
+    const bool body = bake_font(path, 18.0f, g_hangul_body);
+    const bool wordmark = bake_font(path, 44.0f, g_hangul_wordmark);
+    const bool large = bake_font(path, 28.0f, g_hangul_body_large);
+    return body && wordmark && large;
 }
 
 // Both in pixels, not logical units: glScissor and glViewport speak
@@ -385,6 +457,8 @@ bool load_fonts(const std::string& font_file) {
         free_atlases();
         return false;
     }
+    if (!load_hangul_fonts())
+        std::cerr << "gui: no Hangul font fallback was found\n";
     ++g_font_generation;
     return true;
 }
@@ -486,7 +560,8 @@ float text_width(Font font, const std::string& text) {
     for (size_t at = 0; at < text.size();) {
         const auto cp = read_utf8(text, at);
         if (cp < 32 || cp == 127) continue;
-        w += cp < 128 ? a.chars[cp - 32].xadvance : unicode_glyph(a, cp).advance;
+        w += cp < 128 ? a.chars[cp - 32].xadvance :
+                        unicode_glyph(atlas_for_codepoint(font, cp), cp).advance;
     }
     return w;
 }
@@ -498,7 +573,7 @@ void draw_text(Font font, float x, float baseline_y, const std::string& text, Co
     if (!a.texture) return;
     for (size_t at = 0; at < text.size();) {
         const auto cp = read_utf8(text, at);
-        if (cp > 127) unicode_glyph(a, cp);
+        if (cp > 127) unicode_glyph(atlas_for_codepoint(font, cp), cp);
     }
     glEnable(GL_TEXTURE_2D);
     glColor4f(c.r, c.g, c.b, c.a);
@@ -515,7 +590,7 @@ void draw_text(Font font, float x, float baseline_y, const std::string& text, Co
             stbtt_GetBakedQuad(const_cast<stbtt_bakedchar*>(a.chars.data()), a.bitmap_w,
                                a.bitmap_h, static_cast<int>(cp - 32), &xpos, &ypos, &q, 1);
         } else {
-            const auto& glyph = unicode_glyph(a, cp);
+            const auto& glyph = unicode_glyph(atlas_for_codepoint(font, cp), cp);
             q.x0 = xpos + static_cast<float>(glyph.xoff);
             q.y0 = ypos + static_cast<float>(glyph.yoff);
             q.x1 = q.x0 + static_cast<float>(glyph.width);

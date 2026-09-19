@@ -51,8 +51,6 @@ private:
     // count, so they share one set of fields and one generate path.
     struct WheelForm {
         std::string count;
-        std::string prefix;
-        std::string start;
         std::string notches;  // rotors only; ignored by the reflector section
         std::string path;
         int mode_idx = 0;  // 0 = overwrite, 1 = append

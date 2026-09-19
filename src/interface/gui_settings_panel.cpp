@@ -286,7 +286,7 @@ struct KeybindRow {
 };
 const KeybindRow kKeybinds[] = {
     {"Arrow keys", "Move between the controls on the screen. An open list takes them for itself."},
-    {"Enter", "Press whichever control has the focus."},
+    {"Enter", "Press the focused control, or encipher from the message field."},
     {"Escape", "Go back one screen. An open list or a message box closes first."},
     {"Ctrl+Escape", "Leave INOP at once, with nothing asked."},
 
@@ -304,8 +304,6 @@ const KeybindRow kKeybinds[] = {
     {"Ctrl+F", "Jump to the search box at the top of this screen."},
     {"Ctrl+S", "On the setup screen, save over the preset named in the header."},
     {"Ctrl+Shift+S", "On the setup screen, save the setup as a new preset."},
-    {"Ctrl+Shift+C", "On the enciphering screen, copy the ciphertext and the marker together."},
-
     {"Ctrl+A", "Select all text in the focused editable field."},
     {"Ctrl+Q", "On the enciphering screen, clear the focused editable field."},
     {"Ctrl+C", "Copy selected text from the focused editable field."},

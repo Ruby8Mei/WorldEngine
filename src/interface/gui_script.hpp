@@ -71,6 +71,7 @@ public:
     // That is deliberate: a stray keystroke on the machine running the
     // script cannot derail the run.
     bool fill(GuiInput& out, float dt);
+    bool take_resize(int* width, int* height);
 
     // Set by fill() when the frame it just filled asked for a picture of
     // itself, empty otherwise. Read after fill(), acted on once the frame
@@ -79,12 +80,12 @@ public:
 
 private:
     enum class Verb {
-        Move, Click, Press, Release, Type, Key, Ctrl, Shift, Alt, Scroll, Wait, Shot, Quit
+        Move, Resize, Click, Press, Release, Type, Key, Ctrl, Shift, Alt, Scroll, Wait, Shot, Quit
     };
     // Letter is any of A to Z, carried in Step::letter. It is a key press
     // and not a typed character, so it is the only way a script can reach
     // a Control shortcut: holding Control produces no character event.
-    enum class Key { Enter, Escape, Backspace, Delete, Up, Down, Left, Right, Letter };
+    enum class Key { Enter, Escape, Backspace, Delete, Tab, Up, Down, Left, Right, Letter };
 
     struct Step {
         Verb verb = Verb::Wait;
@@ -113,6 +114,8 @@ private:
     bool ctrl_ = false;
     bool shift_ = false;
     bool alt_ = false;
+    int resize_width_ = 0;
+    int resize_height_ = 0;
 
     std::string pending_shot_;
 };

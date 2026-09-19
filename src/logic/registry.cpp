@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -102,6 +103,17 @@ const Suite& suite(const std::string& code) {
     return it->second;
 }
 
+bool normal_rotor_name_is_eligible(const Suite& s, const std::string& name) {
+    return s.code != "38" ||
+           std::find(s.rotor_names.begin(), s.rotor_names.end(), name) == s.rotor_names.end();
+}
+
+bool normal_reflector_name_is_eligible(const Suite& s, const std::string& name) {
+    return s.code != "38" ||
+           std::find(s.reflector_names.begin(), s.reflector_names.end(), name) ==
+               s.reflector_names.end();
+}
+
 namespace {
 // Wheels loaded from disk. Checked before the built-ins, so a generated
 // wheel can shadow a factory one by reusing its name.
@@ -112,6 +124,22 @@ std::map<std::string, Wiring>& loaded_rotors() {
 std::map<std::string, std::string>& loaded_reflectors() {
     static std::map<std::string, std::string> m;
     return m;
+}
+
+struct LoadedWheelSource {
+    std::map<std::string, Wiring> rotors;
+    std::map<std::string, std::string> reflectors;
+    unsigned long long order = 0;
+};
+
+std::map<std::string, LoadedWheelSource>& loaded_wheel_sources() {
+    static std::map<std::string, LoadedWheelSource> m;
+    return m;
+}
+
+unsigned long long& load_order() {
+    static unsigned long long value = 0;
+    return value;
 }
 
 // Bumped every time load_wheel_file() actually commits new wheels — lets
@@ -440,14 +468,43 @@ bool wheel_maps_valid(const std::map<std::string, Wiring>& rot,
     return !bad;
 }
 
-int install_wheels(std::map<std::string, Wiring>& rot, std::map<std::string, std::string>& refl,
+std::string wheel_source_key(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+    if (ec) absolute = std::filesystem::path(path);
+    return absolute.lexically_normal().generic_string();
+}
+
+int install_wheels(const std::string& path, std::map<std::string, Wiring>& rot,
+                   std::map<std::string, std::string>& refl,
                    std::vector<std::string>* problems) {
     if (!wheel_maps_valid(rot, refl, problems)) return 0;
 
-    for (std::map<std::string, Wiring>::const_iterator it = rot.begin(); it != rot.end(); ++it)
-        loaded_rotors()[it->first] = it->second;
-    for (std::map<std::string, std::string>::const_iterator it = refl.begin(); it != refl.end(); ++it)
-        loaded_reflectors()[it->first] = it->second;
+    std::map<std::string, LoadedWheelSource> next_sources = loaded_wheel_sources();
+    LoadedWheelSource& source = next_sources[wheel_source_key(path)];
+    source.rotors = rot;
+    source.reflectors = refl;
+    source.order = load_order() + 1;
+
+    std::vector<const LoadedWheelSource*> ordered;
+    ordered.reserve(next_sources.size());
+    for (const auto& entry : next_sources) ordered.push_back(&entry.second);
+    std::sort(ordered.begin(), ordered.end(),
+              [](const LoadedWheelSource* a, const LoadedWheelSource* b) {
+                  return a->order < b->order;
+              });
+
+    std::map<std::string, Wiring> next_rotors;
+    std::map<std::string, std::string> next_reflectors;
+    for (const LoadedWheelSource* entry : ordered) {
+        for (const auto& wheel : entry->rotors) next_rotors[wheel.first] = wheel.second;
+        for (const auto& wheel : entry->reflectors) next_reflectors[wheel.first] = wheel.second;
+    }
+
+    loaded_wheel_sources().swap(next_sources);
+    loaded_rotors().swap(next_rotors);
+    loaded_reflectors().swap(next_reflectors);
+    ++load_order();
     ++wheel_generation();
     return static_cast<int>(rot.size() + refl.size());
 }
@@ -495,7 +552,7 @@ int load_wheel_file(const std::string& path, std::vector<std::string>* problems)
     std::map<std::string, Wiring> rot;
     std::map<std::string, std::string> refl;
     if (!parse_wheel_json(f, rot, refl, problems)) return 0;
-    return install_wheels(rot, refl, problems);
+    return install_wheels(path, rot, refl, problems);
 }
 
 bool validate_wheel_file(const std::string& path, std::vector<std::string>* problems) {
@@ -581,17 +638,19 @@ std::vector<std::string> collect(const Suite& s, bool rotors) {
     const size_t want = s.alphabet.size();
     std::vector<std::string> rot_out, refl_out;
     for (const auto& kv : rotor_wirings())
-        if (kv.second.wiring.size() == want) rot_out.push_back(kv.first);
+        if (kv.second.wiring.size() == want && normal_rotor_name_is_eligible(s, kv.first))
+            rot_out.push_back(kv.first);
     for (const auto& kv : loaded_rotors())
-        if (kv.second.wiring.size() == want &&
+        if (kv.second.wiring.size() == want && normal_rotor_name_is_eligible(s, kv.first) &&
             std::find(rot_out.begin(), rot_out.end(), kv.first) == rot_out.end())
             rot_out.push_back(kv.first);
     std::sort(rot_out.begin(), rot_out.end(), name_less);
 
     for (const auto& kv : reflector_wirings())
-        if (kv.second.size() == want) refl_out.push_back(kv.first);
+        if (kv.second.size() == want && normal_reflector_name_is_eligible(s, kv.first))
+            refl_out.push_back(kv.first);
     for (const auto& kv : loaded_reflectors())
-        if (kv.second.size() == want &&
+        if (kv.second.size() == want && normal_reflector_name_is_eligible(s, kv.first) &&
             std::find(refl_out.begin(), refl_out.end(), kv.first) == refl_out.end())
             refl_out.push_back(kv.first);
     std::sort(refl_out.begin(), refl_out.end(), name_less);

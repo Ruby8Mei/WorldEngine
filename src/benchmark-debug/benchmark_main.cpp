@@ -410,6 +410,7 @@ int main(int argc, char** argv) {
                                                 std::to_string(ci + 1);
                 GeneratedSettings g = benchmark_settings(su, settings_id);
                 Machine machine = machine_from_generated(g);
+                cfg.marker = g.marker;
                 Pipeline pipe(machine, cfg);
                 const Alphabet& alpha = machine.alphabet();
 
@@ -450,7 +451,7 @@ int main(int argc, char** argv) {
                         auto t0 = std::chrono::steady_clock::now();
                         Encrypted e = pipe.encrypt(folded);
                         auto t1 = std::chrono::steady_clock::now();
-                        std::string back = pipe.decrypt(e.ciphertext, e.marker);
+                        std::string back = pipe.decrypt(e.ciphertext);
                         auto t2 = std::chrono::steady_clock::now();
 
                         r.encrypt_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
@@ -511,13 +512,14 @@ int main(int argc, char** argv) {
 
         GeneratedSettings g = benchmark_settings(su, "v1:hamlet:1");
         Machine machine = machine_from_generated(g);
+        cfg.marker = g.marker;
         Pipeline pipe(machine, cfg);
         std::string folded = transform(text);
 
         auto t0 = std::chrono::steady_clock::now();
         Encrypted e = pipe.encrypt(folded);
         auto t1 = std::chrono::steady_clock::now();
-        std::string back = pipe.decrypt(e.ciphertext, e.marker);
+        std::string back = pipe.decrypt(e.ciphertext);
         auto t2 = std::chrono::steady_clock::now();
 
         double enc_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();

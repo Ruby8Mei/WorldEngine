@@ -63,13 +63,17 @@ cryptanalysis actually worked, or what a determined but period-honest
 redesign of Enigma would look like, that is what this project demonstrates.
 
 All three of those claims have now been run against an actual attack.
-`inop_bombe` recovers a Legacy setting in about two seconds, and against
+`inop_bombe` recovers a Legacy setting, and the historic batch covers all
+60 distinct three-rotor orders from rotors I through V in about 31 seconds.
+Against
 INOP-38 with the wheels regenerated it recovers nothing at all, because the
 answer is not in the search space. The double pass costs that attacker
 roughly 7x and doesnt stop it. The notch count turns out to make no
 measured difference to search cost. See
 [measurements/3-bombe.md](measurements/3-bombe.md), which says where the
-numbers disagree with the reasoning.
+numbers disagree with the reasoning. Historic rotor-order batch details are
+recorded in
+[measurements/6.1-bombe-rotor-order-batching.md](measurements/6.1-bombe-rotor-order-batching.md).
 
 ## How to get started
 
@@ -94,8 +98,15 @@ into the live message pipeline, and none reads or writes key material:
 ./build/inop_benchmark --languages all     # correctness across 48 languages
 ./build/inop_langprobe --out probe_out     # dump the folded symbol streams
 ./build/inop_bombe --legacy-phase1         # break the Legacy machine
+./build/inop_bombe --historic-batch        # batch the historic I to V rotor orders
 ./build/inop_bombe --inop-ablation         # and measure what INOP costs it
 ```
+
+The historic batch uses reflector B, ring settings 1 1 1, 17,576 core
+positions per order, a 16 stop retention bound per order, and a 64 stop
+retention bound for the whole batch. Every valid stop is still counted after
+a retention bound is reached. The output identifies the rotor order for each
+retained partial stecker assignment. A checking machine is still required.
 
 `-DINOP_WERROR=ON` turns warnings into errors, which is how CI builds it.
 
@@ -168,7 +179,8 @@ Once a machine is configured, the session commands are:
 | Command | Effect |
 |---------|--------|
 | *(text)* | encipher, and show the round trip as a check |
-| `:d` | decipher a ciphertext (asks for the marker) |
+| `:d` | decipher a ciphertext with the marker in active Setup |
+| `:d-old` | decipher older ciphertext with its separate marker |
 | `:b` | batch process pasted or file-based messages |
 | `:i` | show the active settings again |
 | `:s` | write the current settings to `inop_settings.json` |
@@ -199,6 +211,9 @@ A few features exist that are worth knowing about before you start:
   `src/logic/transform.cpp`; `src/logic/languages.cpp` contains the supported
   interface language list only. How much the wire grammar costs, measured
   against real corpus text in 48 languages, is in [measurements/](measurements/).
+  Plaintext punctuation remains visible while the operator edits a message and
+  is removed when Encipher processes it. Punctuation never enters the machine
+  alphabet or wheel definitions.
 - **Morse, hex, binary** are not a separate input mode. INOP-38s alphabet
   already contains `0-9`, the hex letters `a-f`, and letters generally, so
   a hex string or a binary string is already valid plaintext. Try
@@ -212,11 +227,42 @@ A few features exist that are worth knowing about before you start:
   and enciphers each one under a rotor configuration pulled from
   `inop_keysheet.json`, either one indexed entry for every message or
   sequentially through the file. Input files are capped at 1.44MB.
+- **Setup marker.** INOP-38 Setup stores one visible and editable 16-symbol
+  marker from the active alphabet. The same marker is shared on key sheets,
+  used at both plaintext boundaries before enciphering, and read from active
+  Setup during normal deciphering. Only ciphertext is dispatched. Random
+  front and rear cover traffic remains fresh for every encryption. A marker
+  with low symbol variety receives a boundary-recovery reliability warning.
+  It is not an authentication control. Legacy mode has no marker.
 - **Maintenance** (menu option 2) generates rotor batches, reflector
   batches, and key sheets, all checked against a live entropy self-test and
   rejected if they turn out degenerate. A silently broken generator is the
   worst failure this program can have, because it doesnt crash and its
   output still looks plausible.
+
+Saved Setup presets use the `.inop` extension and a JSON envelope with
+`format` set to `INOP_SETUP_PRESET`, integer `version` set to `2`, and a
+`setup` object. The setup object carries the suite code, language code,
+rotor count and rows, reflector, plugboard, procedure switches, and master
+key, plus the INOP-38 Setup marker. Version 2 requires every defined field
+and rejects unknown fields.
+Files with another identity or version are rejected without changing the
+active setup. Saves use atomic replacement in the `setup` directory.
+
+Version 1 `.inop` presets and older Setup files with the `.json` extension
+remain available as validated read-only imports. Loading one does not rename,
+rewrite, or invent a marker for it. The operator must enter the missing marker
+before Save As can create a version 2 `.inop` preset. Older settings and key
+sheet entries follow the same explicit-completion rule. Older ciphertext that
+used a separately supplied marker remains available through `:d-old` in the
+terminal and the collapsed Old marker input in the GUI. Normal operation has
+no per-message marker override. This import path does not decide the broader
+E-012 historical catalogue disposition.
+
+Generated INOP-38 rotors use identifiers `U1`, `U2`, and onward. Generated
+reflectors use `K1`, `K2`, and onward. Overwrite begins at one and append
+continues after the highest existing canonical identifier. Existing names
+remain unchanged, while any identifier collision refuses the whole write.
 
 `inop_rotors.json`, `inop_reflectors.json`, `inop_keysheet.json` and
 `inop_settings.json` are real or potential key material and are in

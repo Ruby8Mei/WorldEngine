@@ -65,8 +65,12 @@ std::string wheel_batch_problem(const WheelBatch& b, const Suite& s);
 // Generate `count` wheels into memory. Runs entropy_self_check() first:
 // generation is the one moment where a dead entropy source is
 // unrecoverable, because its output looks plausible and is not.
-WheelBatch build_wheel_batch(const Suite& s, bool rotors, int count,
-                             const std::string& prefix, int start, int notch_n);
+const char* canonical_wheel_prefix(bool rotors);
+
+bool canonical_wheel_start(const std::string& path, bool rotors, bool append, int count,
+                           int* start, std::string* error);
+
+WheelBatch build_wheel_batch(const Suite& s, bool rotors, int count, int start, int notch_n);
 
 // Write a batch, or refuse it. A batch with a problem is never written and
 // the target is left byte-identical, in BOTH modes. Overwrite is the worse
@@ -87,6 +91,7 @@ struct GeneratedSettings {
     std::vector<std::string> notches;
     std::vector<std::string> plugs;
     std::string master_key;
+    std::string marker;
 };
 
 // A complete, valid, ready-to-use key sheet entry for the given suite, using

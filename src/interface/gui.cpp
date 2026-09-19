@@ -44,6 +44,7 @@
 
 #include "audio_manager.hpp"
 #include "gui_anim.hpp"
+#include "gui_bombe_panel.hpp"
 #include "gui_enciphering_panel.hpp"
 #include "gui_main_menu.hpp"
 #include "gui_maintenance_panel.hpp"
@@ -108,6 +109,7 @@ void key_callback(GLFWwindow*, int key, int /*scancode*/, int action, int /*mods
     if (key == GLFW_KEY_DELETE) g_input.key_delete = true;
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) g_input.key_enter = true;
     if (key == GLFW_KEY_ESCAPE) g_input.key_escape = true;
+    if (key == GLFW_KEY_TAB) g_input.key_tab = true;
     if (key == GLFW_KEY_LEFT) g_input.key_left = true;
     if (key == GLFW_KEY_RIGHT) g_input.key_right = true;
     if (key == GLFW_KEY_UP) g_input.key_up = true;
@@ -396,6 +398,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
 
     gui::SetupPanel panel;
     gui::MainMenu main_menu;
+    gui::BombePanel bombe;
     gui::EncipheringPanel enciphering;
     enciphering.set_processing_audio([&audio] { audio.start_processing_cue(); },
                                     [&audio] { audio.stop_processing_cue(); });
@@ -408,7 +411,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // for what gets shown next. See the header comment of
     // gui_setup_panel.hpp for why the screens themselves stay this narrow.
     // The GUI opens on MainMenu, not Setup directly.
-    enum class Screen { MainMenu, Setup, Enciphering, Settings, Maintenance, Legal };
+    enum class Screen { MainMenu, Bombe, Setup, Enciphering, Settings, Maintenance, Legal };
     Screen screen = Screen::MainMenu;
 
     // The walkthrough, and the counting that decides whether it is
@@ -445,6 +448,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // itself, since only that path can act on them.
     auto draw_screen = [&](Screen s, const gui::GuiInput& in, int w, int h) {
         switch (s) {
+            case Screen::Bombe: bombe.frame(in, w, h); break;
             case Screen::Setup: panel.frame(in, w, h); break;
             case Screen::Enciphering: enciphering.frame(in, w, h); break;
             case Screen::Settings: settings.frame(in, w, h); break;
@@ -546,6 +550,9 @@ GuiExit run_gui_settings(const std::string& script_path) {
             // the end of the script closes the window, so a script can
             // never leave one stranded.
             if (!script->fill(g_input, dt)) glfwSetWindowShouldClose(window, GLFW_TRUE);
+            int scripted_width = 0, scripted_height = 0;
+            if (script->take_resize(&scripted_width, &scripted_height))
+                glfwSetWindowSize(window, scripted_width, scripted_height);
         } else {
             fill_input_from_glfw(window, g_input, scale, mouse_down_prev);
         }
@@ -568,6 +575,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             screen_input.key_delete = false;
             screen_input.key_enter = false;
             screen_input.key_escape = false;
+            screen_input.key_tab = false;
             screen_input.key_left = screen_input.key_right = false;
             screen_input.key_up = screen_input.key_down = false;
             screen_input.key_letter = 0;
@@ -617,7 +625,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             const gui::PanelState& st = panel.state();
             const gui::FieldValidity v = gui::derive_validity(st);
             facts.setup_fields_ok = v.all_mandatory_ok;
-            facts.setup_ready = v.all_mandatory_ok && gui::master_key_valid(st, v);
+            facts.setup_ready = v.all_mandatory_ok && v.marker_ok && gui::master_key_valid(st, v);
             facts.language_code = st.language_code;
             facts.rotor_one = st.rotor_rows[0].rotor_name;
             facts.rotor_count = st.rotor_count;
@@ -627,7 +635,6 @@ GuiExit run_gui_settings(const std::string& script_path) {
             facts.has_message = enciphering.has_message();
             facts.has_cipher = enciphering.has_cipher();
             facts.cipher_pasted = enciphering.cipher_pasted();
-            facts.marker_pasted = enciphering.marker_pasted();
             facts.has_plain = enciphering.has_plain();
         }
 
@@ -669,6 +676,12 @@ GuiExit run_gui_settings(const std::string& script_path) {
             gui::set_draw_offset((1.0f - e) * sx, (1.0f - e) * sy);
             draw_screen(screen, dead, lw, lh);
             gui::set_draw_offset(0.0f, 0.0f);
+        } else if (screen == Screen::Bombe) {
+            bombe.frame(screen_input, lw, lh);
+            if (bombe.wordmark_clicked()) {
+                bombe.cancel();
+                go_to(Screen::MainMenu, 0.0f, 1.0f);
+            }
         } else if (screen == Screen::Setup) {
             panel.frame(screen_input, lw, lh);
             if (panel.wordmark_clicked()) go_to(Screen::MainMenu, -1.0f, 0.0f);
@@ -789,6 +802,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 panel.open();
                 go_to(Screen::Setup, 1.0f, 0.0f);
             }
+            if (main_menu.bombe_requested()) {
+                bombe.open();
+                go_to(Screen::Bombe, 0.0f, -1.0f);
+            }
             if (main_menu.maintenance_requested()) {
                 maintenance.open();
                 // Left, where Setup goes right. The two screens the menu
@@ -830,6 +847,9 @@ GuiExit run_gui_settings(const std::string& script_path) {
             if (k == 'Q' && screen != Screen::Setup) {
                 panel.open();
                 go_to(Screen::Setup, 1.0f, 0.0f);
+            } else if (k == 'B' && screen != Screen::Bombe) {
+                bombe.open();
+                go_to(Screen::Bombe, 0.0f, -1.0f);
             } else if (k == 'M' && screen != Screen::Maintenance) {
                 maintenance.open();
                 go_to(Screen::Maintenance, -1.0f, 0.0f);
@@ -886,7 +906,10 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 // Each screen leaves the way its own Back button leaves, so
                 // Escape and Back are never two different journeys out of
                 // the same place.
-                if (screen == Screen::Settings) go_to(Screen::MainMenu, 0.0f, -1.0f);
+                if (screen == Screen::Bombe) {
+                    bombe.cancel();
+                    go_to(Screen::MainMenu, 0.0f, 1.0f);
+                } else if (screen == Screen::Settings) go_to(Screen::MainMenu, 0.0f, -1.0f);
                 else if (screen == Screen::Maintenance) go_to(Screen::MainMenu, 1.0f, 0.0f);
                 // Legal was opened from the settings and goes back to them
                 // rather than all the way out, reversing the way it came.
@@ -984,6 +1007,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
         // frame — clear it before the next poll picks up new events.
         g_input.typed.clear();
         g_input.key_backspace = g_input.key_enter = g_input.key_escape = false;
+        g_input.key_tab = false;
         g_input.key_delete = false;
         g_input.key_letter = 0;
         g_input.key_left = g_input.key_right = g_input.key_up = g_input.key_down = false;

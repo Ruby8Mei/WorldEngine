@@ -5,11 +5,14 @@
 // so they can evolve freely without touching inop.hpp.
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 #include "inop.hpp"
 
 namespace inop {
+
+constexpr std::size_t kSetupMarkerLength = 16;
 
 struct PipelineConfig {
     bool double_pass = true;      // encipher, swap halves, encipher again
@@ -20,13 +23,16 @@ struct PipelineConfig {
     bool moving_reflector = true; // advance the reflector each keypress
     int block = 16;               // grouping width in the printed output
     int base_noise = 64;          // minimum cover-traffic length
-    int marker_len = 16;          // hidden boundary length
+    std::string marker;
 };
 
 struct Encrypted {
     std::string ciphertext;
-    std::string marker;  // empty when padding is off
 };
+
+bool setup_marker_valid(const std::string& marker, const Alphabet& alpha);
+std::string marker_reliability_warning(const std::string& marker);
+std::string frame_with_marker(const std::string& text, const std::string& marker);
 
 // Strip a config back to what the suite historically allowed. Legacy is a
 // 1939 machine: no padding, no double pass, no reflector motion, and output
@@ -44,11 +50,6 @@ class Pipeline {
 public:
     Pipeline(Machine& machine, PipelineConfig cfg);
 
-    // Preprocesses, pads (if cfg.padding), and double-passes (if
-    // cfg.double_pass) plaintext into ciphertext. Encrypted::marker is
-    // empty when padding is off; otherwise it is the boundary string
-    // decrypt() needs back to find the real message inside the padding.
-    //
     // Under the double pass the body is rounded up to an even length with
     // one symbol drawn from the alphabet, because the half-swap between the
     // two passes is only defined on an even length. Padding already
@@ -57,13 +58,8 @@ public:
     // the round trip.
     Encrypted encrypt(const std::string& plaintext);
 
-    // Reverses encrypt(). Throws if cfg.padding is on and marker is empty —
-    // a blank marker must fail loudly rather than hand back the raw
-    // noise-padded blob as if it were the message — and, under the double
-    // pass, if the ciphertext length is odd, which encrypt() never produces
-    // and so means symbols went missing in transit. Returned text has
-    // SPACE_SUB already mapped back to a literal space.
-    std::string decrypt(const std::string& ciphertext, const std::string& marker);
+    std::string decrypt(const std::string& ciphertext);
+    std::string decrypt_with_marker(const std::string& ciphertext, const std::string& marker);
 
     const PipelineConfig& config() const { return cfg_; }
 

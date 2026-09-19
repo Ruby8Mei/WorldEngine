@@ -54,11 +54,6 @@ constexpr float kColGap = 24.0f;
 // before it wraps. Below it the two halves cannot sit side by side and
 // they stack instead.
 constexpr int kMinGroupsPerLine = 4;
-// The two marker boxes, given one height between them by the operator.
-// They are not the same widget -- the encipher marker is read and the
-// decipher marker is typed into -- and the two natural heights differ by
-// about eleven, which showed as a step between two boxes sitting side by
-// side. One number given to both settles it.
 constexpr float kMarkerH = 65.0f;
 constexpr float kTitleH = 34.0f;
 constexpr float kSectionGap = 16.0f;
@@ -92,6 +87,15 @@ std::vector<std::string> split_spaces(const std::string& s) {
     return out;
 }
 
+bool encipher_submit_requested(bool button_requested, const GuiInput& in,
+                               bool message_focused, bool input_available) {
+    const bool line_break = std::find(in.typed.begin(), in.typed.end(), '\n') != in.typed.end() ||
+                            std::find(in.typed.begin(), in.typed.end(), '\r') != in.typed.end();
+    const bool plain_enter = in.key_enter && !in.ctrl_held && !in.shift_held && !in.alt_held;
+    return button_requested ||
+           (plain_enter && message_focused && input_available && !line_break);
+}
+
 }  // namespace
 
 void EncipheringPanel::set_processing_audio(std::function<void()> start,
@@ -107,18 +111,19 @@ void EncipheringPanel::open(const PanelState& state) {
     open_error_.clear();
     message_.clear();
     cipher_out_.clear();
-    marker_out_.clear();
     check_out_.clear();
     encipher_error_.clear();
     cipher_in_.clear();
-    marker_in_.clear();
+    compatibility_marker_.clear();
     plain_out_.clear();
     decipher_error_.clear();
+    compatibility_mode_ = false;
     paste_target_ = PasteTarget::None;
     copy_pending_ = false;
-    cipher_scroll_ = marker_scroll_ = check_scroll_ = plain_scroll_ = 0;
+    cipher_scroll_ = check_scroll_ = plain_scroll_ = 0;
 
     suite_code_ = state.suite_code;
+    language_code_ = state.language_code;
     const Suite& su = suite(suite_code_);
     block_ = su.block;
 
@@ -126,6 +131,7 @@ void EncipheringPanel::open(const PanelState& state) {
     cfg.double_pass = state.double_pass;
     cfg.padding = state.padding;
     cfg.moving_reflector = state.moving_reflector;
+    cfg.marker = state.marker_text;
     apply_suite_lock(cfg, su.historic_lock, su.block);
     padding_ = cfg.padding;
 
@@ -192,25 +198,52 @@ void EncipheringPanel::deliver_paste(const std::string& text) {
             }
             break;
         case PasteTarget::Ciphertext: cipher_in_ = filtered(text, allowed_cipher_); break;
-        case PasteTarget::Marker:     marker_in_ = filtered(text, allowed_marker_); break;
+        case PasteTarget::CompatibilityMarker: accept_compatibility_marker_paste(text); break;
         case PasteTarget::None:       break;
     }
+}
+
+bool EncipheringPanel::accept_compatibility_marker_paste(const std::string& text) {
+    if (!machine_) return false;
+    size_t first = 0;
+    while (first < text.size() &&
+           (text[first] == ' ' || text[first] == '\t' || text[first] == '\r' || text[first] == '\n'))
+        ++first;
+    size_t last = text.size();
+    while (last > first &&
+           (text[last - 1] == ' ' || text[last - 1] == '\t' || text[last - 1] == '\r' ||
+            text[last - 1] == '\n'))
+        --last;
+    const std::string candidate = text.substr(first, last - first);
+    if (candidate.find_first_of(" \t\r\n") != std::string::npos) {
+        decipher_error_ = "paste only the separate 16-symbol old marker";
+        return false;
+    }
+    std::string folded;
+    folded.reserve(candidate.size());
+    for (char symbol : candidate) folded.push_back(machine_->alphabet().fold_case(symbol));
+    if (!setup_marker_valid(folded, machine_->alphabet())) {
+        decipher_error_ = "old marker paste must be exactly 16 suite symbols";
+        return false;
+    }
+    compatibility_marker_ = folded;
+    decipher_error_.clear();
+    return true;
 }
 
 void EncipheringPanel::on_encipher() {
     encipher_error_.clear();
     cipher_out_.clear();
-    marker_out_.clear();
     check_out_.clear();
     if (!pipeline_ || message_.empty()) return;
     ProcessingAudioGuard audio(processing_audio_start_, processing_audio_stop_);
     try {
-        const std::string prepared = prepare_gui_plaintext(message_, transform_input_);
+        const std::string prepared =
+            prepare_gui_plaintext(message_, transform_input_, language_code_);
         Encrypted e = pipeline_->encrypt(prepared);
         cipher_out_ = group(e.ciphertext, block_);
-        marker_out_ = e.marker;
-        const std::string decoded = pipeline_->decrypt(e.ciphertext, e.marker);
-        check_out_ = transform_input_ ? untransform(decoded) : decoded;
+        const std::string decoded = pipeline_->decrypt(e.ciphertext);
+        check_out_ = restore_gui_plaintext(decoded, transform_input_, language_code_);
     } catch (const std::exception& e) {
         encipher_error_ = e.what();
     }
@@ -236,32 +269,39 @@ void EncipheringPanel::on_decipher() {
         return;
     }
 
-    std::string marker;
-    if (padding_) {
-        if (marker_in_.empty()) {
-            decipher_error_ = "padding is on, so the marker is needed to find the message";
-            return;
-        }
-        marker = marker_in_;
-    }
-
     ProcessingAudioGuard audio(processing_audio_start_, processing_audio_stop_);
     try {
-        const std::string decoded = pipeline_->decrypt(clean, marker);
-        plain_out_ = transform_input_ ? untransform(decoded) : decoded;
+        const std::string decoded = compatibility_mode_ && padding_
+            ? pipeline_->decrypt_with_marker(clean, compatibility_marker_)
+            : pipeline_->decrypt(clean);
+        plain_out_ = restore_gui_plaintext(decoded, transform_input_, language_code_);
     } catch (const std::exception& e) {
         decipher_error_ = e.what();
     }
 }
 
-const char* EncipheringPanel::kBothSeparator = "     ";
-
 void EncipheringPanel::self_test(const std::function<void(bool, const std::string&)>& check) {
+    GuiInput enter;
+    enter.key_enter = true;
+    check(encipher_submit_requested(false, enter, true, true),
+          "Enter routes from ordinary plaintext focus");
+    check(!encipher_submit_requested(false, enter, false, true) &&
+              !encipher_submit_requested(false, enter, true, false),
+          "Enter yields when plaintext focus or panel input ownership is absent");
+    enter.typed.push_back('\n');
+    check(!encipher_submit_requested(false, enter, true, true),
+          "Enter preserves explicit multiline text entry");
+    enter.typed.clear();
+    int submit_count = 0;
+    if (encipher_submit_requested(true, enter, true, true)) ++submit_count;
+    check(submit_count == 1, "button activation and panel Enter produce one submit request");
+
     PanelState state;
-    state.reflector_name = "D";
+    state.reflector_name = "K950";
     state.master_key_text = "aaaaaa";
+    state.marker_text = "abcdefghijklmnop";
     for (int i = 0; i < state.rotor_count; ++i) {
-        state.rotor_rows[i].rotor_name = "R" + std::to_string(i + 1);
+        state.rotor_rows[i].rotor_name = "U" + std::to_string(950 + i);
         state.rotor_rows[i].ring_text = "1";
         state.rotor_rows[i].notch_box[0] = std::string(1, static_cast<char>('a' + i));
     }
@@ -282,19 +322,35 @@ void EncipheringPanel::self_test(const std::function<void(bool, const std::strin
     check(audio_starts == 1 && audio_stops == 1,
           "processing audio stops after successful enciphering");
     panel.cipher_in_ = panel.cipher_out_;
-    panel.marker_in_ = panel.marker_out_;
     panel.on_decipher();
     check(panel.plain_out_ == original && panel.decipher_error_.empty(),
           "Decipher displays readable plaintext instead of internal codes");
     check(audio_starts == 2 && audio_stops == 2,
           "processing audio stops after successful deciphering");
+    const std::string accepted_old_marker = "ponmlkjihgfedcba";
+    panel.compatibility_mode_ = true;
+    panel.compatibility_marker_ = accepted_old_marker;
+    panel.paste_target_ = PasteTarget::CompatibilityMarker;
+    panel.deliver_paste(panel.cipher_out_ + "     " + accepted_old_marker);
+    check(panel.compatibility_marker_ == accepted_old_marker && !panel.decipher_error_.empty(),
+          "combined ciphertext and marker paste is rejected without changing the old marker");
+    panel.paste_target_ = PasteTarget::CompatibilityMarker;
+    panel.deliver_paste("abcdefghijklmnopq");
+    check(panel.compatibility_marker_ == accepted_old_marker && !panel.decipher_error_.empty(),
+          "oversized old marker paste is rejected without truncation");
+    panel.paste_target_ = PasteTarget::CompatibilityMarker;
+    panel.deliver_paste("ponmlkjihgfedcba");
+    check(panel.compatibility_marker_ == accepted_old_marker && panel.decipher_error_.empty(),
+          "an exact separate old marker paste is accepted");
+    panel.compatibility_mode_ = false;
     const std::string prepared = prepare_gui_plaintext(original, true);
     check(prepared == transform(original) && prepared != original,
           "GUI boundary reuses the unchanged transformer representation");
     panel.message_ = "Hello, world!";
     panel.on_encipher();
-    check(panel.message_ == "Hello, world!" && panel.cipher_out_.empty() &&
-          !panel.encipher_error_.empty(), "Punctuation stays visible and is rejected before encryption");
+    check(panel.message_ == "Hello, world!" && !panel.cipher_out_.empty() &&
+          panel.encipher_error_.empty() && panel.check_out_ == "Hello world",
+          "Punctuation stays editable and is stripped when Encipher processes the message");
     check(audio_starts == 3 && audio_stops == 3,
           "processing audio stops after an enciphering error");
     panel.message_ = "\xED\x95\x9C";
@@ -305,11 +361,62 @@ void EncipheringPanel::self_test(const std::function<void(bool, const std::strin
     panel.deliver_paste(std::string(kFieldCap + 1, 'a'));
     check(panel.message_ == "\xED\x95\x9C" && !panel.encipher_error_.empty(),
           "Oversized message button paste leaves the original text intact");
-    bool legacy_rejected = false;
-    try { prepare_gui_plaintext("HELLO!", false); }
-    catch (const std::exception&) { legacy_rejected = true; }
-    check(prepare_gui_plaintext("Hello", false) == "Hello" && legacy_rejected,
-          "Legacy input retains its suite semantics and rejects unsupported punctuation");
+    check(prepare_gui_plaintext("HELLO!", false) == "HELLO!" &&
+              preprocess(prepare_gui_plaintext("HELLO, WORLD!", false), Alphabet("abcdefghijklmnopqrstuvwxyz")) ==
+                  "helloworld",
+          "Legacy input reaches preprocessing and punctuation never reaches the machine");
+    PanelState greek_state = state;
+    greek_state.language_code = "ell";
+    EncipheringPanel greek_panel;
+    greek_panel.open(greek_state);
+    const std::string greek = "Θεσσαλονικη ψυχη λογος";
+    const std::string greek_internal =
+        prepare_gui_plaintext(greek, true, greek_state.language_code);
+    greek_panel.paste_target_ = PasteTarget::Message;
+    greek_panel.deliver_paste(greek);
+    greek_panel.on_encipher();
+    check(greek_panel.language_code_ == "ell" &&
+              greek_internal == "th0essalonike2 quc3e2 logos",
+          "Greek setup selection activates the Greek preprocessing path");
+    check(greek_panel.message_ == greek && greek_panel.check_out_ == greek &&
+              greek_panel.check_out_.find("th0") == std::string::npos &&
+              greek_panel.encipher_error_.empty(),
+          "Greek stays visible in the GUI and internal codes stay hidden");
+    greek_panel.cipher_in_ = greek_panel.cipher_out_;
+    greek_panel.on_decipher();
+    check(greek_panel.plain_out_ == greek && greek_panel.decipher_error_.empty(),
+          "Greek plaintext completes the GUI cipher round trip");
+    greek_panel.message_ = "ά";
+    greek_panel.on_encipher();
+    check(greek_panel.message_ == "ά" && greek_panel.cipher_out_.empty() &&
+              !greek_panel.encipher_error_.empty(),
+          "Greek diacritics stay visible when no reversible encoding exists");
+    PanelState hangul_state = state;
+    hangul_state.language_code = "kor";
+    EncipheringPanel hangul_panel;
+    hangul_panel.open(hangul_state);
+    const std::string hangul = "저는 한국어를 공부해요.";
+    const std::string hangul_internal =
+        prepare_gui_plaintext(hangul, true, hangul_state.language_code);
+    hangul_panel.paste_target_ = PasteTarget::Message;
+    hangul_panel.deliver_paste(hangul);
+    hangul_panel.on_encipher();
+    check(hangul_panel.language_code_ == "kor" && hangul_internal != hangul &&
+              hangul_internal.find("/1") != std::string::npos,
+          "Korean setup selection activates the framed Hangul preprocessing path");
+    check(hangul_panel.message_ == hangul && hangul_panel.check_out_ == hangul &&
+              hangul_panel.check_out_.find("/1") == std::string::npos &&
+              hangul_panel.encipher_error_.empty(),
+          "Hangul stays visible in the GUI and internal codes stay hidden");
+    hangul_panel.cipher_in_ = hangul_panel.cipher_out_;
+    hangul_panel.on_decipher();
+    check(hangul_panel.plain_out_ == hangul && hangul_panel.decipher_error_.empty(),
+          "Hangul plaintext completes the GUI cipher round trip");
+    hangul_panel.message_ = "ᄀ";
+    hangul_panel.on_encipher();
+    check(hangul_panel.message_ == "ᄀ" && hangul_panel.cipher_out_.empty() &&
+              !hangul_panel.encipher_error_.empty(),
+          "Incomplete canonical jamo stays visible when no reversible syllable exists");
     panel.set_processing_audio([] { throw std::runtime_error("audio start failed"); },
                                [] { throw std::runtime_error("audio stop failed"); });
     panel.message_ = original;
@@ -326,11 +433,6 @@ void EncipheringPanel::draw_clear_button(const GuiInput& in, float bx, float by)
     }
 }
 
-void EncipheringPanel::copy_both() {
-    copy_text_ = cipher_out_ + kBothSeparator + marker_out_;
-    copy_pending_ = true;
-}
-
 void EncipheringPanel::frame(const GuiInput& raw, int width, int height) {
     GuiInput in = raw;
     in.key_clear = in.ctrl_held && !in.shift_held && !in.alt_held && in.key_letter == 'Q';
@@ -338,20 +440,11 @@ void EncipheringPanel::frame(const GuiInput& raw, int width, int height) {
     back_clicked_ = false;
     wordmark_clicked_ = false;
 
-    // Control and Shift and C, the combination the roadmap keybind list
-    // had reserved and unused. Control alone is already the "skip the
-    // warning" prefix everywhere in here, so it could not be Control and C
-    // on its own without meaning two things.
-    if (in.ctrl_held && in.shift_held && in.key_letter == 'C' && !cipher_out_.empty() &&
-        !marker_out_.empty())
-        copy_both();
-
     float w = static_cast<float>(width), h = static_cast<float>(height);
 
     float top = draw_header(in, w);
 
-    // The marker row, and the same height on both sides of the screen.
-    const float row = kMarkerH + kGap;
+    const float compatibility_row = compatibility_mode_ && padding_ ? kMarkerH + kGap : 0.0f;
     // The two boxes that wrap are taller again.
     const float input_row = text_field_height(kInputLines, true) + kGap;
     // Two rows of buttons, which is what the encipher half needs. The
@@ -385,9 +478,8 @@ void EncipheringPanel::frame(const GuiInput& raw, int width, int height) {
     // Everything in a half that is not a growable output box. What is left
     // of the window goes to the boxes that are, so a full screen still
     // fits rather than running off the bottom.
-    const float e_fixed = kTitleH + ctrl_h + input_row + kGap + row;
-    float d_fixed = kTitleH + ctrl_h + input_row;
-    if (padding_) d_fixed += row;
+    const float e_fixed = kTitleH + ctrl_h + input_row + kGap;
+    float d_fixed = kTitleH + ctrl_h + input_row + compatibility_row;
 
     float want_cipher = box_height(field_w, cipher_out_);
     float want_check =
@@ -470,8 +562,9 @@ float EncipheringPanel::draw_header(const GuiInput& in, float width) {
 }
 
 float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, float field_w,
-                                      float ctrl_h) {
+                                       float ctrl_h) {
     const bool ready = pipeline_ != nullptr;
+    const bool can_encipher = ready && !message_.empty();
     label(Rect{x, y, 200, 26}, "Encipher", false, Font::BodyLarge);
     y += kTitleH;
 
@@ -486,7 +579,7 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
     // for itself. See gui_widgets.hpp.
     const Rect encipher_r{x + (kBtnW + kGap), cy, kBtnW, kBtnH};
     set_landmark("cipher.encipher", encipher_r);
-    if (button(encipher_r, "Encipher", in, ready && !message_.empty(), true)) on_encipher();
+    const bool encipher_button = button(encipher_r, "Encipher", in, can_encipher, true);
     draw_clear_button(in, x + 2 * (kBtnW + kGap), cy);
     cy += kBtnH + kGap;
     set_landmark("cipher.copy_cipher", Rect{x, cy, kBtnW, kBtnH});
@@ -494,38 +587,20 @@ float EncipheringPanel::draw_encipher(const GuiInput& in, float x, float y, floa
         copy_text_ = cipher_out_;
         copy_pending_ = true;
     }
-    set_landmark("cipher.copy_marker", Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH});
-    if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Copy marker", in,
-               !marker_out_.empty())) {
-        copy_text_ = marker_out_;
-        copy_pending_ = true;
-    }
-    // The composite copy needs both halves: with padding off there is no
-    // marker, and half a dispatch pasted with five spaces hanging off the
-    // end would be worse than no button.
-    if (button(Rect{x + 2 * (kBtnW + kGap), cy, kBtnW, kBtnH}, "Copy both", in,
-               !cipher_out_.empty() && !marker_out_.empty()))
-        copy_both();
     y += ctrl_h;
 
     const float input_h = text_field_height(kInputLines, true);
-    set_landmark("cipher.message", Rect{x, y, field_w, input_h});
-    if (text_field(Rect{x, y, field_w, input_h}, message_, in, "", kFieldCap, ready,
+    const Rect message_r{x, y, field_w, input_h};
+    set_landmark("cipher.message", message_r);
+    if (text_field(message_r, message_, in, "", kFieldCap, ready,
                    false, CaseFold::None, "", false, kInputLines, "message", true))
         encipher_error_.clear();
+    const bool input_available = !dropdown_popup_open() && !modal_layer_open() &&
+                                 !focus_gate_blocks(message_r);
+    if (can_encipher && encipher_submit_requested(encipher_button, in,
+                                                  has_keyboard_focus(message_r), input_available))
+        on_encipher();
     y += input_h + kGap;
-
-    // The marker sits above the cipher, out of the order the two are read
-    // in, so that it lands level with the marker box on the decipher side.
-    // The two markers are the pair an operator copies from one to the
-    // other, and beside each other they are one glance rather than two.
-    const float one_h = kMarkerH;
-    if (marker_out_.empty())
-        text_block(Rect{x, y, field_w, one_h}, padding_ ? "" : "no marker: padding is off", in,
-                   marker_scroll_, true, "marker");
-    else
-        text_block(Rect{x, y, field_w, one_h}, marker_out_, in, marker_scroll_, false, "marker");
-    y += one_h + kGap;
 
     text_block(Rect{x, y, field_w, h_cipher_}, cipher_out_, in, cipher_scroll_, false, "cipher");
     y += h_cipher_ + kGap;
@@ -548,15 +623,27 @@ float EncipheringPanel::draw_decipher(const GuiInput& in, float x, float y, floa
     set_landmark("cipher.paste_cipher", Rect{x, cy, kBtnW, kBtnH});
     if (button(Rect{x, cy, kBtnW, kBtnH}, "Paste cipher", in, ready))
         paste_target_ = PasteTarget::Ciphertext;
-    set_landmark("cipher.paste_marker", Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH});
-    if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Paste marker", in, ready && padding_))
-        paste_target_ = PasteTarget::Marker;
-    const bool can_decipher = ready && !cipher_in_.empty() && (!padding_ || !marker_in_.empty());
-    set_landmark("cipher.decipher", Rect{x + 2 * (kBtnW + kGap), cy, kBtnW, kBtnH});
-    if (button(Rect{x + 2 * (kBtnW + kGap), cy, kBtnW, kBtnH}, "Decipher", in, can_decipher, true))
+    const bool compatibility_ready = !compatibility_mode_ || !padding_ ||
+        (machine_ && setup_marker_valid(compatibility_marker_, machine_->alphabet()));
+    const bool can_decipher = ready && !cipher_in_.empty() && compatibility_ready;
+    set_landmark("cipher.decipher", Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH});
+    if (button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Decipher", in,
+               can_decipher, true))
         on_decipher();
+    draw_clear_button(in, x + 2 * (kBtnW + kGap), cy);
     cy += kBtnH + kGap;
-    draw_clear_button(in, x, cy);
+    if (padding_) {
+        set_landmark("cipher.compat_marker", Rect{x, cy, kBtnW, kBtnH});
+        if (button(Rect{x, cy, kBtnW, kBtnH},
+                   compatibility_mode_ ? "Use Setup marker" : "Old marker input", in, ready)) {
+            compatibility_mode_ = !compatibility_mode_;
+            compatibility_marker_.clear();
+            decipher_error_.clear();
+        }
+        if (compatibility_mode_ &&
+            button(Rect{x + (kBtnW + kGap), cy, kBtnW, kBtnH}, "Paste old marker", in, ready))
+            paste_target_ = PasteTarget::CompatibilityMarker;
+    }
     y += ctrl_h;
 
     const float input_h = text_field_height(kInputLines, true);
@@ -564,10 +651,18 @@ float EncipheringPanel::draw_decipher(const GuiInput& in, float x, float y, floa
                false, fold_, "", false, kInputLines, "ciphertext");
     y += input_h + kGap;
 
-    if (padding_) {
+    if (compatibility_mode_ && padding_) {
         const float marker_h = kMarkerH;
-        text_field(Rect{x, y, field_w, marker_h}, marker_in_, in, allowed_marker_, kFieldCap,
-                   ready, false, fold_, "", false, 1, "marker");
+        const Rect old_marker_r{x, y, field_w, marker_h};
+        GuiInput marker_input = in;
+        if (has_keyboard_focus(old_marker_r) && in.ctrl_held && in.key_letter == 'V') {
+            marker_input.key_letter = 0;
+            decipher_error_ = "use Paste old marker so combined text can be rejected";
+        }
+        text_field(old_marker_r, compatibility_marker_, marker_input, allowed_marker_,
+                   kSetupMarkerLength, ready,
+                   !compatibility_marker_.empty() && !compatibility_ready,
+                   fold_, "", false, 1, "old marker");
         y += marker_h + kGap;
     }
 

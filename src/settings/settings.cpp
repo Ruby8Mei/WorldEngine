@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "pipeline.hpp"
 #include "registry.hpp"
 
 namespace inop {
@@ -22,24 +23,6 @@ std::string lower(std::string s) {
     return s;
 }
 
-// Shared by load_settings()/load_keysheet_entry_from_stream(): parse one
-// block from `in`, default an error if parsing found nothing at all,
-// validate it, and append `context` to whatever error either step
-// produced. Both callers used to hand-roll this exact sequence themselves.
-bool parse_and_validate(std::istream& in, Settings& out, const std::string& incomplete_msg,
-                         const std::string& context, std::string* error) {
-    Settings s;
-    if (!parse_settings_block(in, s, error)) {
-        if (error && error->empty()) *error = incomplete_msg;
-        return false;
-    }
-    if (!validate_settings(s, error)) {
-        if (error) *error += context;
-        return false;
-    }
-    out = s;
-    return true;
-}
 }  // namespace
 
 bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
@@ -54,6 +37,7 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
         std::string tok;
         if (key == "suite")          is >> out.suite_code;
         else if (key == "reflector") is >> out.reflector;
+        else if (key == "marker")    is >> out.marker;
         else if (key == "key") {
             is >> out.master_key;
             // Fold every alphabet-bound field toward this record's own
@@ -103,14 +87,22 @@ bool validate_settings(const Settings& s, std::string* error) {
     const std::vector<std::string> rotor_pool = available_rotors(su);
     std::set<std::string> rotor_names;
     for (const std::string& name : s.rotors) {
-        if (std::find(rotor_pool.begin(), rotor_pool.end(), name) == rotor_pool.end())
+        if (std::find(rotor_pool.begin(), rotor_pool.end(), name) == rotor_pool.end()) {
+            if (!normal_rotor_name_is_eligible(su, name))
+                return fail("factory demonstration rotor " + name +
+                            " is excluded from normal INOP-38 configurations");
             return fail("rotor " + name + " is not available for " + su.name);
+        }
         if (!rotor_names.insert(name).second)
             return fail("rotor " + name + " is used more than once");
     }
     const std::vector<std::string> reflector_pool = available_reflectors(su);
-    if (std::find(reflector_pool.begin(), reflector_pool.end(), s.reflector) == reflector_pool.end())
+    if (std::find(reflector_pool.begin(), reflector_pool.end(), s.reflector) == reflector_pool.end()) {
+        if (!normal_reflector_name_is_eligible(su, s.reflector))
+            return fail("factory demonstration reflector " + s.reflector +
+                        " is excluded from normal INOP-38 configurations");
         return fail("reflector " + s.reflector + " is not available for " + su.name);
+    }
     if (s.rings.size() != count)
         return fail("rings count (" + std::to_string(s.rings.size()) +
                     ") does not match rotor count (" + std::to_string(count) + ")");
@@ -147,6 +139,10 @@ bool validate_settings(const Settings& s, std::string* error) {
                     ") does not match rotor count (" + std::to_string(count) + ")");
     for (char symbol : s.master_key)
         if (!alpha.contains(symbol)) return fail("master key symbol is outside the " + su.name + " alphabet");
+    if (!su.historic_lock && !setup_marker_valid(s.marker, alpha))
+        return fail("marker must contain exactly 16 " + su.name + " alphabet symbols");
+    if (su.historic_lock && !s.marker.empty())
+        return fail("Legacy settings must not contain a marker");
     return true;
 }
 
@@ -177,6 +173,10 @@ bool settings_from_json(const nlohmann::json& j, Settings& out, std::string* err
     parsed.suite_code = j["suite_code"].get<std::string>();
     parsed.reflector = j["reflector"].get<std::string>();
     parsed.master_key = j["master_key"].get<std::string>();
+    if (j.contains("marker")) {
+        if (!j["marker"].is_string()) return fail("marker must be a string");
+        parsed.marker = j["marker"].get<std::string>();
+    }
 
     for (const auto& r : j["rotors"]) {
             if (!r.is_object()) return fail("each rotor must be an object");
@@ -228,6 +228,7 @@ nlohmann::json settings_to_json(const Settings& s) {
     j["suite_code"] = s.suite_code;
     j["reflector"] = s.reflector;
     j["master_key"] = s.master_key;
+    j["marker"] = s.marker;
     j["rotor_count"] = static_cast<int>(s.rotors.size());
 
     nlohmann::json rotors = nlohmann::json::array();
@@ -248,7 +249,9 @@ nlohmann::json settings_to_json(const Settings& s) {
 
 }  // namespace
 
-bool load_settings(Settings& s, const std::string& path, std::string* error) {
+bool load_settings(Settings& s, const std::string& path, std::string* error,
+                   bool* marker_missing) {
+    if (marker_missing) *marker_missing = false;
     std::ifstream f(path);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     nlohmann::json j = nlohmann::json::parse(f, nullptr, false);
@@ -259,11 +262,16 @@ bool load_settings(Settings& s, const std::string& path, std::string* error) {
     Settings out;
     if (!settings_from_json(j, out, error)) return false;
     std::string err;
-    if (!validate_settings(out, &err)) {
+    Settings validated = out;
+    const bool missing = suites().contains(out.suite_code) &&
+                         !suite(out.suite_code).historic_lock && out.marker.empty();
+    if (missing) validated.marker = std::string(kSetupMarkerLength, suite(out.suite_code).alphabet[0]);
+    if (!validate_settings(validated, &err)) {
         if (error) *error = err + " in " + path;
         return false;
     }
     s = out;
+    if (marker_missing) *marker_missing = missing;
     return true;
 }
 
@@ -299,8 +307,11 @@ bool migrate_settings_from_text(const std::string& txt_path, const std::string& 
     { std::ifstream probe(json_path); if (probe) return false; }
 
     Settings s;
-    if (!parse_and_validate(src, s, "no settings found in " + txt_path, " in " + txt_path, nullptr))
-        return false;
+    if (!parse_settings_block(src, s, nullptr)) return false;
+    Settings validated = s;
+    if (suites().contains(s.suite_code) && !suite(s.suite_code).historic_lock && s.marker.empty())
+        validated.marker = std::string(kSetupMarkerLength, suite(s.suite_code).alphabet[0]);
+    if (!validate_settings(validated, nullptr)) return false;
     return save_settings(s, json_path);
 }
 
@@ -377,8 +388,16 @@ bool load_keysheet(const std::string& path, std::vector<KeySheetEntry>& entries,
     for (size_t i = 0; i < arr.size(); ++i) {
         KeySheetEntry entry;
         std::string entry_error;
-        if (settings_from_json(arr[i], entry.settings, &entry_error) &&
-            validate_settings(entry.settings, &entry_error)) {
+        bool parsed_ok = settings_from_json(arr[i], entry.settings, &entry_error);
+        Settings validated = entry.settings;
+        if (parsed_ok && suites().contains(entry.settings.suite_code) &&
+            !suite(entry.settings.suite_code).historic_lock &&
+            entry.settings.marker.empty()) {
+            entry.marker_missing = true;
+            validated.marker = std::string(kSetupMarkerLength,
+                                           suite(entry.settings.suite_code).alphabet[0]);
+        }
+        if (parsed_ok && validate_settings(validated, &entry_error)) {
             entry.valid = true;
         } else {
             entry.error = entry_error + " (entry " + std::to_string(i + 1) + " in " + path + ")";
@@ -389,7 +408,9 @@ bool load_keysheet(const std::string& path, std::vector<KeySheetEntry>& entries,
     return true;
 }
 
-bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error) {
+bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error,
+                         bool* marker_missing) {
+    if (marker_missing) *marker_missing = false;
     std::vector<KeySheetEntry> entries;
     if (!load_keysheet(path, entries, error)) return false;
     if (index < 1 || index > static_cast<int>(entries.size())) {
@@ -402,6 +423,7 @@ bool load_keysheet_entry(const std::string& path, int index, Settings& out, std:
         return false;
     }
     out = entry.settings;
+    if (marker_missing) *marker_missing = entry.marker_missing;
     return true;
 }
 

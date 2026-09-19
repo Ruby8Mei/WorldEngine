@@ -53,6 +53,10 @@ bool InputScript::load(const std::string& path, std::string* error) {
         if (verb == "move") {
             if (!(ls >> s.x >> s.y)) return fail(line_no, "move needs an x and a y");
             s.verb = Verb::Move;
+        } else if (verb == "resize") {
+            if (!(ls >> s.x >> s.y) || s.x < 320.0 || s.y < 240.0)
+                return fail(line_no, "resize needs a width and height of at least 320 by 240");
+            s.verb = Verb::Resize;
         } else if (verb == "click") {
             s.verb = Verb::Click;
         } else if (verb == "press") {
@@ -73,6 +77,7 @@ bool InputScript::load(const std::string& path, std::string* error) {
             else if (which == "delete") s.key = Key::Delete;
             else if (which == "escape") s.key = Key::Escape;
             else if (which == "backspace") s.key = Key::Backspace;
+            else if (which == "tab") s.key = Key::Tab;
             else if (which == "up") s.key = Key::Up;
             else if (which == "down") s.key = Key::Down;
             else if (which == "left") s.key = Key::Left;
@@ -132,6 +137,15 @@ bool InputScript::load(const std::string& path, std::string* error) {
     click_released_next_ = false;
     waited_ = 0.0f;
     done_ = false;
+    resize_width_ = resize_height_ = 0;
+    return true;
+}
+
+bool InputScript::take_resize(int* width, int* height) {
+    if (resize_width_ <= 0 || resize_height_ <= 0) return false;
+    if (width) *width = resize_width_;
+    if (height) *height = resize_height_;
+    resize_width_ = resize_height_ = 0;
     return true;
 }
 
@@ -158,6 +172,12 @@ bool InputScript::fill(GuiInput& out, float dt) {
             mouse_y_ = s.y;
             out.mouse_x = s.x;
             out.mouse_y = s.y;
+            ++at_;
+            break;
+
+        case Verb::Resize:
+            resize_width_ = static_cast<int>(s.x);
+            resize_height_ = static_cast<int>(s.y);
             ++at_;
             break;
 
@@ -246,6 +266,7 @@ bool InputScript::fill(GuiInput& out, float dt) {
                 case Key::Escape: out.key_escape = true; break;
                 case Key::Backspace: out.key_backspace = true; break;
                 case Key::Delete: out.key_delete = true; break;
+                case Key::Tab: out.key_tab = true; break;
                 case Key::Up: out.key_up = true; break;
                 case Key::Down: out.key_down = true; break;
                 case Key::Left: out.key_left = true; break;

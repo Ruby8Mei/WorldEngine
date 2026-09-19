@@ -78,6 +78,16 @@ std::string untransform(const std::string& text);
 
 TransformValidationResult validate_transformed_data(const std::string& text);
 
+std::string transform_greek(const std::string& text);
+std::string untransform_greek(const std::string& text);
+TransformValidationResult validate_greek_input(const std::string& text);
+TransformValidationResult validate_greek_transformed_data(const std::string& text);
+
+std::string transform_hangul(const std::string& text);
+std::string untransform_hangul(const std::string& text);
+TransformValidationResult validate_hangul_input(const std::string& text);
+TransformValidationResult validate_hangul_transformed_data(const std::string& text);
+
 // Every (base letter, code) pair the scheme can produce, sorted and
 // without repeats. One list, not one per language, which is the whole
 // difference between this and what it replaced.

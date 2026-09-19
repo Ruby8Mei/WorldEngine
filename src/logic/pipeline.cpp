@@ -2,12 +2,31 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <stdexcept>
 #include <string>
 
 #include "rng.hpp"
 
 namespace inop {
+
+bool setup_marker_valid(const std::string& marker, const Alphabet& alpha) {
+    if (marker.size() != kSetupMarkerLength) return false;
+    for (char symbol : marker)
+        if (!alpha.contains(symbol)) return false;
+    return true;
+}
+
+std::string marker_reliability_warning(const std::string& marker) {
+    std::set<char> symbols(marker.begin(), marker.end());
+    if (marker.size() == kSetupMarkerLength && symbols.size() < 4)
+        return "low symbol variety may reduce boundary recovery reliability";
+    return "";
+}
+
+std::string frame_with_marker(const std::string& text, const std::string& marker) {
+    return marker + text + marker;
+}
 
 bool apply_suite_lock(PipelineConfig& cfg, bool historic_lock, int block) {
     cfg.block = block;
@@ -101,6 +120,8 @@ std::string carve(const std::string& full, const std::string& marker) {
 }  // namespace
 
 Pipeline::Pipeline(Machine& machine, PipelineConfig cfg) : machine_(machine), cfg_(cfg) {
+    if (cfg_.padding && !setup_marker_valid(cfg_.marker, machine_.alphabet()))
+        throw std::invalid_argument("Setup marker must contain exactly 16 suite symbols");
     machine_.set_moving_reflector(cfg_.moving_reflector);
 }
 
@@ -129,8 +150,7 @@ Encrypted Pipeline::encrypt(const std::string& plaintext) {
 
     std::string body;
     if (cfg_.padding) {
-        result.marker = secure_string(alpha, static_cast<size_t>(cfg_.marker_len));
-        body = pad(result.marker + preprocess(plaintext, machine_.alphabet()) + result.marker,
+        body = pad(frame_with_marker(preprocess(plaintext, machine_.alphabet()), cfg_.marker),
                    alpha, cfg_.base_noise, cfg_.block);
     } else {
         body = preprocess(plaintext, machine_.alphabet());
@@ -151,11 +171,16 @@ Encrypted Pipeline::encrypt(const std::string& plaintext) {
     return result;
 }
 
-std::string Pipeline::decrypt(const std::string& ciphertext, const std::string& marker) {
+std::string Pipeline::decrypt(const std::string& ciphertext) {
+    return decrypt_with_marker(ciphertext, cfg_.marker);
+}
+
+std::string Pipeline::decrypt_with_marker(const std::string& ciphertext,
+                                          const std::string& marker) {
     // A blank marker must fail loudly, not silently hand back the raw
     // noise-padded blob as if it were the message.
-    if (cfg_.padding && marker.empty())
-        throw std::runtime_error("a marker is required to decipher a padded message");
+    if (cfg_.padding && !setup_marker_valid(marker, machine_.alphabet()))
+        throw std::runtime_error("marker must contain exactly 16 suite symbols");
 
     // encrypt() never emits an odd-length body under the double pass, so an
     // odd one arriving here is a truncated or mistranscribed ciphertext. Say

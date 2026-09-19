@@ -18,11 +18,14 @@
 // widening the public interface for a test would be the wrong trade.
 #include <cstdio>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 #include "gui.hpp"
 #include "audio_manager.hpp"
+#include "gui_bombe_panel.hpp"
 #include "gui_enciphering_panel.hpp"
 #include "gui_config_store.hpp"
 #include "gui_prefs.hpp"
@@ -53,7 +56,10 @@ void drop_temp(const std::string& path) { std::remove(path.c_str()); }
 void gui_self_test(const SelfTestCheck& check) {
     using namespace inop::gui;
     text_edit_self_test(check);
+    scroll_region_self_test(check);
+    dropdown_search_self_test(check);
     audio_self_test(check);
+    BombePanel::self_test(check);
     EncipheringPanel::self_test(check);
 
     // ── preferences ────────────────────────────────────────────────────
@@ -182,6 +188,7 @@ void gui_self_test(const SelfTestCheck& check) {
         };
         const Bad bad[] = {
             {"move 10\n", "move with only one coordinate is refused"},
+            {"resize 200 100\n", "resize refuses an unusably small window"},
             {"type\n", "type with nothing to type is refused"},
             {"key\n", "key with no key named is refused"},
             {"key sideways\n", "a key nobody has is refused"},
@@ -215,9 +222,11 @@ void gui_self_test(const SelfTestCheck& check) {
                                             "# a comment, then a blank line\n"
                                             "\n"
                                             "move 40 60\n"
+                                            "resize 900 700\n"
                                             "click\n"
                                             "type hello\n"
                                             "key enter\n"
+                                            "key tab\n"
                                             "ctrl on\n"
                                             "scroll 2\n"
                                             "shot a-picture\n"
@@ -231,6 +240,11 @@ void gui_self_test(const SelfTestCheck& check) {
             GuiInput in;
             s.fill(in, 0.016f);
             check(in.mouse_x == 40 && in.mouse_y == 60, "move puts the pointer where it says");
+            s.fill(in, 0.016f);
+            int resize_width = 0, resize_height = 0;
+            check(s.take_resize(&resize_width, &resize_height) && resize_width == 900 &&
+                      resize_height == 700,
+                  "resize reports the requested window dimensions");
             // A click is two frames because a real button is a down edge
             // and then an up edge, and no widget in here sees both at once.
             s.fill(in, 0.016f);
@@ -243,6 +257,8 @@ void gui_self_test(const SelfTestCheck& check) {
                   "type delivers the rest of the line");
             s.fill(in, 0.016f);
             check(in.key_enter && !in.key_escape, "key enter arrives as one keypress");
+            s.fill(in, 0.016f);
+            check(in.key_tab && !in.key_enter, "key tab arrives as one keypress");
             s.fill(in, 0.016f);
             check(in.ctrl_held, "ctrl on is held rather than pressed");
             s.fill(in, 0.016f);
@@ -276,43 +292,175 @@ void gui_self_test(const SelfTestCheck& check) {
               "a wait holds for its seconds and then lets go");
     }
 
-    // ── the saved configuration store ──────────────────────────────────
     {
-        // A default panel state has no rotors picked, so it is exactly the
-        // incomplete configuration load_config() exists to refuse.
-        // load_config() is the sole authority on whether a file is
-        // corrupted, and the tile browser shows its popup on that answer
-        // alone, so what it refuses matters as much as what it accepts.
-        PanelState empty_state;
-        const std::string name = "inop-selftest.json";
+        PanelState state;
+        state.suite_code = "38";
+        state.language_code = "eng";
+        state.rotor_count = 5;
+        for (int i = 0; i < state.rotor_count; ++i) {
+            state.rotor_rows[i].rotor_name = "U" + std::to_string(950 + i);
+            state.rotor_rows[i].ring_text = std::to_string(i + 1);
+            state.rotor_rows[i].notch_box[0] = std::string(1, static_cast<char>('a' + i));
+        }
+        state.reflector_name = "K950";
+        state.double_pass = true;
+        state.padding = true;
+        state.moving_reflector = true;
+        state.master_key_text = "abcde0";
+        state.marker_text = "abcdefghijklmnop";
+        state.master_key_prefilled = true;
+        const std::string name = "inop-selftest.inop";
         std::string save_err;
-        const bool saved = save_config(empty_state, name, &save_err);
-        check(saved, "a configuration writes to setup/");
-        check(saved && config_exists(name), "a saved configuration is found again by name");
+        const bool saved = save_config(state, name, &save_err);
+        check(saved, "a versioned setup preset saves");
+        check(saved && config_exists(name), "a versioned setup preset is listed");
 
         PanelState back;
         std::string load_err;
         const bool loaded = load_config("setup/" + name, back, &load_err);
-        check(!loaded && !load_err.empty(),
-              "a configuration with no rotors picked is refused, with a reason");
+        check(loaded && back.suite_code == state.suite_code &&
+                  back.language_code == state.language_code && back.rotor_count == state.rotor_count &&
+                  back.rotor_rows[0].rotor_name == state.rotor_rows[0].rotor_name &&
+                  back.reflector_name == state.reflector_name &&
+                  back.master_key_text == state.master_key_text &&
+                  back.marker_text == state.marker_text,
+              "a versioned setup preset round trips without changing setup state");
+
+        auto slurp = [](const std::string& path) {
+            std::ifstream file(path, std::ios::binary);
+            std::ostringstream text;
+            text << file.rdbuf();
+            return text.str();
+        };
+        const std::string target = "setup/" + name;
+        const std::string baseline = slurp(target);
+        const std::string pending = target + ".pending";
+        std::error_code fs_error;
+        std::filesystem::remove_all(pending, fs_error);
+        std::filesystem::create_directory(pending, fs_error);
+        std::string atomic_err;
+        const bool atomic_refused = !save_config(state, name, &atomic_err);
+        check(atomic_refused && !atomic_err.empty() && slurp(target) == baseline,
+              "an atomic save failure leaves the existing preset byte identical");
+        std::filesystem::remove_all(pending, fs_error);
 
         std::string del_err;
         const bool deleted = delete_config("setup/" + name, &del_err);
-        check(deleted, "a saved configuration deletes");
-        check(deleted && !config_exists(name), "a deleted configuration is gone");
+        check(deleted && !config_exists(name), "a versioned setup preset deletes");
     }
     {
         std::string err;
-        check(!delete_config("setup/inop-selftest-never-existed.json", &err),
+        check(!delete_config("setup/inop-selftest-never-existed.inop", &err),
               "deleting a configuration that is not there is refused");
     }
     {
-        const std::string path = write_temp("config_junk.json", "{ not a configuration");
+        PanelState empty;
+        std::string err;
+        check(!save_config(empty, "invalid-semantic.inop", &err) && !err.empty(),
+              "semantic validation refuses an incomplete preset before saving");
+    }
+    {
+        const std::string path = write_temp("config_junk.inop", "{ not a configuration");
         PanelState out;
         std::string err;
         const bool loaded = load_config(path, out, &err);
         drop_temp(path);
-        check(!loaded && !err.empty(), "a configuration file that is not JSON is refused");
+        check(!loaded && !err.empty(), "malformed preset JSON is refused with a reason");
+    }
+    {
+        const std::string path = write_temp(
+            "config_unknown.inop",
+            R"({"format":"INOP_SETUP_PRESET","version":1,"setup":{},"extra":true})");
+        PanelState out;
+        std::string err;
+        const bool loaded = load_config(path, out, &err);
+        drop_temp(path);
+        check(!loaded && err.find("unknown field") != std::string::npos,
+              "unknown fields in version 1 presets are refused clearly");
+    }
+    {
+        const std::string path = write_temp(
+            "config_future.inop",
+            R"({"format":"INOP_SETUP_PRESET","version":3,"setup":{}})");
+        PanelState out;
+        std::string err;
+        const bool loaded = load_config(path, out, &err);
+        drop_temp(path);
+        check(!loaded && err.find("version 3") != std::string::npos,
+              "future preset versions are refused clearly");
+    }
+    {
+        const std::string old_preset =
+            R"({"format":"INOP_SETUP_PRESET","version":1,"setup":{"suite_code":"38","language_code":"eng","rotor_count":5,"rotors":[{"name":"U950","ring":"1","notches":"a"},{"name":"U951","ring":"2","notches":"b"},{"name":"U952","ring":"3","notches":"c"},{"name":"U953","ring":"4","notches":"d"},{"name":"U954","ring":"5","notches":"e"}],"reflector":"K950","plugboard":[],"double_pass":true,"padding":true,"moving_reflector":true,"master_key":"abcde0"}})";
+        const std::string path = write_temp("config_v1.inop", old_preset);
+        PanelState out;
+        std::string err;
+        bool migration_import = false;
+        const bool loaded = load_config(path, out, &err, &migration_import);
+        const bool incomplete_loaded = loaded && migration_import && out.marker_text.empty();
+        std::string save_err;
+        const bool incomplete_save_refused = !save_config(out, "config-v1-incomplete.inop", &save_err);
+        const bool incomplete_reason = !save_err.empty();
+        out.marker_text = "abcdefghijklmnop";
+        const std::string completed_name = "config-v1-completed.inop";
+        const bool completed_saved = save_config(out, completed_name, &save_err);
+        PanelState completed;
+        bool completed_migration = true;
+        const bool completed_loaded =
+            completed_saved && load_config("setup/" + completed_name, completed, &err,
+                                          &completed_migration);
+        std::string delete_error;
+        if (completed_saved) delete_config("setup/" + completed_name, &delete_error);
+        drop_temp(path);
+        check(incomplete_loaded,
+              "version 1 preset imports as an incomplete read only Setup");
+        check(incomplete_save_refused && incomplete_reason,
+              "version 1 preset requires explicit marker completion before Save As version 2");
+        check(completed_loaded && !completed_migration &&
+                  completed.marker_text == "abcdefghijklmnop",
+              "completed version 1 import saves and reloads as version 2");
+    }
+    {
+        const std::string legacy =
+            R"({"suite_code":"38","language_code":"eng","rotor_count":5,"rotors":[{"name":"U950","ring":"1","notches":"a"},{"name":"U951","ring":"2","notches":"b"},{"name":"U952","ring":"3","notches":"c"},{"name":"U953","ring":"4","notches":"d"},{"name":"U954","ring":"5","notches":"e"}],"reflector":"K950","plugboard":[],"double_pass":true,"padding":true,"moving_reflector":true,"master_key":"abcde0"})";
+        const std::string path = write_temp("config_legacy.json", legacy);
+        PanelState out;
+        std::string err;
+        bool legacy_import = false;
+        const bool loaded = load_config(path, out, &err, &legacy_import);
+        std::ifstream legacy_file(path, std::ios::binary);
+        std::ostringstream legacy_after;
+        legacy_after << legacy_file.rdbuf();
+        legacy_file.close();
+        std::string save_err;
+        const bool legacy_save_refused = !save_config(out, "legacy-overwrite.json", &save_err);
+        drop_temp(path);
+        check(loaded && legacy_import && legacy_after.str() == legacy,
+              "legacy JSON imports without modifying its source");
+        check(legacy_save_refused && !save_err.empty(),
+              "legacy JSON cannot be overwritten through the versioned saver");
+    }
+    {
+        const std::string path = write_temp(
+            "config_factory_rotor.json",
+            R"({"suite_code":"38","language_code":"eng","rotor_count":5,"rotors":[{"name":"R1","ring":"1","notches":"a"},{"name":"U951","ring":"2","notches":"b"},{"name":"U952","ring":"3","notches":"c"},{"name":"U953","ring":"4","notches":"d"},{"name":"U954","ring":"5","notches":"e"}],"reflector":"K950","plugboard":[],"double_pass":true,"padding":true,"moving_reflector":true,"master_key":"abcde0"})");
+        PanelState out;
+        std::string err;
+        const bool loaded = load_config(path, out, &err);
+        drop_temp(path);
+        check(!loaded && err.find("rotor unavailable") != std::string::npos,
+              "GUI saved configurations clearly reject excluded factory rotors");
+    }
+    {
+        const std::string path = write_temp(
+            "config_factory_reflector.json",
+            R"({"suite_code":"38","language_code":"eng","rotor_count":5,"rotors":[{"name":"U950","ring":"1","notches":"a"},{"name":"U951","ring":"2","notches":"b"},{"name":"U952","ring":"3","notches":"c"},{"name":"U953","ring":"4","notches":"d"},{"name":"U954","ring":"5","notches":"e"}],"reflector":"D","plugboard":[],"double_pass":true,"padding":true,"moving_reflector":true,"master_key":"abcde0"})");
+        PanelState out;
+        std::string err;
+        const bool loaded = load_config(path, out, &err);
+        drop_temp(path);
+        check(!loaded && err.find("reflector unavailable") != std::string::npos,
+              "GUI saved configurations clearly reject excluded factory reflectors");
     }
     {
         // The suggestion is the lowest unused number for the suite, so it
@@ -408,8 +556,7 @@ void gui_self_test(const SelfTestCheck& check) {
                                "setup.language",    "setup.rotor_one",    "setup.rotor_count",
                                "setup.rotor_grid",  "setup.plugboard",    "setup.master_key",
                                "setup.next",        "cipher.message",     "cipher.encipher",
-                               "cipher.copy_cipher", "cipher.paste_cipher", "cipher.copy_marker",
-                               "cipher.paste_marker", "cipher.decipher"};
+                               "cipher.copy_cipher", "cipher.paste_cipher", "cipher.decipher"};
         for (const char* n : names) set_landmark(n, here);
         GuiInput quiet;
         resolve_focus(quiet);
@@ -455,8 +602,7 @@ void gui_self_test(const SelfTestCheck& check) {
         f.has_message = true;                        answer(quiet);   // 14
         f.has_cipher = true;                         answer(quiet);   // 15
         f.cipher_pasted = true;                      answer(quiet);   // 16
-        f.marker_pasted = true;                      answer(quiet);   // 17
-        f.has_plain = true;                          answer(quiet);   // 18
+        f.has_plain = true;                          answer(quiet);   // 17
 
         check(walked, "every step of the tutorial can be answered");
         check(reached == Tutorial::step_count() - 1,

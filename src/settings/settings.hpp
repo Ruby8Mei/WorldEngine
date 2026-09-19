@@ -21,12 +21,14 @@ struct Settings {
     std::vector<std::string> notches;  // parallel to rotors
     std::vector<std::string> plugs;
     std::string master_key;
+    std::string marker;
 };
 
 struct KeySheetEntry {
     Settings settings;
     std::string error;
     bool valid = false;
+    bool marker_missing = false;
 };
 
 // Reads directive lines (suite/rotors/reflector/rings/notches/plugs/key)
@@ -43,7 +45,8 @@ bool validate_settings(const Settings& s, std::string* error);
 
 // Fails if the file is missing, empty, or fails validate_settings() against
 // its own declared suite — does not modify `s` on failure.
-bool load_settings(Settings& s, const std::string& path, std::string* error);
+bool load_settings(Settings& s, const std::string& path, std::string* error,
+                   bool* marker_missing = nullptr);
 
 // Overwrites `path` unconditionally if it can be opened for writing.
 bool save_settings(const Settings& s, const std::string& path);
@@ -68,7 +71,8 @@ bool load_keysheet(const std::string& path, std::vector<KeySheetEntry>& entries,
 // so a batch caller reading entries in order paid O(1) per entry instead of
 // rescanning from the top, and a JSON document has to be parsed whole
 // regardless, so there was nothing left for it to save.
-bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error);
+bool load_keysheet_entry(const std::string& path, int index, Settings& out, std::string* error,
+                         bool* marker_missing = nullptr);
 
 // One-time conversion of a 2.2.x plain-text settings file into JSON. Does
 // nothing and returns false if the text file is absent or the JSON one

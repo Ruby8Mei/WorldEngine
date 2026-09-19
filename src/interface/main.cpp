@@ -165,6 +165,34 @@ std::string ask_language(const std::string& def) {
 // ── settings ────────────────────────────────────────────────────────────
 void verify_legacy_integrity();  // defined below; forward-declared for collect_settings()
 
+std::string collect_setup_marker(const Suite& su, bool offer_suggestion) {
+    if (su.historic_lock) return {};
+    Alphabet alpha(su.alphabet);
+    rule("setup marker");
+    std::cout << DIM << "  exactly " << kSetupMarkerLength
+              << " alphabet symbols, shared with Setup" << RST << "\n";
+    if (offer_suggestion) {
+        try {
+            entropy_self_check();
+            std::cout << DIM << "  suggestion (freshly drawn): " << RST << BOLD
+                      << secure_string(su.alphabet, kSetupMarkerLength) << RST << "\n";
+        } catch (const std::exception& e) {
+            std::cout << DIM << "  no marker suggestion: " << e.what() << RST << "\n";
+        }
+    }
+    while (true) {
+        std::string marker = alpha.fold_case(ask("marker"));
+        if (!setup_marker_valid(marker, alpha)) {
+            fail("need exactly " + std::to_string(kSetupMarkerLength) +
+                 " symbols from the active alphabet");
+            continue;
+        }
+        const std::string warning = marker_reliability_warning(marker);
+        if (!warning.empty()) std::cout << YELL << "  warning: " << warning << RST << "\n";
+        return marker;
+    }
+}
+
 // ── interactive setup ───────────────────────────────────────────────────
 Settings collect_settings() {
     Settings s;
@@ -343,6 +371,7 @@ Settings collect_settings() {
         s.master_key = k;
         break;
     }
+    s.marker = collect_setup_marker(su, true);
     return s;
 }
 
@@ -389,6 +418,11 @@ void show_settings(const Settings& s, const Machine& m) {
     if (s.plugs.empty()) std::cout << DIM << "(none)" << RST;
     else for (auto& p : s.plugs) std::cout << p << " ";
     std::cout << "\n  key       " << s.master_key << "\n";
+    if (!su.historic_lock) {
+        std::cout << "  marker    " << s.marker << "\n";
+        const std::string warning = marker_reliability_warning(s.marker);
+        if (!warning.empty()) std::cout << YELL << "  warning: " << warning << RST << "\n";
+    }
     if (su.notches_are_fixed)
         std::cout << DIM << "  notches shown are the historic ones carried by the wheels" << RST << "\n";
     rule();
@@ -497,6 +531,18 @@ int self_test() {
         // guard is not covered" when the truth is the opposite.
         if (!ok) { std::cout.flush(); ++failures; }
     };
+    auto build_factory_demo_machine = [](const Settings& s) {
+        const Suite& su = suite(s.suite_code);
+        Alphabet alpha(su.alphabet);
+        std::vector<Rotor> rotors;
+        for (size_t i = 0; i < s.rotors.size(); ++i) {
+            Rotor rotor = make_rotor(s.rotors[i], alpha);
+            if (!su.notches_are_fixed) rotor.set_notches(s.notches[i], alpha);
+            rotors.push_back(std::move(rotor));
+        }
+        return Machine(alpha, std::move(rotors), make_reflector(s.reflector, alpha),
+                       Plugboard(s.plugs, alpha), s.rings, s.master_key, su.historic_lock);
+    };
 
     // 1. Historic Enigma vector: rotors I II III, reflector B, all rings 01,
     //    key AAA. Pressing A twelve times gives a known ciphertext.
@@ -539,14 +585,55 @@ int self_test() {
         s.notches = {"a", "5", "#", "z", "/"};
         s.plugs = {"qw", "12"};
         s.master_key = "h4t#0p";
-        Machine m = build_machine(s);
-        Pipeline p(m, PipelineConfig{});
+        s.marker = "abcdefghijklmnop";
+        Machine m = build_factory_demo_machine(s);
+        PipelineConfig cfg;
+        cfg.marker = s.marker;
+        Pipeline p(m, cfg);
 
         std::string msg = "ATTACK AT DAWN / HOLD THE LINE 0800";
         Encrypted e = p.encrypt(msg);
-        std::string back = p.decrypt(e.ciphertext, e.marker);
+        std::string back = p.decrypt(e.ciphertext);
         check(back == "attack at dawn / hold the line 0800", "pipeline round trip -> " + back);
         check(e.ciphertext.size() % 16 == 0, "ciphertext is block aligned");
+        Encrypted second = p.encrypt(msg);
+        check(second.ciphertext != e.ciphertext && p.decrypt(second.ciphertext) == back,
+              "fresh cover traffic changes ciphertext while Setup remains reproducible");
+
+        Alphabet alpha(ALPHA38);
+        check(setup_marker_valid(s.marker, alpha) &&
+                  !setup_marker_valid("abcdefghijklmno", alpha) &&
+                  !setup_marker_valid("abcdefghijklmno!", alpha),
+              "Setup marker requires exactly 16 active alphabet symbols");
+        const std::string framed = frame_with_marker("message", s.marker);
+        check(framed.find(s.marker) == 0 && framed.rfind(s.marker) == s.marker.size() + 7,
+              "marker copies occupy distinct pre-encipher boundary positions");
+        check(!marker_reliability_warning("aaaaaaaaaaaaaaaa").empty() &&
+                  marker_reliability_warning(s.marker).empty(),
+              "low marker variety produces only a reliability warning");
+
+        bool corrupt_refused = false;
+        try {
+            p.decrypt(e.ciphertext.substr(1));
+        } catch (const std::exception&) {
+            corrupt_refused = true;
+        }
+        check(corrupt_refused, "truncated ciphertext is refused deterministically");
+
+        PipelineConfig old_cfg = cfg;
+        old_cfg.marker = "ponmlkjihgfedcba";
+        Pipeline old_pipe(m, old_cfg);
+        Encrypted old = old_pipe.encrypt(msg);
+        Pipeline current_pipe(m, cfg);
+        bool wrong_setup_refused = false;
+        try {
+            current_pipe.decrypt(old.ciphertext);
+        } catch (const std::exception&) {
+            wrong_setup_refused = true;
+        }
+        check(wrong_setup_refused &&
+                  current_pipe.decrypt_with_marker(old.ciphertext, old_cfg.marker) == back,
+              "wrong Setup fails and explicit older marker compatibility succeeds");
     }
 
     // 4. The double pass removes Enigma's fatal no-self-encipherment property.
@@ -562,10 +649,11 @@ int self_test() {
         s.rings = {1, 1, 1, 1, 1};
         s.notches = {"a", "b", "c", "d", "e"};
         s.master_key = "aaaaaa";
+        s.marker = "abcdefghijklmnop";
         const size_t odd_len = 4001;
 
         auto self_hits = [&](bool double_pass) {
-            Machine m = build_machine(s);
+            Machine m = build_factory_demo_machine(s);
             PipelineConfig c;
             c.double_pass = double_pass;
             c.padding = false;
@@ -594,7 +682,7 @@ int self_test() {
         // prunes a literal one, which would shorten the body and slide every
         // index after it out of alignment with the plaintext being compared.
         {
-            Machine m = build_machine(s);
+            Machine m = build_factory_demo_machine(s);
             PipelineConfig c;
             c.double_pass = true;
             c.padding = false;
@@ -630,6 +718,18 @@ int self_test() {
         apply_suite_lock(d, suite("38").historic_lock, suite("38").block);
         check(d.double_pass && d.padding && d.block == 16,
               "INOP-38 keeps its features, 16-symbol blocks");
+
+        Alphabet legacy_alpha(ALPHA26);
+        std::vector<Rotor> legacy_rotors{make_rotor("I", legacy_alpha),
+                                         make_rotor("II", legacy_alpha),
+                                         make_rotor("III", legacy_alpha)};
+        Machine legacy_machine(legacy_alpha, std::move(legacy_rotors),
+                               make_reflector("B", legacy_alpha), Plugboard({}, legacy_alpha),
+                               {1, 1, 1}, "AAAA", true);
+        Pipeline legacy_pipe(legacy_machine, c);
+        Encrypted legacy_cipher = legacy_pipe.encrypt("legacytestaa");
+        check(legacy_pipe.decrypt(legacy_cipher.ciphertext) == "LEGACYTESTAA",
+              "Legacy round trip remains marker free");
     }
 
     // 5b. Stepping rule follows the SUITE, not rotors_.size(). Two 3-rotor
@@ -954,8 +1054,22 @@ int self_test() {
                   TransformValidationStatus::Valid,
               "supported transformer input validates explicitly");
         check(validate_transform_input("word!").status ==
-                  TransformValidationStatus::UnsupportedInput,
-              "unsupported transformer input is reported explicitly");
+                  TransformValidationStatus::Valid &&
+                  transform("Wait... what, now?!") == "w0ait what now",
+              "punctuation is accepted for deliberate preprocessing removal");
+        bool punctuation_removed = true;
+        for (char c = '!'; c <= '~'; ++c) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9'))
+                continue;
+            const std::string symbol(1, c);
+            punctuation_removed = punctuation_removed &&
+                                  validate_transform_input(symbol).status ==
+                                      TransformValidationStatus::Valid &&
+                                  transform(symbol).empty();
+        }
+        check(punctuation_removed,
+              "every printable ASCII punctuation symbol is removed before machine processing");
         check(validate_transform_input("\xf0\x28\x8c\x28").status ==
                   TransformValidationStatus::InvalidUtf8,
               "invalid UTF-8 is distinct from unsupported input");
@@ -1059,6 +1173,153 @@ int self_test() {
         trip("Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t", "Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t");
     }
 
+    {
+        struct GreekCase { const char* plain; const char* encoded; };
+        static const GreekCase cases[] = {
+            {"α", "a"}, {"β", "b"}, {"γ", "g"}, {"δ", "d"}, {"ε", "e"},
+            {"ζ", "z"}, {"η", "e2"}, {"θ", "th"}, {"ι", "i"}, {"κ", "k"},
+            {"λ", "l"}, {"μ", "m"}, {"ν", "n"}, {"ξ", "x"}, {"ο", "o"},
+            {"π", "p"}, {"ρ", "r"}, {"σ", "s"}, {"τ", "t"}, {"υ", "u"},
+            {"φ", "f"}, {"χ", "c3"}, {"ψ", "q"}, {"ω", "o2"}, {"ς", "s"},
+        };
+        bool mapped = true;
+        for (const GreekCase& row : cases)
+            mapped = mapped && transform_greek(row.plain) == row.encoded;
+        check(mapped, "every Greek base letter uses the declared mapping");
+
+        const std::string lowercase = "αβγδεζηθικλμνξοπρστυφχψω";
+        check(untransform_greek(transform_greek(lowercase)) == lowercase,
+              "every mapped Greek letter round trips in word position");
+        check(transform_greek("θτ") == "tht" && untransform_greek("tht") == "θτ",
+              "Greek theta and tau remain distinct");
+        check(transform_greek("ψ") == "q" && untransform_greek("q") == "ψ",
+              "Greek psi uses q and round trips");
+        check(transform_greek("πσ") == "ps" && untransform_greek("ps") == "πς" &&
+                  untransform_greek("ps") != "ψ",
+              "Greek pi and sigma never become psi");
+        check(transform_greek("εη") == "ee2" && untransform_greek("ee2") == "εη",
+              "Greek epsilon and eta remain distinct");
+        check(transform_greek("οω") == "oo2" && untransform_greek("oo2") == "οω",
+              "Greek omicron and omega remain distinct");
+        check(transform_greek("χ") == "c3" && untransform_greek("c3") == "χ",
+              "Greek chi remains distinct");
+        check(transform_greek("σος") == "sos" && untransform_greek("sos") == "σος" &&
+                  transform_greek("σοσ") == "sos",
+              "Greek sigma is restored from deterministic word position");
+
+        const std::string uppercase = "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ";
+        check(untransform_greek(transform_greek(uppercase)) == uppercase,
+              "uppercase Greek round trips");
+        check(transform_greek("ε2 η2") == "e//2 e2//2" &&
+                  untransform_greek("e//2 e2//2") == "ε2 η2",
+              "Greek literal digits remain distinct from letter codes");
+        check(validate_greek_transformed_data("h").status ==
+                  TransformValidationStatus::MalformedData,
+              "standalone h is invalid Greek transformed data");
+        check(validate_greek_input("ά").status == TransformValidationStatus::UnsupportedInput,
+              "unsupported Greek diacritics are reported without transformation");
+        check(is_supported_language("ell"), "Greek is available through language selection");
+        check(transform("theta") == "theta" && untransform("theta") == "theta",
+              "existing Latin transformer behavior is unchanged");
+    }
+
+    {
+        struct HangulCase { const char* plain; const char* encoded; };
+        static const HangulCase consonants[] = {
+            {"ㄱ", "/3g/"}, {"ㄴ", "/3n/"}, {"ㄷ", "/3d/"}, {"ㄹ", "/3l/"},
+            {"ㅁ", "/3m/"}, {"ㅂ", "/3b/"}, {"ㅅ", "/3s/"}, {"ㅇ", "/3q/"},
+            {"ㅈ", "/3j/"}, {"ㅊ", "/3ch/"}, {"ㅋ", "/3k/"}, {"ㅌ", "/3t/"},
+            {"ㅍ", "/3p/"}, {"ㅎ", "/3h/"},
+        };
+        bool consonants_mapped = true;
+        for (const HangulCase& row : consonants)
+            consonants_mapped = consonants_mapped && transform_hangul(row.plain) == row.encoded &&
+                untransform_hangul(row.encoded) == row.plain;
+        check(consonants_mapped, "every primitive Hangul consonant uses the declared mapping");
+
+        static const HangulCase vowels[] = {
+            {"ㅏ", "/3a/"}, {"ㅑ", "/3ya/"}, {"ㅓ", "/3eo/"}, {"ㅕ", "/3yeo/"},
+            {"ㅗ", "/3o/"}, {"ㅛ", "/3yo/"}, {"ㅜ", "/3u/"}, {"ㅠ", "/3yu/"},
+            {"ㅡ", "/3eu/"}, {"ㅣ", "/3i/"},
+        };
+        bool vowels_mapped = true;
+        for (const HangulCase& row : vowels)
+            vowels_mapped = vowels_mapped && transform_hangul(row.plain) == row.encoded &&
+                untransform_hangul(row.encoded) == row.plain;
+        check(vowels_mapped, "every primitive Hangul vowel uses the declared mapping");
+
+        static const HangulCase tense[] = {
+            {"ㄲ", "/3gg/"}, {"ㄸ", "/3dd/"}, {"ㅃ", "/3bb/"},
+            {"ㅆ", "/3ss/"}, {"ㅉ", "/3jj/"},
+        };
+        bool tense_mapped = true;
+        for (const HangulCase& row : tense)
+            tense_mapped = tense_mapped && transform_hangul(row.plain) == row.encoded;
+        check(tense_mapped, "tense Hangul consonants use literal doubling");
+
+        static const HangulCase compound_vowels[] = {
+            {"ㅐ", "/3ai/"}, {"ㅔ", "/3eoi/"}, {"ㅒ", "/3yai/"},
+            {"ㅖ", "/3yeoi/"}, {"ㅘ", "/3oa/"}, {"ㅙ", "/3oai/"},
+            {"ㅚ", "/3oi/"}, {"ㅝ", "/3ueo/"}, {"ㅞ", "/3ueoi/"},
+            {"ㅟ", "/3ui/"}, {"ㅢ", "/3eui/"},
+        };
+        bool compound_vowels_mapped = true;
+        for (const HangulCase& row : compound_vowels)
+            compound_vowels_mapped = compound_vowels_mapped &&
+                transform_hangul(row.plain) == row.encoded;
+        check(compound_vowels_mapped, "compound Hangul vowels decompose into primitive codes");
+
+        static const HangulCase compound_finals[] = {
+            {"ㄳ", "/3gs/"}, {"ㄵ", "/3nj/"}, {"ㄶ", "/3nh/"},
+            {"ㄺ", "/3lg/"}, {"ㄻ", "/3lm/"}, {"ㄼ", "/3lb/"},
+            {"ㄽ", "/3ls/"}, {"ㄾ", "/3lt/"}, {"ㄿ", "/3lp/"},
+            {"ㅀ", "/3lh/"}, {"ㅄ", "/3bs/"},
+        };
+        bool compound_finals_mapped = true;
+        for (const HangulCase& row : compound_finals)
+            compound_finals_mapped = compound_finals_mapped &&
+                transform_hangul(row.plain) == row.encoded;
+        check(compound_finals_mapped,
+              "compound Hangul finals decompose into primitive consonant codes");
+
+        check(transform_hangul("가") == "/1g0a0/" &&
+                  transform_hangul("각") == "/1g0a0g/" &&
+                  untransform_hangul("/1g0a0g/") == "각",
+              "Hangul syllables preserve initial medial and optional final fields");
+        check(transform_hangul("각가") == "/1g0a0g//1g0a0/" &&
+                  transform_hangul("가까") == "/1g0a0//1gg0a0/" &&
+                  transform_hangul("각가") != transform_hangul("가까") &&
+                  untransform_hangul(transform_hangul("각가")) == "각가" &&
+                  untransform_hangul(transform_hangul("가까")) == "가까",
+              "Hangul syllable frames separate final consonants from tense initials");
+        check(transform_hangul("받다") != transform_hangul("바따") &&
+                  transform_hangul("갑바") != transform_hangul("가빠") &&
+                  transform_hangul("갓사") != transform_hangul("가싸") &&
+                  transform_hangul("갖자") != transform_hangul("가짜"),
+              "all valid doubled consonant collision patterns remain distinct");
+
+        const std::string nasty = "괜찮아요 값싼 얼룩을 찾고 있어요.";
+        check(untransform_hangul(transform_hangul(nasty)) == nasty,
+              "compound and adjacent Hangul syllables round trip with word spaces");
+        const std::string decomposed = "각";
+        check(transform_hangul(decomposed) == "/2g0a0g/" &&
+                  untransform_hangul(transform_hangul(decomposed)) == decomposed,
+              "valid decomposed modern Hangul jamo preserve their input form");
+        check(validate_hangul_input("ᄀ").status ==
+                  TransformValidationStatus::UnsupportedInput,
+              "incomplete canonical jamo is rejected without guessing");
+        check(validate_hangul_transformed_data("gagga").status ==
+                  TransformValidationStatus::MalformedData,
+              "flattened Hangul data is rejected without guessing syllable boundaries");
+        check(transform_hangul("한 글 42.").find(' ') != std::string::npos &&
+                  untransform_hangul(transform_hangul("한 글 42.")) == "한 글 42.",
+              "Hangul word spaces digits and sentence marks remain reversible");
+        check(is_supported_language("kor"), "Hangul is available through language selection");
+        check(transform("Latin") == "l0atin" &&
+                  untransform(transform("Latin 42")) == "Latin 42",
+              "existing Latin behavior remains unchanged after Hangul support");
+    }
+
     // 11. One test per guard in DESIGN section 6. The governing rule is
     //     that for every "do not remove" there must be a check that fails
     //     when it is removed, and every check below has been verified by
@@ -1076,15 +1337,64 @@ int self_test() {
         //     counter rather than a mock: if the call is deleted from
         //     build_wheel_batch(), this check fails.
         unsigned long before = entropy_check_count();
-        WheelBatch good = build_wheel_batch(s38, true, 4, "SELFTESTG", 900, 2);
+        WheelBatch good = build_wheel_batch(s38, true, 10, 900, 2);
+        WheelBatch good_reflectors = build_wheel_batch(s38, false, 2, 900, 0);
         check(entropy_check_count() > before,
               "entropy_self_check runs before wheel generation");
         check(wheel_batch_problem(good, s38).empty(),
               "a freshly generated batch passes its own validation");
+        std::string setup_error;
+        const bool wrote_setup_pool =
+            write_wheel_batch(scratch, good, s38, false, &setup_error) &&
+            write_wheel_batch(scratch, good_reflectors, s38, true, &setup_error);
+        const int setup_pool_loaded = wrote_setup_pool ? load_wheel_file(scratch) : 0;
+        const std::vector<std::string> setup_rotor_pool = available_rotors(s38);
+        const std::vector<std::string> setup_reflector_pool = available_reflectors(s38);
+        check(setup_pool_loaded == 12 &&
+                  std::find(setup_rotor_pool.begin(), setup_rotor_pool.end(), "U900") !=
+                      setup_rotor_pool.end() &&
+                  std::find(setup_reflector_pool.begin(), setup_reflector_pool.end(),
+                            "K900") != setup_reflector_pool.end(),
+              "a committed catalogue refreshes both eligible selection caches");
+        bool factory_selection_hidden = true;
+        for (const std::string& name : s38.rotor_names)
+            factory_selection_hidden = factory_selection_hidden &&
+                std::find(setup_rotor_pool.begin(), setup_rotor_pool.end(), name) ==
+                    setup_rotor_pool.end();
+        for (const std::string& name : s38.reflector_names)
+            factory_selection_hidden = factory_selection_hidden &&
+                std::find(setup_reflector_pool.begin(), setup_reflector_pool.end(), name) ==
+                    setup_reflector_pool.end();
+        check(factory_selection_hidden,
+              "factory demonstration wheels are absent from normal selection lists");
         before = entropy_check_count();
         GeneratedSettings setup_generated = random_setup_settings(s38);
-        check(entropy_check_count() > before && setup_generated.rotors.size() >= 5,
-              "entropy_self_check runs before GUI setup generation");
+        bool generated_eligible = normal_reflector_name_is_eligible(s38, setup_generated.reflector);
+        for (const std::string& name : setup_generated.rotors)
+            generated_eligible = generated_eligible && normal_rotor_name_is_eligible(s38, name);
+        check(entropy_check_count() > before && setup_generated.rotors.size() >= 5 &&
+                  generated_eligible,
+              "GUI setup generation runs the entropy check and uses only eligible wheels");
+
+        WheelBatch replacement = build_wheel_batch(s38, true, 10, 950, 2);
+        WheelBatch replacement_reflectors =
+            build_wheel_batch(s38, false, 2, 950, 0);
+        const bool wrote_replacement =
+            write_wheel_batch(scratch, replacement, s38, false, &setup_error) &&
+            write_wheel_batch(scratch, replacement_reflectors, s38, true, &setup_error);
+        const int replacement_loaded = wrote_replacement ? load_wheel_file(scratch) : 0;
+        const std::vector<std::string> replacement_rotor_pool = available_rotors(s38);
+        const std::vector<std::string> replacement_reflector_pool = available_reflectors(s38);
+        check(replacement_loaded == 12 &&
+                  std::find(replacement_rotor_pool.begin(), replacement_rotor_pool.end(),
+                            "U900") == replacement_rotor_pool.end() &&
+                  std::find(replacement_reflector_pool.begin(), replacement_reflector_pool.end(),
+                            "K900") == replacement_reflector_pool.end() &&
+                  std::find(replacement_rotor_pool.begin(), replacement_rotor_pool.end(),
+                            "U950") != replacement_rotor_pool.end() &&
+                  std::find(replacement_reflector_pool.begin(), replacement_reflector_pool.end(),
+                            "K950") != replacement_reflector_pool.end(),
+              "reloading one source replaces stale wheels and refreshes both caches");
 
         // G2. A batch whose wirings are not all distinct is refused. This
         //     is the guard that DESIGN section 6 asserted was working while
@@ -1107,6 +1417,22 @@ int self_test() {
         caesar.wheels = {GeneratedWheel{"SELFTESTROT", rot38, ""}};
         check(!wheel_batch_problem(caesar, s38).empty(),
               "a batch containing a pure rotation is refused at generation");
+
+        const std::vector<std::string> before_rejected_rotors = available_rotors(s38);
+        const std::vector<std::string> before_rejected_reflectors = available_reflectors(s38);
+        {
+            std::ofstream f(scratch, std::ios::trunc);
+            f << R"({"rotors":[{"name":"SELFTESTPHANTOM","wiring":")"
+              << replacement.wirings[0]
+              << R"("}],"reflectors":[{"name":"SELFTESTBADREFLECTOR","wiring":")"
+              << s38.alphabet << R"("}]})" << "\n";
+        }
+        std::vector<std::string> rejected_problems;
+        const int rejected_loaded = load_wheel_file(scratch, &rejected_problems);
+        check(rejected_loaded == 0 && !rejected_problems.empty() &&
+                  available_rotors(s38) == before_rejected_rotors &&
+                  available_reflectors(s38) == before_rejected_reflectors,
+              "a rejected mixed catalogue leaves the live registry and caches unchanged");
 
         // G4. Nothing is written before validation, append case: the target
         //     must be byte-identical after a refusal.
@@ -1153,9 +1479,33 @@ int self_test() {
         check(write_wheel_batch(scratch, good, s38, /*append=*/false, &err) &&
                   slurp(scratch) == first_serialization,
               "the same wheel batch serializes reproducibly");
+        int next_rotor = 0;
+        std::string numbering_error;
+        check(std::string(canonical_wheel_prefix(true)) == "U" &&
+                  std::string(canonical_wheel_prefix(false)) == "K" &&
+                  good.wheels.front().name == "U900" &&
+                  good_reflectors.wheels.front().name == "K900",
+              "wheel generation uses the canonical U and K identifiers");
+        check(canonical_wheel_start(scratch, true, true, 3, &next_rotor, &numbering_error) &&
+                  next_rotor == 910,
+              "canonical append numbering continues after the highest existing identifier");
         check(!write_wheel_batch(scratch, good, s38, /*append=*/true, &err) &&
                   slurp(scratch) == first_serialization,
               "append rejects duplicate wheel IDs without changing the catalogue");
+
+        WheelBatch historic = good;
+        for (size_t i = 0; i < historic.wheels.size(); ++i)
+            historic.wheels[i].name = "ARCHIVE" + std::to_string(i + 1);
+        int first_canonical = 0;
+        WheelBatch canonical_append = build_wheel_batch(s38, true, 2, 1, 2);
+        const bool kept_historic =
+            write_wheel_batch(scratch, historic, s38, false, &err) &&
+            canonical_wheel_start(scratch, true, true, 2, &first_canonical, &numbering_error) &&
+            first_canonical == 1 &&
+            write_wheel_batch(scratch, canonical_append, s38, true, &err);
+        check(kept_historic && slurp(scratch).find("ARCHIVE1") != std::string::npos &&
+                  slurp(scratch).find("\"U1\"") != std::string::npos,
+              "canonical append preserves existing noncanonical identifiers without renaming");
 
         WheelBatch bad_id = good;
         bad_id.wheels[0].name.clear();
@@ -1343,12 +1693,13 @@ int self_test() {
     {
         Settings valid;
         valid.suite_code = "38";
-        valid.rotors = {"R1", "R2", "R3", "R4", "R5"};
-        valid.reflector = "D";
+        valid.rotors = {"U950", "U951", "U952", "U953", "U954"};
+        valid.reflector = "K950";
         valid.rings = {1, 2, 3, 4, 5};
         valid.notches = {"a", "b", "c", "d", "e"};
         valid.plugs = {"fg"};
         valid.master_key = "abcde0";
+        valid.marker = "abcdefghijklmnop";
         std::string err;
         check(validate_settings(valid, &err), "complete valid settings are accepted");
 
@@ -1364,6 +1715,15 @@ int self_test() {
         changed = valid;
         changed.reflector = "MISSING";
         check(!validate_settings(changed, &err), "unavailable reflectors are rejected before machine construction");
+        changed = valid;
+        changed.rotors[0] = "R1";
+        check(!validate_settings(changed, &err) && err.find("factory demonstration rotor") != std::string::npos,
+              "saved settings reject an excluded factory rotor with a clear reason");
+        changed = valid;
+        changed.reflector = "D";
+        check(!validate_settings(changed, &err) &&
+                  err.find("factory demonstration reflector") != std::string::npos,
+              "saved settings reject an excluded factory reflector with a clear reason");
         changed = valid;
         changed.notches[1] = "a";
         check(!validate_settings(changed, &err), "repeated notch symbols are rejected before machine construction");
@@ -1386,6 +1746,30 @@ int self_test() {
               "malformed JSON ring is rejected without changing active settings");
     }
     {
+        const std::string setup =
+            R"({"suite_code":"38","reflector":"K950","master_key":"abcde0","rotor_count":5,"rotors":[{"name":"U950","ring":"1","notches":"a"},{"name":"U951","ring":"2","notches":"b"},{"name":"U952","ring":"3","notches":"c"},{"name":"U953","ring":"4","notches":"d"},{"name":"U954","ring":"5","notches":"e"}],"plugboard":[]})";
+        const std::string path = "inop_selftest_old_settings.json";
+        { std::ofstream f(path, std::ios::binary); f << setup; }
+        Settings old;
+        std::string err;
+        bool marker_missing = false;
+        const bool loaded = load_settings(old, path, &err, &marker_missing);
+        std::remove(path.c_str());
+        old.marker = "abcdefghijklmnop";
+        check(loaded && marker_missing && validate_settings(old, &err),
+              "older settings require explicit marker completion before use");
+
+        const std::string sheet_path = "inop_selftest_old_sheet.json";
+        { std::ofstream f(sheet_path, std::ios::binary); f << "{\"entries\":[" << setup << "]}"; }
+        Settings sheet_entry;
+        bool sheet_marker_missing = false;
+        const bool sheet_loaded =
+            load_keysheet_entry(sheet_path, 1, sheet_entry, &err, &sheet_marker_missing);
+        std::remove(sheet_path.c_str());
+        check(sheet_loaded && sheet_marker_missing && sheet_entry.marker.empty(),
+              "older key sheet entry imports incomplete without a hidden marker");
+    }
+    {
         // A settings file has to come back as what went into it. Generated
         // rather than hand written, so this covers whatever a real
         // configuration carries rather than whatever was easy to type.
@@ -1399,6 +1783,7 @@ int self_test() {
         wrote.notches = g.notches;
         wrote.plugs = g.plugs;
         wrote.master_key = g.master_key;
+        wrote.marker = g.marker;
 
         const std::string path = "inop_selftest_settings.json";
         const bool saved = save_settings(wrote, path);
@@ -1409,7 +1794,8 @@ int self_test() {
         check(saved && loaded && read.suite_code == wrote.suite_code &&
                   read.rotors == wrote.rotors && read.reflector == wrote.reflector &&
                   read.rings == wrote.rings && read.notches == wrote.notches &&
-                  read.plugs == wrote.plugs && read.master_key == wrote.master_key,
+                  read.plugs == wrote.plugs && read.master_key == wrote.master_key &&
+                  read.marker == wrote.marker,
               "a settings file survives a save and a load unchanged");
     }
     {
@@ -1446,20 +1832,30 @@ int self_test() {
         const std::string json = "inop_selftest_new.json";
         const Suite& s38 = suite("38");
         GeneratedSettings g = random_settings(s38, 5, 2, 1);
+        std::string old_text = settings_to_text(g);
+        const size_t marker_line = old_text.find("marker ");
+        if (marker_line != std::string::npos) {
+            const size_t line_end = old_text.find('\n', marker_line);
+            old_text.erase(marker_line, line_end == std::string::npos
+                                            ? std::string::npos
+                                            : line_end - marker_line + 1);
+        }
         {
             std::ofstream f(txt, std::ios::binary);
-            f << settings_to_text(g);
+            f << old_text;
         }
 
         const bool migrated = migrate_settings_from_text(txt, json);
         Settings read;
         std::string err;
-        const bool loaded = migrated && load_settings(read, json, &err);
+        bool marker_missing = false;
+        const bool loaded = migrated && load_settings(read, json, &err, &marker_missing);
         std::remove(txt.c_str());
         std::remove(json.c_str());
-        check(migrated && loaded && read.master_key == g.master_key &&
+        check(migrated && loaded && marker_missing && read.marker.empty() &&
+                  read.master_key == g.master_key &&
                   read.rotors == g.rotors && read.reflector == g.reflector,
-              "an old plain text settings file migrates to JSON intact");
+              "an old plain text settings file migrates without inventing a marker");
     }
 
     // 13. Whatever the GUI can be asked without opening a window. Silent
@@ -1552,9 +1948,13 @@ void run_batch_mode(const PipelineConfig& cfg) {
         const KeySheetEntry& entry = key_entries[static_cast<size_t>(fixed_index - 1)];
         if (!entry.valid) { fail(entry.error); return; }
         fixed_settings = entry.settings;
+        if (entry.marker_missing)
+            fixed_settings.marker = collect_setup_marker(suite(fixed_settings.suite_code), false);
         try {
             fixed_machine.emplace(build_machine(fixed_settings));
-            fixed_pipe.emplace(*fixed_machine, cfg);
+            PipelineConfig entry_cfg = cfg;
+            entry_cfg.marker = fixed_settings.marker;
+            fixed_pipe.emplace(*fixed_machine, entry_cfg);
         } catch (const std::exception& e) {
             fail(e.what());
             return;
@@ -1572,8 +1972,12 @@ void run_batch_mode(const PipelineConfig& cfg) {
                 const KeySheetEntry& entry = key_entries[i];
                 if (!entry.valid) { fail(entry.error); continue; }
                 s = entry.settings;
+                if (entry.marker_missing)
+                    s.marker = collect_setup_marker(suite(s.suite_code), false);
                 seq_machine.emplace(build_machine(s));
-                seq_pipe.emplace(*seq_machine, cfg);
+                PipelineConfig entry_cfg = cfg;
+                entry_cfg.marker = s.marker;
+                seq_pipe.emplace(*seq_machine, entry_cfg);
                 pipe_ptr = &*seq_pipe;
             } else {
                 s = fixed_settings;
@@ -1602,9 +2006,7 @@ void run_batch_mode(const PipelineConfig& cfg) {
             std::string grouped = group(e.ciphertext, su.block);
             if (!lang.empty()) grouped += "  " + lang;
             std::cout << YELL << "  cipher " << RST << grouped << "\n";
-            if (!e.marker.empty())
-                std::cout << DIM << "  marker " << RST << e.marker << RST << "\n";
-            std::string back = pipe.decrypt(e.ciphertext, e.marker);
+            std::string back = pipe.decrypt(e.ciphertext);
             std::cout << GREEN << "  check  " << RST << back << "\n";
             if (!lang.empty())
                 std::cout << GREEN << "  human  " << RST << untransform(back) << "\n";
@@ -1761,19 +2163,25 @@ int main(int argc, char** argv) {
     Settings settings;
     const std::string cfg_path = "inop_settings.json";
     bool loaded = false;
+    bool loaded_marker_missing = false;
     {
         std::ifstream probe(cfg_path);
         if (probe) {
             std::string a = upper(ask("load settings from '" + cfg_path + "'? [Y/n]"));
             if (a.empty() || a == "Y" || a == "YES") {
                 std::string err;
-                loaded = load_settings(settings, cfg_path, &err);
+                loaded = load_settings(settings, cfg_path, &err, &loaded_marker_missing);
                 if (!loaded) fail(err);
             }
         }
     }
     if (!loaded) settings = collect_settings();
     else if (settings.suite_code == "26") verify_legacy_integrity();
+    else if (loaded_marker_missing) {
+        std::cout << YELL << "  older settings loaded; complete the Setup marker before use" << RST
+                  << "\n";
+        settings.marker = collect_setup_marker(suite(settings.suite_code), false);
+    }
 
     Machine machine = [&] {
         while (true) {
@@ -1795,6 +2203,7 @@ int main(int argc, char** argv) {
     rule("pipeline");
     const Suite& active = suite(settings.suite_code);
     PipelineConfig cfg;
+    cfg.marker = settings.marker;
     if (active.historic_lock) {
         apply_suite_lock(cfg, true, active.block);
         std::cout << "  " << BOLD << active.name << RST
@@ -1814,7 +2223,7 @@ int main(int argc, char** argv) {
     Pipeline pipe(machine, cfg);
 
     rule();
-    std::cout << DIM << "  commands: :q quit   :s save   :d decrypt   :b batch   :i settings   :? help"
+    std::cout << DIM << "  commands: :q quit   :s save   :d decrypt   :d-old compatibility   :b batch   :i settings   :? help"
               << RST << "\n\n";
 
     const Alphabet& active_alpha = machine.alphabet();
@@ -1840,6 +2249,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (cmd == ":d" || cmd == ":decrypt") line = ":d";
+            else if (cmd == ":d-old" || cmd == ":decrypt-old") line = ":d-old";
             else if (cmd == ":b" || cmd == ":batch") { run_batch_mode(cfg); continue; }
             else if (cmd == ":?" || cmd == ":h" || cmd == ":help") line = ":?";
             else {
@@ -1852,7 +2262,8 @@ int main(int argc, char** argv) {
 
         if (line == ":?" ) {
             std::cout << DIM << "  type a message to encipher, or:\n"
-                      << "    :d   decipher a ciphertext (you will be asked for the marker)\n"
+                      << "    :d       decipher with the marker in active Setup\n"
+                      << "    :d-old   decipher older ciphertext with its separate marker\n"
                       << "    :b   batch process pasted or file-based messages\n"
                       << "    :i   show the active settings again\n"
                       << "    :s   save current settings\n"
@@ -1860,7 +2271,8 @@ int main(int argc, char** argv) {
                       << "  (case does not matter, and :quit / :help / :info also work)\n" << RST;
             continue;
         }
-        if (line == ":d") {
+        if (line == ":d" || line == ":d-old") {
+            const bool compatibility = line == ":d-old";
             std::string raw = ask("  ciphertext");
             auto toks = split(raw);
             std::string lang;
@@ -1880,18 +2292,14 @@ int main(int argc, char** argv) {
                              "every position after it" << RST << "\n";
                 continue;
             }
-            std::string marker;
-            if (cfg.padding) {
-                marker = active_alpha.fold_case(ask("  marker"));
-                std::string bad_marker = foreign_symbol(marker, active_alpha);
-                if (!bad_marker.empty()) {
-                    fail("marker contains " + bad_marker + ", which is not in the " +
-                         active.name + " alphabet — nothing was deciphered");
-                    continue;
-                }
-            }
             try {
-                std::string plain = pipe.decrypt(clean, marker);
+                std::string plain;
+                if (compatibility && cfg.padding) {
+                    const std::string old_marker = collect_setup_marker(active, false);
+                    plain = pipe.decrypt_with_marker(clean, old_marker);
+                } else {
+                    plain = pipe.decrypt(clean);
+                }
                 std::cout << GREEN << "  plain  " << RST << plain << "\n";
                 if (!lang.empty())
                     std::cout << GREEN << "  human  " << RST << untransform(plain)
@@ -1920,10 +2328,7 @@ int main(int argc, char** argv) {
             std::string grouped = group(e.ciphertext, cfg.block);
             if (!lang.empty()) grouped += "  " + lang;
             std::cout << YELL << "  cipher " << RST << grouped << "\n";
-            if (!e.marker.empty())
-                std::cout << DIM << "  marker " << RST << e.marker
-                          << DIM << "   (needed to decipher)" << RST << "\n";
-            std::string back = pipe.decrypt(e.ciphertext, e.marker);
+            std::string back = pipe.decrypt(e.ciphertext);
             std::cout << GREEN << "  check  " << RST << back << "\n";
             if (!lang.empty())
                 std::cout << GREEN << "  human  " << RST << untransform(back) << "\n\n";

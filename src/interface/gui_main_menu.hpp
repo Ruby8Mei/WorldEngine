@@ -1,7 +1,5 @@
 // gui_main_menu.hpp — the main menu screen: what the program opens on, and
-// where the setup screen's INOP wordmark leads back to. Five centre
-// buttons (Open INOP / Terminal / Maintenance / Settings / Exit), each of
-// which leads somewhere.
+// where the setup screen's INOP wordmark leads back to.
 //
 // Terminal and Exit both close the window and differ only in what happens
 // next: Terminal hands the operator the CLI session, Exit ends the
@@ -29,6 +27,8 @@ public:
     // setup screen.
     bool open_inop_requested() const { return open_inop_requested_; }
 
+    bool bombe_requested() const { return bombe_requested_; }
+
     // True the frame Terminal was clicked — caller closes the window and
     // lets the terminal session take over.
     bool terminal_requested() const { return terminal_requested_; }
@@ -46,6 +46,7 @@ public:
 
 private:
     bool open_inop_requested_ = false;
+    bool bombe_requested_ = false;
     bool terminal_requested_ = false;
     bool maintenance_requested_ = false;
     bool settings_requested_ = false;

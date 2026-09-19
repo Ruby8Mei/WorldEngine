@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.20)
-project(inop LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.27)
+project(inop VERSION 2.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,6 +100,7 @@ if(INOP_WITH_GUI)
     src/interface/gui_file_tile_panel.cpp
     src/interface/gui_setup_panel.cpp
     src/interface/gui_main_menu.cpp
+    src/interface/gui_bombe_panel.cpp
     src/interface/gui_enciphering_panel.cpp
     src/interface/gui_prefs.cpp
     src/interface/gui_settings_panel.cpp
@@ -121,9 +122,14 @@ endif()
 # resulting objects changes.
 add_library(inop_core OBJECT ${INOP_CORE_SOURCES})
 
+add_library(inop_bombe_engine OBJECT
+  src/bombe/bombe_engine.cpp
+)
+
 add_executable(inop
   ${INOP_GUI_SOURCES}
   src/interface/main.cpp
+  $<TARGET_OBJECTS:inop_bombe_engine>
 )
 
 add_executable(inop_benchmark
@@ -142,13 +148,14 @@ add_executable(inop_langprobe
 # writes any, and is never linked into the live message pipeline.
 add_executable(inop_bombe
   src/bombe/bombe_main.cpp
+  $<TARGET_OBJECTS:inop_bombe_engine>
 )
 
 foreach(tgt inop inop_benchmark inop_langprobe inop_bombe)
   target_link_libraries(${tgt} PRIVATE inop_core)
 endforeach()
 
-foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core)
+foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core inop_bombe_engine)
   target_include_directories(${tgt} PRIVATE ${INOP_SRC_DIRS})
   target_link_libraries(${tgt} PRIVATE nlohmann_json::nlohmann_json)
 
@@ -220,9 +227,54 @@ add_custom_target(inop_source_rules ALL
   COMMENT "Checking INOP source rules (core purity, RNG purity)"
   VERBATIM
 )
-foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core)
+foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core inop_bombe_engine)
   add_dependencies(${tgt} inop_source_rules)
 endforeach()
 
 enable_testing()
 add_test(NAME self_test COMMAND inop --self-test --no-color)
+
+install(TARGETS inop RUNTIME DESTINATION . COMPONENT Runtime)
+if(INOP_WITH_GUI)
+  install(DIRECTORY fonts DESTINATION . COMPONENT Assets)
+  install(DIRECTORY audio DESTINATION . COMPONENT Assets)
+endif()
+install(FILES LICENSE README.md DESTINATION . COMPONENT Documentation)
+
+set(CPACK_GENERATOR "INNOSETUP")
+set(CPACK_PACKAGE_NAME "INOP")
+set(CPACK_PACKAGE_VENDOR "INOP")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "INOP rotor cipher machine")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "INOP")
+set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY "INOP")
+set(CPACK_PACKAGE_FILE_NAME "INOP-${PROJECT_VERSION}-Windows-x64")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/package")
+set(CPACK_MONOLITHIC_INSTALL ON)
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+set(CPACK_VERBATIM_VARIABLES ON)
+set(CPACK_INNOSETUP_ARCHITECTURE "x64")
+set(CPACK_INNOSETUP_INSTALL_ROOT "{localappdata}\\Programs")
+set(CPACK_INNOSETUP_ALLOW_CUSTOM_DIRECTORY ON)
+set(CPACK_INNOSETUP_CREATE_UNINSTALL_LINK ON)
+set(CPACK_INNOSETUP_EXTRA_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/inop_installer.iss")
+set(CPACK_INNOSETUP_USE_CMAKE_BOOL_FORMAT ON)
+set(CPACK_INNOSETUP_USE_MODERN_WIZARD ON)
+set(CPACK_INNOSETUP_SETUP_AppId "INOP-Desktop")
+set(CPACK_INNOSETUP_SETUP_PrivilegesRequired "lowest")
+set(CPACK_INNOSETUP_SETUP_CloseApplications ON)
+set(CPACK_INNOSETUP_SETUP_RestartApplications OFF)
+set(CPACK_INNOSETUP_SETUP_UsePreviousAppDir ON)
+find_program(INOP_INNOSETUP_COMPILER
+  NAMES ISCC ISCC.exe
+  HINTS
+    "$ENV{LOCALAPPDATA}/Programs/Inno Setup 7"
+    "$ENV{LOCALAPPDATA}/Programs/Inno Setup 6"
+    "$ENV{ProgramFiles}/Inno Setup 7"
+    "$ENV{ProgramFiles}/Inno Setup 6"
+)
+if(INOP_INNOSETUP_COMPILER)
+  set(CPACK_INNOSETUP_EXECUTABLE "${INOP_INNOSETUP_COMPILER}")
+endif()
+include(CPack)
+add_test(NAME bombe_self_check COMMAND inop_bombe --self-check)

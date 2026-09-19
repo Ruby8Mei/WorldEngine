@@ -36,14 +36,9 @@ public:
     // main menu.
     bool wordmark_clicked() const { return wordmark_clicked_; }
 
-    // What the tutorial needs to know about this screen, and nothing
-    // more. Each one is a box being empty or not, which is what a step
-    // here waits on: typing a message, enciphering it, and pasting both
-    // halves back over to the deciphering side.
     bool has_message() const { return !message_.empty(); }
     bool has_cipher() const { return !cipher_out_.empty(); }
     bool cipher_pasted() const { return !cipher_in_.empty(); }
-    bool marker_pasted() const { return !marker_in_.empty(); }
     bool has_plain() const { return !plain_out_.empty(); }
 
     // Clipboard. Only gui.cpp may call GLFW, so the panel asks: a copy
@@ -54,7 +49,7 @@ public:
     void deliver_paste(const std::string& text);
 
 private:
-    enum class PasteTarget { None, Message, Ciphertext, Marker };
+    enum class PasteTarget { None, Message, Ciphertext, CompatibilityMarker };
 
     // Returns the y where the sections below the header begin.
     float draw_header(const GuiInput& in, float width);
@@ -72,10 +67,12 @@ private:
     // typed: case folded to the alphabet, line breaks and tabs as spaces,
     // everything else dropped.
     std::string filtered(const std::string& text, const std::string& allowed) const;
+    bool accept_compatibility_marker_paste(const std::string& text);
 
     std::unique_ptr<Machine> machine_;
     std::unique_ptr<Pipeline> pipeline_;
     std::string suite_code_ = "38";
+    std::string language_code_ = "eng";
     std::string summary_;
     std::string open_error_;
     bool padding_ = true;
@@ -84,22 +81,17 @@ private:
     bool transform_input_ = false;
     std::string allowed_cipher_, allowed_marker_;
 
-    std::string message_, cipher_out_, marker_out_, check_out_, encipher_error_;
-    std::string cipher_in_, marker_in_, plain_out_, decipher_error_;
+    std::string message_, cipher_out_, check_out_, encipher_error_;
+    std::string cipher_in_, compatibility_marker_, plain_out_, decipher_error_;
+    bool compatibility_mode_ = false;
 
     // Scroll offsets for the boxes that can overflow, owned here so the
     // widget set stays stateless like the rest of it. Heights are worked
     // out afresh every frame from the content and the room left on screen.
-    float cipher_scroll_ = 0, marker_scroll_ = 0, check_scroll_ = 0, plain_scroll_ = 0;
+    float cipher_scroll_ = 0, check_scroll_ = 0, plain_scroll_ = 0;
     float h_cipher_ = 0, h_check_ = 0, h_plain_ = 0;
 
-    // The ciphertext and its marker as one clipboard paste: the
-    // ciphertext, exactly five spaces, then the marker. Both halves are
-    // needed to read the message back, and they are useless apart, so
-    // this is the one copy that carries a whole dispatch.
-    void copy_both();
     void draw_clear_button(const GuiInput& in, float bx, float by);
-    static const char* kBothSeparator;
 
     PasteTarget paste_target_ = PasteTarget::None;
     std::string copy_text_;

@@ -16,9 +16,7 @@
 // What the instrument is. Given a ciphertext and a crib -- known plaintext
 // at a known offset -- it enumerates rotor orders and start positions,
 // deciphers under each, and keeps every setting that reproduces the crib.
-// That is the brute-force half of the idea. The steckered half (assume a
-// plugboard pair, propagate the implications of the crib through the
-// wiring, reject on contradiction) is not implemented.
+// That is the brute-force half of the idea.
 //
 //   inop_bombe --self-check
 //   inop_bombe --legacy-phase1 [--crib N] [--body N]
@@ -37,6 +35,7 @@
 #include <vector>
 
 #include "generator.hpp"
+#include "bombe_engine.hpp"
 #include "inop.hpp"
 #include "pipeline.hpp"
 #include "registry.hpp"
@@ -251,7 +250,7 @@ std::string filler(const Alphabet& alpha, size_t n) {
 
 std::vector<Wheel> catalogue(const Suite& su, size_t n) {
     std::vector<Wheel> out;
-    for (const std::string& name : available_rotors(su)) {
+    for (const std::string& name : su.rotor_names) {
         if (out.size() >= n) break;
         out.push_back(Wheel{name, "", ""});
     }
@@ -297,7 +296,7 @@ int self_check() {
 
     Setting t;
     t.rotors = catalogue(su, 3);
-    t.reflector = Wheel{available_reflectors(su).front(), "", ""};
+    t.reflector = Wheel{su.reflector_names.front(), "", ""};
     t.key = secure_string(alpha.str(), 4);
 
     std::string body = filler(alpha, 40);
@@ -332,6 +331,11 @@ int self_check() {
                   << "\n";
     }
 
+    bombe::self_test([&](bool ok, const std::string& label) {
+        if (!ok) ++failures;
+        std::cout << "  " << (ok ? "ok  " : "FAIL") << "  " << label << "\n";
+    });
+
     std::cout << (failures ? "  self-check FAILED\n" : "  self-check passed\n");
     return failures ? 1 : 0;
 }
@@ -343,10 +347,10 @@ int legacy_phase1(size_t crib_len, size_t body_len) {
     std::vector<Wheel> pool = catalogue(su, 99);
     std::cout << "\n  Legacy, phase 1, no plugboard. The control.\n"
               << "  catalogue " << pool.size() << " rotors, reflector "
-              << available_reflectors(su).front() << ", rings 1 1 1, 3 rotors.\n";
+              << su.reflector_names.front() << ", rings 1 1 1, 3 rotors.\n";
 
     Setting truth;
-    truth.reflector = Wheel{available_reflectors(su).front(), "", ""};
+    truth.reflector = Wheel{su.reflector_names.front(), "", ""};
     std::vector<Wheel> shuffled = pool;
     for (size_t i = shuffled.size(); i > 1; --i)
         std::swap(shuffled[i - 1], shuffled[secure_below(static_cast<uint32_t>(i))]);
@@ -414,7 +418,7 @@ int inop_ablation(size_t pool_size, size_t body_len, size_t crib_len) {
 
     for (const Cell& c : cells) {
         Setting truth;
-        truth.reflector = Wheel{available_reflectors(su).front(), "", ""};
+        truth.reflector = Wheel{su.reflector_names.front(), "", ""};
         truth.key = secure_string(alpha.str(), 3) + alpha.at(0);
         if (c.known) {
             std::vector<Wheel> shuffled = pool;
@@ -466,7 +470,7 @@ int notch_sweep(size_t pool_size, size_t body_len, size_t crib_len) {
             pool.push_back(Wheel{base[i].name, "", ns[i]});
 
         Setting truth;
-        truth.reflector = Wheel{available_reflectors(su).front(), "", ""};
+        truth.reflector = Wheel{su.reflector_names.front(), "", ""};
         truth.key = secure_string(alpha.str(), 3) + alpha.at(0);
         truth.rotors.assign(pool.begin(), pool.begin() + 3);
 
@@ -518,7 +522,7 @@ int crash_elimination(size_t pool_size, size_t body_len, size_t crib_len, int tr
             for (size_t i = shuffled.size(); i > 1; --i)
                 std::swap(shuffled[i - 1], shuffled[secure_below(static_cast<uint32_t>(i))]);
             truth.rotors.assign(shuffled.begin(), shuffled.begin() + 3);
-            truth.reflector = Wheel{available_reflectors(su).front(), "", ""};
+            truth.reflector = Wheel{su.reflector_names.front(), "", ""};
             truth.key = secure_string(alpha.str(), 3) + alpha.at(0);
 
             std::string plain = filler(alpha, body_len);
@@ -564,7 +568,7 @@ int transposition_sweep(size_t pool_size, size_t body_len, size_t crib_len) {
     std::vector<Wheel> pool = catalogue(su, pool_size);
 
     Setting truth;
-    truth.reflector = Wheel{available_reflectors(su).front(), "", ""};
+    truth.reflector = Wheel{su.reflector_names.front(), "", ""};
     truth.key = secure_string(alpha.str(), 3) + alpha.at(0);
     truth.rotors.assign(pool.begin(), pool.begin() + 3);
 
@@ -584,6 +588,49 @@ int transposition_sweep(size_t pool_size, size_t body_len, size_t crib_len) {
         row(tau_name(tau), search(spec, ct, crib, 0, truth));
     }
     return 0;
+}
+
+int historic_demo() {
+    const bombe::SearchSpec spec = bombe::demonstration_spec();
+    const bombe::SearchResult result = bombe::search(
+        spec, {}, [](const bombe::SearchProgress& progress) {
+            if (progress.tested != 0 && progress.tested % 2048 == 0)
+                std::cout << "  tested " << progress.tested << "/" << progress.total
+                          << "  stops " << progress.stops << "\n";
+        });
+    std::cout << "\n  historic diagonal-board run\n"
+              << "  rotor order " << spec.rotor_order[0] << " " << spec.rotor_order[1] << " "
+              << spec.rotor_order[2] << ", menu links " << result.menu.size() << "\n"
+              << "  tested " << result.tested << "/" << result.total << ", stops "
+              << result.stop_count << ", seconds " << std::fixed << std::setprecision(3)
+              << result.seconds << "\n";
+    for (std::size_t i = 0; i < result.stops.size() && i < 8; ++i)
+        std::cout << "    " << bombe::format_stop(result.stops[i]) << "\n";
+    if (result.stops_truncated) std::cout << "    displayed stops are capped\n";
+    std::cout << "  " << result.message << "\n";
+    return result.state == bombe::SearchState::Success ? 0 : 1;
+}
+
+int historic_batch() {
+    const bombe::SearchSpec spec = bombe::demonstration_spec();
+    std::cout << "\n  historic rotor order batch\n"
+              << "  approved pool I II III IV V, traversal pool order without repeats\n"
+              << "  estimated work " << bombe::approved_rotor_orders().size() << " orders, "
+              << bombe::approved_batch_positions() << " rotor core positions\n";
+    const bombe::SearchResult result = bombe::search_batch(
+        spec, {}, {}, [](const bombe::SearchProgress& progress) {
+            if (progress.completed_orders != 0 && progress.order_tested == progress.order_total)
+                std::cout << "  completed " << progress.completed_orders << "/"
+                          << progress.total_orders << " orders, tested " << progress.tested << "/"
+                          << progress.total << ", stops " << progress.stops << "\n";
+        });
+    std::cout << "  retained " << result.stops.size() << " of " << result.stop_count
+              << " counted stops under the batch bounds\n"
+              << "  seconds " << std::fixed << std::setprecision(3) << result.seconds << "\n";
+    for (std::size_t i = 0; i < result.stops.size() && i < 8; ++i)
+        std::cout << "    " << bombe::format_stop(result.stops[i]) << "\n";
+    std::cout << "  " << result.message << "\n";
+    return result.state == bombe::SearchState::Success ? 0 : 1;
 }
 
 }  // namespace
@@ -647,13 +694,16 @@ int main(int argc, char** argv) {
         if (mode == "--notch-sweep") return notch_sweep(pool, body, crib);
         if (mode == "--transposition") return transposition_sweep(pool, body, crib);
         if (mode == "--crash-elimination") return crash_elimination(pool, body, crib, 200);
+        if (mode == "--historic-demo") return historic_demo();
+        if (mode == "--historic-batch") return historic_batch();
     } catch (const std::exception& e) {
         std::cerr << "bombe: " << e.what() << "\n";
         return 1;
     }
 
     std::cerr << "usage: inop_bombe --self-check | --legacy-phase1 | --inop-ablation"
-                  " | --notch-sweep | --transposition | --crash-elimination\n"
+                  " | --notch-sweep | --transposition | --crash-elimination | --historic-demo"
+                  " | --historic-batch\n"
                  "       [--pool N] [--body N] [--crib N]\n";
     return 2;
 }

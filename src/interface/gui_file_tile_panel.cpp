@@ -46,6 +46,7 @@ std::vector<Section> build_sections(TilePanelMode mode, const std::string& curre
     Section enigma{"Enigma setup", {}};
     Section inop{"INOP setup", {}};
     for (const auto& c : configs) {
+        if (mode == TilePanelMode::Overwrite && c.legacy) continue;
         TileEntry e{c.filename, c.path, nullptr};
         // suite_code == "26" is Enigma; "38" or unreadable/unparseable
         // defaults to INOP — a corrupted file still needs to be listed

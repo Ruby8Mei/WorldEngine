@@ -50,5 +50,13 @@
     { "name": "cli-werror", "configurePreset": "cli-werror" },
     { "name": "cli-sanitize", "configurePreset": "cli-sanitize" },
     { "name": "gui", "configurePreset": "gui" }
+  ],
+  "packagePresets": [
+    {
+      "name": "windows-installer",
+      "displayName": "Windows installer",
+      "configurePreset": "gui",
+      "generators": ["INNOSETUP"]
+    }
   ]
 }

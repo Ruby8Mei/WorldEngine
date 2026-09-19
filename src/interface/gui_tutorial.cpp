@@ -30,7 +30,6 @@ enum class Advance {
     HasMessage,
     HasCipher,
     CipherPasted,
-    MarkerPasted,
     HasPlain,
     LastStep,
 };
@@ -110,13 +109,9 @@ const Step kSteps[] = {
     {TutorialSection::Cipher, "cipher.encipher", "",
      "Click Encipher.", Advance::HasCipher},
     {TutorialSection::Cipher, "cipher.copy_cipher", "cipher.paste_cipher",
-     "Two things came out. The ciphertext is your message. The marker says where the wheels "
-     "started. Click Copy cipher, then Paste cipher on the deciphering side.",
+     "The ciphertext is ready. Its marker already lives in Setup, so only the ciphertext moves "
+     "with the message. Click Copy cipher, then Paste cipher on the deciphering side.",
      Advance::CipherPasted},
-    {TutorialSection::Cipher, "cipher.copy_marker", "cipher.paste_marker",
-     "Now the other half. Without the marker the ciphertext cannot be read back. "
-     "Copy marker, then Paste marker.",
-     Advance::MarkerPasted},
     {TutorialSection::Cipher, "cipher.decipher", "",
      "Click Decipher.", Advance::HasPlain},
     {TutorialSection::Cipher, "", "",
@@ -253,7 +248,6 @@ bool Tutorial::step_done(const TutorialFacts& f, const GuiInput& in) const {
         case Advance::HasMessage: return f.has_message;
         case Advance::HasCipher: return f.has_cipher;
         case Advance::CipherPasted: return f.cipher_pasted;
-        case Advance::MarkerPasted: return f.marker_pasted;
         case Advance::HasPlain: return f.has_plain;
         case Advance::LastStep: return false;  // the Done button ends it
     }

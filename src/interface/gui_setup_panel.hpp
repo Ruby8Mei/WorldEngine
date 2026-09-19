@@ -59,6 +59,7 @@ struct PanelState {
 
     std::string master_key_text;
     bool master_key_prefilled = false;  // guards secure_string() re-draw to once per unlock
+    std::string marker_text;
 };
 
 struct FieldValidity {
@@ -69,6 +70,7 @@ struct FieldValidity {
     bool reflector_ok = false;
     bool plug_slot_ok[kMaxPlugSlots] = {};  // per-slot, live highlighting only
     bool plugboard_ok = false;              // authoritative gate (real Plugboard ctor)
+    bool marker_ok = false;
     bool all_mandatory_ok = false;
     int master_key_needed_len = 0;
 };
@@ -122,6 +124,7 @@ Settings settings_from_panel(const PanelState& state);
 // and the interactive CLI flow around it.
 struct PanelUiState {
     int open_dropdown_id = -1;
+    DropdownSearchState language_search;
 
     bool show_load_panel = false;
     bool show_save_chooser = false;
@@ -135,6 +138,7 @@ struct PanelUiState {
     std::string create_name_error;
 
     bool show_corruption_popup = false;
+    std::string corruption_error;
 
     bool show_delete_confirm = false;
     std::string delete_confirm_path;
@@ -157,6 +161,7 @@ struct PanelUiState {
     // this the key would feel dead.
     std::string save_note;
     float save_note_left = 0.0f;
+    std::string marker_note;
 };
 
 class SetupPanel {
