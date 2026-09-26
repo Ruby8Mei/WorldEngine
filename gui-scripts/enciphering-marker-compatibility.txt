@@ -1,0 +1,57 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1654 56
+click
+wait 0.8
+move 700 230
+click
+ctrl on
+key a
+ctrl off
+type ponmlkjihgfedcba
+move 1654 20
+click
+wait 1.2
+move 200 275
+click
+type older marker compatibility
+move 245 165
+click
+wait 0.8
+move 80 202
+click
+move 50 20
+click
+wait 1.0
+move 700 230
+click
+ctrl on
+key a
+ctrl off
+type abcdefghijklmnop
+move 1654 20
+click
+wait 1.2
+move 940 165
+click
+move 1100 165
+click
+wait 0.8
+shot marker-wrong-setup
+move 940 202
+click
+wait 0.4
+move 1150 350
+click
+type ponmlkjihgfedcba
+wait 0.5
+move 1100 165
+click
+wait 1.2
+shot marker-compatible-setup
+quit

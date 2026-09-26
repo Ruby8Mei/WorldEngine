@@ -1,0 +1,27 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1450 55
+click
+wait 0.5
+move 1500 55
+click
+wait 0.5
+move 1550 55
+click
+wait 0.5
+move 1450 65
+click
+wait 0.5
+move 1500 65
+click
+wait 0.5
+move 1550 65
+click
+wait 0.8
+shot setup-selector-hit-targets
+quit

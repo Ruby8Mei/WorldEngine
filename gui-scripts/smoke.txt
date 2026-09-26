@@ -1,3 +1,4 @@
+resize 1920 1080
 # Opens the window, photographs the main menu, closes it again.
 # The shortest proof that --gui-script works at all.
 #

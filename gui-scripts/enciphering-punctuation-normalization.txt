@@ -1,0 +1,25 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 0.6
+move 1654 21
+wait 0.3
+click
+wait 1.4
+move 400 280
+click
+type Hello, world... Wait, now?!
+wait 0.4
+shot punctuation-editable
+move 178 172
+click
+wait 1.2
+shot punctuation-normalized
+quit

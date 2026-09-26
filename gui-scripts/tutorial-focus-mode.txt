@@ -1,3 +1,4 @@
+resize 1920 1080
 # The first-launch tutorial, and Focus Mode with it.
 #
 # Run this with no inop.gui.json in the working directory. No preferences

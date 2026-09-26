@@ -1,0 +1,25 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.6
+alt on
+key s
+wait 0.2
+alt off
+wait 1.0
+shot settings-scroll-thumb-top
+move 1735 250
+press
+wait 0.2
+move 1600 820
+wait 0.5
+shot settings-scroll-thumb-bottom
+move 1600 -100
+wait 0.5
+shot settings-scroll-thumb-outside
+release
+wait 0.2
+move 700 500
+scroll -8
+wait 0.5
+shot settings-scroll-wheel
+quit

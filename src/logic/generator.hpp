@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "inop.hpp"
+#include "machine_config.hpp"
 #include "registry.hpp"
 
 namespace inop {
@@ -83,27 +84,13 @@ bool write_wheel_batch(const std::string& path, const WheelBatch& b, const Suite
 
 // ── settings generation ─────────────────────────────────────────────────
 
-struct GeneratedSettings {
-    std::string suite_code;
-    std::vector<std::string> rotors;
-    std::string reflector;
-    std::vector<int> rings;
-    std::vector<std::string> notches;
-    std::vector<std::string> plugs;
-    std::string master_key;
-    std::string marker;
-};
-
 // A complete, valid, ready-to-use key sheet entry for the given suite, using
 // exactly rotor_count rotors. rotor_count must fall within
 // [s.min_rotors, s.max_rotors].
-GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
+MachineConfig random_settings(const Suite& s, int rotor_count, int plug_pairs,
                                    int notches_per_rotor);
 
-GeneratedSettings random_setup_settings(const Suite& s);
-
-// Serialise in the same directive format main.cpp reads.
-std::string settings_to_text(const GeneratedSettings& g);
+MachineConfig random_setup_settings(const Suite& s);
 
 // Write `count` key sheet entries for `s` to `path`, overwriting it. Every
 // entry uses `fixed_count` rotors unless `random_count`, in which case each

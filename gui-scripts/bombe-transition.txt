@@ -1,0 +1,8 @@
+resize 1920 1080
+wait 0.6
+move 873 410
+click
+wait 0.07
+shot bombe-transition-from-above
+wait 0.3
+quit

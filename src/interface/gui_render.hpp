@@ -53,6 +53,8 @@ float ui_scale();
 void clear(Color background);
 
 void draw_rect(float x, float y, float w, float h, Color c);
+void draw_circle(float x, float y, float radius, Color c);
+void draw_account_placeholder(float x, float y, float radius);
 void draw_rect_outline(float x, float y, float w, float h, Color c, float thickness = 1.0f);
 
 // Restricts drawing to the given rect (in the same top-left-origin space

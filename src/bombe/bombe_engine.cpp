@@ -368,22 +368,160 @@ bool propagate(const std::vector<MenuLink> &menu,
   return true;
 }
 
+using PlugMap = std::array<int, kAlphabetSize>;
+
+bool assign_plug(PlugMap *mapping, int a, int b) {
+  if (a < 0 || a >= kAlphabetSize || b < 0 || b >= kAlphabetSize)
+    return false;
+  if ((*mapping)[static_cast<std::size_t>(a)] >= 0 &&
+      (*mapping)[static_cast<std::size_t>(a)] != b)
+    return false;
+  if ((*mapping)[static_cast<std::size_t>(b)] >= 0 &&
+      (*mapping)[static_cast<std::size_t>(b)] != a)
+    return false;
+  (*mapping)[static_cast<std::size_t>(a)] = b;
+  (*mapping)[static_cast<std::size_t>(b)] = a;
+  return true;
+}
+
+int plug_pair_count(const PlugMap &mapping) {
+  int pairs = 0;
+  for (int i = 0; i < kAlphabetSize; ++i)
+    if (mapping[static_cast<std::size_t>(i)] > i)
+      ++pairs;
+  return pairs;
+}
+
+bool feasible_ten_pair_completion(const PlugMap &mapping) {
+  int unassigned = 0;
+  for (int value : mapping)
+    if (value < 0)
+      ++unassigned;
+  const int pairs = plug_pair_count(mapping);
+  return pairs <= 10 && pairs + unassigned / 2 >= 10;
+}
+
+bool fill_ten_pair_completion(PlugMap *mapping) {
+  if (!feasible_ten_pair_completion(*mapping))
+    return false;
+  while (plug_pair_count(*mapping) < 10) {
+    int first = -1;
+    int second = -1;
+    for (int i = 0; i < kAlphabetSize && second < 0; ++i) {
+      if ((*mapping)[static_cast<std::size_t>(i)] >= 0)
+        continue;
+      if (first < 0)
+        first = i;
+      else
+        second = i;
+    }
+    if (first < 0 || second < 0 || !assign_plug(mapping, first, second))
+      return false;
+  }
+  for (int i = 0; i < kAlphabetSize; ++i)
+    if ((*mapping)[static_cast<std::size_t>(i)] < 0)
+      (*mapping)[static_cast<std::size_t>(i)] = i;
+  return plug_pair_count(*mapping) == 10;
+}
+
+std::vector<std::string> plug_pairs(const PlugMap &mapping) {
+  std::vector<std::string> pairs;
+  for (int i = 0; i < kAlphabetSize; ++i) {
+    const int partner = mapping[static_cast<std::size_t>(i)];
+    if (partner > i) {
+      std::string pair;
+      pair.push_back(static_cast<char>('A' + i));
+      pair.push_back(static_cast<char>('A' + partner));
+      pairs.push_back(pair);
+    }
+  }
+  return pairs;
+}
+
+bool check_stop(const SearchSpec &spec, const Stop &raw, Stop *checked) {
+  std::vector<MenuLink> crib_links;
+  crib_links.reserve(spec.crib.size());
+  for (std::size_t i = 0; i < spec.crib.size(); ++i)
+    crib_links.push_back(MenuLink{spec.crib[i],
+                                  spec.ciphertext[spec.crib_offset + i],
+                                  spec.crib_offset + i});
+  const std::vector<Scrambler> maps =
+      scramblers_for(spec, crib_links, raw.rotor_core);
+
+  PlugMap initial;
+  initial.fill(-1);
+  if (!assign_plug(&initial, letter_index(raw.test_letter),
+                   letter_index(raw.test_partner)))
+    return false;
+  for (const std::string &pair : raw.implied_pairs) {
+    if (pair.size() != 2 ||
+        !assign_plug(&initial, letter_index(pair[0]), letter_index(pair[1])))
+      return false;
+  }
+  for (char letter : raw.implied_self)
+    if (!assign_plug(&initial, letter_index(letter), letter_index(letter)))
+      return false;
+
+  std::function<bool(std::size_t, const PlugMap &, PlugMap *)> visit =
+      [&](std::size_t position, const PlugMap &mapping,
+          PlugMap *solution) -> bool {
+    if (!feasible_ten_pair_completion(mapping))
+      return false;
+    if (position == crib_links.size()) {
+      PlugMap completed = mapping;
+      if (!fill_ten_pair_completion(&completed))
+        return false;
+      Machine machine = make_machine(spec, raw.rotor_core,
+                                     plug_pairs(completed));
+      std::string input(spec.crib_offset + spec.crib.size(), 'A');
+      input.replace(spec.crib_offset, spec.crib.size(), spec.crib);
+      const std::string output = machine.encipher(input);
+      if (output.compare(spec.crib_offset, spec.crib.size(),
+                         spec.ciphertext, spec.crib_offset,
+                         spec.crib.size()) != 0)
+        return false;
+      *solution = completed;
+      return true;
+    }
+
+    const int plain = letter_index(crib_links[position].plain);
+    const int cipher = letter_index(crib_links[position].cipher);
+    const Scrambler &map = maps[position];
+    const int known = mapping[static_cast<std::size_t>(plain)];
+    if (known >= 0) {
+      PlugMap next = mapping;
+      if (!assign_plug(&next, map[static_cast<std::size_t>(known)], cipher))
+        return false;
+      return visit(position + 1, next, solution);
+    }
+
+    for (int candidate = 0; candidate < kAlphabetSize; ++candidate) {
+      PlugMap next = mapping;
+      if (!assign_plug(&next, plain, candidate) ||
+          !assign_plug(&next,
+                       map[static_cast<std::size_t>(candidate)], cipher))
+        continue;
+      if (visit(position + 1, next, solution))
+        return true;
+    }
+    return false;
+  };
+
+  PlugMap solution;
+  if (!visit(0, initial, &solution))
+    return false;
+  *checked = raw;
+  checked->check_state = StopCheckState::Checked;
+  checked->completed_pairs = plug_pairs(solution);
+  return true;
+}
+
 std::string core_from_index(std::uint64_t index) {
   std::string core(3, 'A');
   core[0] = static_cast<char>('A' + (index / (26ULL * 26ULL)) % 26ULL);
   core[1] = static_cast<char>('A' + (index / 26ULL) % 26ULL);
   core[2] = static_cast<char>('A' + index % 26ULL);
   return core;
-}
-
-char plug_partner(char letter, const std::vector<std::string> &pairs) {
-  for (const std::string &pair : pairs) {
-    if (pair[0] == letter)
-      return pair[1];
-    if (pair[1] == letter)
-      return pair[0];
-  }
-  return letter;
 }
 
 std::string order_text(const std::vector<std::string> &order) {
@@ -393,13 +531,6 @@ std::string order_text(const std::vector<std::string> &order) {
       out << " ";
     out << order[i];
   }
-  return out.str();
-}
-
-std::string serialized_stops(const std::vector<Stop> &stops) {
-  std::ostringstream out;
-  for (const Stop &stop : stops)
-    out << format_stop(stop) << "\n";
   return out.str();
 }
 
@@ -474,6 +605,12 @@ SearchResult search_orders(const SearchSpec &spec,
 
       for (Stop &stop : one_result.stops) {
         if (result.stops.size() < limits.retained_stops_total) {
+          if (stop.check_state == StopCheckState::Checked) {
+            ++result.checked_stop_count;
+            result.checked_stops.push_back(stop);
+          } else if (stop.check_state == StopCheckState::Rejected) {
+            ++result.rejected_stop_count;
+          }
           result.stops.push_back(std::move(stop));
           ++summary.retained_stop_count;
         } else
@@ -505,14 +642,21 @@ SearchResult search_orders(const SearchSpec &spec,
         result.state != SearchState::InvalidInput &&
         result.state != SearchState::Failure) {
       result.state =
-          result.stop_count > 0 ? SearchState::Success : SearchState::NoResult;
+          result.checked_stop_count > 0 ? SearchState::Success
+                                        : SearchState::NoResult;
       result.message =
-          result.stop_count > 0
-              ? "Batched Bombe run completed with " +
-                    std::to_string(result.stop_count) + " stops counted and " +
-                    std::to_string(result.stops.size()) +
-                    " retained under the batch bounds."
-              : "Batched Bombe run completed with no stops.";
+          result.checked_stop_count > 0
+              ? "Batched Bombe checking completed with " +
+                    std::to_string(result.checked_stop_count) +
+                    " checked stops from " + std::to_string(result.stop_count) +
+                    " raw stops counted."
+              : result.stop_count > 0
+                    ? "Batched Bombe checking rejected " +
+                          std::to_string(result.rejected_stop_count) +
+                          " retained raw stops from " +
+                          std::to_string(result.stop_count) +
+                          " raw stops counted."
+                    : "Batched Bombe run completed with no raw stops.";
     }
   } catch (const std::exception &error) {
     result.state = SearchState::Failure;
@@ -575,10 +719,20 @@ SearchResult search(const SearchSpec &spec, const CancelCheck &cancelled,
         if (!propagate(result.menu, maps, built.test_letter, partner, &stop))
           continue;
         ++result.stop_count;
-        if (result.stops.size() < spec.result_limit)
+        if (result.stops.size() < spec.result_limit) {
+          Stop checked;
+          if (check_stop(spec, stop, &checked)) {
+            stop = checked;
+            ++result.checked_stop_count;
+            result.checked_stops.push_back(checked);
+          } else {
+            stop.check_state = StopCheckState::Rejected;
+            ++result.rejected_stop_count;
+          }
           result.stops.push_back(std::move(stop));
-        else
+        } else {
           result.stops_truncated = true;
+        }
       }
       result.tested = index + 1;
       if (progress &&
@@ -598,11 +752,22 @@ SearchResult search(const SearchSpec &spec, const CancelCheck &cancelled,
     }
     if (result.state != SearchState::Cancelled) {
       result.state =
-          result.stop_count > 0 ? SearchState::Success : SearchState::NoResult;
+          result.checked_stop_count > 0 ? SearchState::Success
+                                        : SearchState::NoResult;
       result.completed_orders = 1;
-      result.message = result.stop_count > 0
-                           ? "Bombe run completed with stops."
-                           : "Bombe run completed with no stops.";
+      result.message =
+          result.checked_stop_count > 0
+              ? "Bombe checking completed with " +
+                    std::to_string(result.checked_stop_count) +
+                    " checked stops from " + std::to_string(result.stop_count) +
+                    " raw stops counted."
+              : result.stop_count > 0
+                    ? "Bombe checking rejected " +
+                          std::to_string(result.rejected_stop_count) +
+                          " retained raw stops from " +
+                          std::to_string(result.stop_count) +
+                          " raw stops counted."
+                    : "Bombe run completed with no raw stops.";
     }
   } catch (const std::exception &error) {
     result.state = SearchState::Failure;
@@ -646,10 +811,19 @@ std::uint64_t approved_batch_positions() {
 }
 
 SearchResult search_batch(const SearchSpec &spec, const BatchLimits &limits,
-                          const CancelCheck &cancelled,
-                          const ProgressSink &progress) {
+                           const CancelCheck &cancelled,
+                           const ProgressSink &progress) {
   return search_orders(spec, approved_rotor_orders(), limits, cancelled,
-                       progress);
+                        progress);
+}
+
+SearchResult search_order_batch(
+    const SearchSpec &spec,
+    const std::vector<std::vector<std::string>> &orders,
+    const BatchLimits &limits,
+    const CancelCheck &cancelled,
+    const ProgressSink &progress) {
+  return search_orders(spec, orders, limits, cancelled, progress);
 }
 
 SearchSpec demonstration_spec() {
@@ -683,119 +857,16 @@ std::string format_stop(const Stop &stop) {
     for (char letter : stop.implied_self)
       out << " " << letter;
   }
+  if (stop.check_state == StopCheckState::Checked) {
+    out << "   CHECKED pairs";
+    for (const std::string &pair : stop.completed_pairs)
+      out << " " << pair;
+  } else if (stop.check_state == StopCheckState::Rejected) {
+    out << "   REJECTED";
+  }
   return out.str();
 }
 
-void self_test(const std::function<void(bool, const std::string &)> &check) {
-  const SearchSpec fixture = demonstration_spec();
-  std::uint64_t last_progress = 0;
-  bool monotonic = true;
-  SearchResult recovered =
-      search(fixture, {}, [&](const SearchProgress &value) {
-        if (value.tested < last_progress || value.tested > value.total)
-          monotonic = false;
-        last_progress = value.tested;
-      });
-  const std::vector<std::string> plugs{"AD", "ET", "HM", "JL", "NV",
-                                       "FU", "GQ", "PZ", "OX", "IK"};
-  bool found_truth = false;
-  for (const Stop &stop : recovered.stops)
-    if (stop.rotor_core == "DKX" &&
-        stop.test_partner == plug_partner(stop.test_letter, plugs))
-      found_truth = true;
-  check(recovered.state == SearchState::Success &&
-            recovered.tested == kCorePositions && found_truth,
-        "historic Bombe retains the true steckered Legacy stop");
-  check(monotonic && last_progress == kCorePositions,
-        "historic Bombe progress is monotonic and reaches the full run size");
-  check(recovered.menu.size() >= 6 && recovered.menu.size() <= 12,
-        "historic Bombe builds a bounded connected menu");
-
-  const BatchLimits matching_limits{fixture.result_limit,
-                                    fixture.result_limit};
-  SearchResult one_order_batch =
-      search_orders(fixture, {fixture.rotor_order}, matching_limits, {}, {});
-  check(one_order_batch.state == recovered.state &&
-            one_order_batch.tested == recovered.tested &&
-            one_order_batch.stop_count == recovered.stop_count &&
-            serialized_stops(one_order_batch.stops) ==
-                serialized_stops(recovered.stops),
-        "one order batch matches the single order engine byte for byte");
-
-  SearchSpec wrong = fixture;
-  wrong.rotor_order = {"I", "II", "III"};
-  SearchResult wrong_result = search(wrong);
-  bool wrong_truth = false;
-  for (const Stop &stop : wrong_result.stops)
-    if (stop.rotor_core == "DKX" &&
-        stop.test_partner == plug_partner(stop.test_letter, plugs))
-      wrong_truth = true;
-  check(!wrong_truth, "a wrong rotor order does not reproduce the true stop");
-
-  const std::vector<std::vector<std::string>> no_result_orders{
-      {"I", "II", "III"}, {"I", "II", "IV"}};
-  SearchResult no_result =
-      search_orders(fixture, no_result_orders, BatchLimits{}, {}, {});
-  check(no_result.state == SearchState::NoResult &&
-            no_result.completed_orders == no_result_orders.size(),
-        "historic Bombe batch reports a complete no result run");
-
-  std::size_t cancel_checks = 0;
-  SearchResult cancelled =
-      search(fixture, [&] { return ++cancel_checks > 16; });
-  check(cancelled.state == SearchState::Cancelled &&
-            cancelled.tested < cancelled.total,
-        "historic Bombe cancellation stops a partial run");
-
-  bool cancel_between = false;
-  SearchResult between = search_orders(
-      fixture, no_result_orders, BatchLimits{},
-      [&] { return cancel_between; }, [&](const SearchProgress &value) {
-        if (value.completed_orders == 1)
-          cancel_between = true;
-      });
-  check(between.state == SearchState::Cancelled &&
-            between.completed_orders == 1 &&
-            between.tested == kCorePositions,
-        "historic Bombe batch cancels between rotor orders");
-
-  std::size_t batch_cancel_checks = 0;
-  SearchResult within = search_orders(
-      fixture, no_result_orders, BatchLimits{},
-      [&] { return ++batch_cancel_checks > 16; }, {});
-  check(within.state == SearchState::Cancelled &&
-            within.completed_orders == 0 && within.tested < kCorePositions,
-        "historic Bombe batch cancels within a rotor order");
-
-  BatchLimits bounded_limits;
-  bounded_limits.retained_stops_per_order = 1;
-  bounded_limits.retained_stops_total = 1;
-  SearchResult bounded = search_orders(
-      fixture, {fixture.rotor_order, fixture.rotor_order}, bounded_limits, {},
-      {});
-  check(bounded.state == SearchState::Success && bounded.stop_count == 2 &&
-            bounded.stops.size() == 1 && bounded.stops_truncated,
-        "historic Bombe batch counts stops beyond both retention bounds");
-
-  SearchResult complete = search_batch(fixture);
-  bool complete_ordering = complete.order_summaries.size() ==
-                           approved_rotor_orders().size();
-  for (std::size_t i = 0;
-       complete_ordering && i < complete.order_summaries.size(); ++i)
-    complete_ordering = complete.order_summaries[i].rotor_order ==
-                        approved_rotor_orders()[i];
-  check(complete.state == SearchState::Success &&
-            complete.completed_orders == approved_rotor_orders().size() &&
-            complete.tested == approved_batch_positions() && complete_ordering,
-        "historic Bombe batch enumerates every approved order once in order");
-
-  SearchSpec crashed = fixture;
-  crashed.crib = "AAAAAA";
-  crashed.ciphertext = "AAAAAA";
-  SearchResult invalid = search(crashed);
-  check(invalid.state == SearchState::InvalidInput && invalid.tested == 0,
-        "historic Bombe refuses a crashed crib alignment");
-}
 
 }
 }

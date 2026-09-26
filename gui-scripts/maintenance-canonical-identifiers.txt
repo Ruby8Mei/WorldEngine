@@ -1,0 +1,10 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+alt on
+key m
+wait 0.2
+alt off
+wait 0.8
+shot maintenance-canonical-identifiers
+quit

@@ -27,6 +27,7 @@
 #include "registry.hpp"
 #include "settings.hpp"
 #include "transform.hpp"
+#include "developer_presets.hpp"
 
 using namespace inop;
 
@@ -42,6 +43,12 @@ struct Args {
     bool rotor_motion = false;   // run the rotor-movement survey instead
     int motion_length = 1000;    // message length the survey measures over
     int motion_trials = 8;       // random setups averaged per table cell
+    bool rotor_core = false;
+    bool developer_presets = false;
+    int core_input_size = 1048576;
+    int core_iterations = 8;
+    int core_warmup = 2;
+    int core_repetitions = 11;
 };
 
 std::string next_val(int& i, int argc, char** argv) {
@@ -76,12 +83,28 @@ Args parse_args(int argc, char** argv) {
             a.motion_length = std::stoi(next_val(i, argc, argv));
         } else if (arg == "--motion-trials") {
             a.motion_trials = std::stoi(next_val(i, argc, argv));
+        } else if (arg == "--rotor-core") {
+            a.rotor_core = true;
+        } else if (arg == "--developer-presets") {
+            a.developer_presets = true;
+        } else if (arg == "--core-input-size") {
+            a.core_input_size = std::stoi(next_val(i, argc, argv));
+        } else if (arg == "--core-iterations") {
+            a.core_iterations = std::stoi(next_val(i, argc, argv));
+        } else if (arg == "--core-warmup") {
+            a.core_warmup = std::stoi(next_val(i, argc, argv));
+        } else if (arg == "--core-repetitions") {
+            a.core_repetitions = std::stoi(next_val(i, argc, argv));
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "inop_benchmark [--languages all|la,en,...] [--configs N] "
                          "[--messages N] [--out benchmark.csv] [--corpus-dir benchmark/corpus] "
                          "[--hamlet path]\n"
                          "inop_benchmark --rotor-motion [--motion-length N] "
-                         "[--motion-trials N]\n";
+                         "[--motion-trials N]\n"
+                         "inop_benchmark --rotor-core [--core-input-size N] "
+                         "[--core-iterations N] [--core-warmup N] "
+                         "[--core-repetitions N] [--out results.csv]\n";
+            std::cout << "inop_benchmark --developer-presets [--out results.csv]\n";
             std::exit(0);
         } else {
             std::cerr << "unknown argument: " << arg << "\n";
@@ -89,6 +112,215 @@ Args parse_args(int argc, char** argv) {
         }
     }
     return a;
+}
+
+Machine machine_from_generated(const MachineConfig& g);
+
+int run_developer_presets(const Args& args) {
+    constexpr int kInputSymbols = 4096;
+    constexpr int kWarmups = 2;
+    constexpr int kRepetitions = 5;
+    std::ofstream log(args.out);
+    if (!log) {
+        std::cerr << "cannot write " << args.out << "\n";
+        return 1;
+    }
+    log << "preset,source,input_symbols,warmups,repetition,encrypt_us,decrypt_us,"
+           "symbols_per_second,exact_match\n";
+    log << std::fixed << std::setprecision(3);
+    for (const auto& preset : developer_setup_presets()) {
+        const Suite& su = suite(preset.settings.suite_code);
+        std::string input;
+        input.reserve(kInputSymbols);
+        for (int i = 0; i < kInputSymbols; ++i)
+            input += su.alphabet[static_cast<size_t>(i) % 36];
+        PipelineConfig cfg;
+        cfg.double_pass = preset.double_pass;
+        cfg.padding = preset.padding;
+        cfg.moving_reflector = preset.moving_reflector;
+        cfg.marker = preset.settings.marker;
+        for (int repetition = -kWarmups; repetition < kRepetitions; ++repetition) {
+            Machine machine = build_machine(preset.settings);
+            Pipeline pipeline(machine, cfg);
+            const auto start = std::chrono::steady_clock::now();
+            Encrypted encrypted = pipeline.encrypt(input);
+            const auto middle = std::chrono::steady_clock::now();
+            const std::string decrypted = pipeline.decrypt(encrypted.ciphertext);
+            const auto finish = std::chrono::steady_clock::now();
+            const bool exact = decrypted == input;
+            if (!exact) {
+                std::cerr << "public preset round trip failed: " << preset.name << "\n";
+                return 1;
+            }
+            if (repetition < 0) continue;
+            const double encrypt_us = std::chrono::duration<double, std::micro>(middle - start).count();
+            const double decrypt_us = std::chrono::duration<double, std::micro>(finish - middle).count();
+            const double rate = (2.0 * kInputSymbols * 1000000.0) /
+                                (encrypt_us + decrypt_us);
+            log << preset.name << ",compiled_public," << kInputSymbols << ','
+                << kWarmups << ',' << repetition + 1 << ',' << encrypt_us << ','
+                << decrypt_us << ',' << rate << ",1\n";
+        }
+    }
+    std::cout << "Public developer benchmark: " << kInputSymbols << " input symbols, "
+              << kWarmups << " warmups, " << kRepetitions
+              << " measured repetitions per preset. Results: " << args.out << "\n";
+    return 0;
+}
+
+struct CoreConfig {
+    const char* name;
+    const char* suite_code;
+    int rotor_count;
+    int notch_count;
+    int plug_pairs;
+    bool moving_reflector;
+    int reflector_index;
+};
+
+const CoreConfig CORE_CONFIGS[] = {
+    {"legacy_r3_n1_p10_fixed", "26", 3, 1, 10, false, 0},
+    {"r5_n1_p0_fixed", "38", 5, 1, 0, false, 0},
+    {"r5_n1_p0_moving", "38", 5, 1, 0, true, 0},
+    {"r5_n5_p0_moving", "38", 5, 5, 0, true, 0},
+    {"r5_n5_p15_moving", "38", 5, 5, 15, true, 0},
+    {"r7_n5_p15_moving", "38", 7, 5, 15, true, 0},
+    {"r10_n3_p15_moving", "38", 10, 3, 15, true, 0},
+};
+
+constexpr size_t CORE_CONFIG_COUNT = sizeof(CORE_CONFIGS) / sizeof(CORE_CONFIGS[0]);
+
+MachineConfig core_settings(const Suite& su, const CoreConfig& config) {
+    Alphabet alpha(su.alphabet);
+    MachineConfig g;
+    g.suite_code = su.code;
+    g.rotors.assign(su.rotor_names.begin(), su.rotor_names.begin() + config.rotor_count);
+    g.reflector = su.reflector_names[static_cast<size_t>(config.reflector_index)];
+    for (int i = 0; i < config.rotor_count; ++i) {
+        g.rings.push_back(1 + ((i * 7 + 3) % alpha.size()));
+        std::string notches;
+        if (!su.notches_are_fixed)
+            for (int j = 0; j < config.notch_count; ++j)
+                notches += alpha.at(i * config.notch_count + j);
+        g.notches.push_back(notches);
+    }
+    for (int i = 0; i < config.plug_pairs; ++i) {
+        std::string pair;
+        pair += alpha.at(i * 2);
+        pair += alpha.at(i * 2 + 1);
+        g.plugs.push_back(pair);
+    }
+    for (int i = 0; i < config.rotor_count + 1; ++i)
+        g.master_key += alpha.at((i * 11 + 5) % alpha.size());
+    if (!su.historic_lock) g.marker = std::string(kSetupMarkerLength, alpha.at(0));
+    return g;
+}
+
+Machine core_machine(const Suite& su, const MachineConfig& generated) {
+    Alphabet alpha(su.alphabet);
+    std::vector<Rotor> rotors;
+    rotors.reserve(generated.rotors.size());
+    for (size_t i = 0; i < generated.rotors.size(); ++i) {
+        Rotor rotor = make_rotor(generated.rotors[i], alpha);
+        if (!su.notches_are_fixed) rotor.set_notches(generated.notches[i], alpha);
+        rotors.push_back(std::move(rotor));
+    }
+    return Machine(alpha, std::move(rotors), make_reflector(generated.reflector, alpha),
+                   Plugboard(generated.plugs, alpha), generated.rings, generated.master_key,
+                   su.historic_lock);
+}
+
+std::string core_input(const Alphabet& alpha, int input_size) {
+    std::mt19937 rng(0x10A2B3C4u);
+    std::string input;
+    input.resize(static_cast<size_t>(input_size));
+    for (char& c : input)
+        c = alpha.at(static_cast<int>(rng() % static_cast<std::uint32_t>(alpha.size())));
+    return input;
+}
+
+int run_rotor_core(const Args& args) {
+    if (args.core_input_size <= 0 || args.core_iterations <= 0 ||
+        args.core_warmup < 0 || args.core_repetitions <= 0) {
+        std::cerr << "rotor core counts must be positive and warmup must be nonnegative\n";
+        return 2;
+    }
+
+    std::ofstream log(args.out);
+    if (!log) {
+        std::cerr << "cannot write " << args.out << "\n";
+        return 1;
+    }
+    log << "benchmark_version,config,suite,rotor_count,notches_per_rotor,plugboard_pairs,"
+           "reflector,moving_reflector,input_symbols,iterations,warmup,repetition,"
+           "elapsed_ms,symbols_processed,symbols_per_second,witness\n";
+    log << std::fixed << std::setprecision(6);
+
+    std::uint64_t combined_witness = 0;
+    std::vector<MachineConfig> generated_settings;
+    std::map<std::string, std::string> inputs;
+    generated_settings.reserve(CORE_CONFIG_COUNT);
+    for (const CoreConfig& config : CORE_CONFIGS) {
+        const Suite& su = suite(config.suite_code);
+        generated_settings.push_back(core_settings(su, config));
+        if (!inputs.count(config.suite_code))
+            inputs.emplace(config.suite_code,
+                           core_input(Alphabet(su.alphabet), args.core_input_size));
+        MachineConfig canonical = core_settings(su, config);
+        const std::vector<std::string> rotor_pool = available_rotors(su);
+        const std::vector<std::string> reflector_pool = available_reflectors(su);
+        if (rotor_pool.size() < canonical.rotors.size() || reflector_pool.empty()) continue;
+        canonical.rotors.assign(rotor_pool.begin(), rotor_pool.begin() + config.rotor_count);
+        canonical.reflector = reflector_pool[static_cast<size_t>(config.reflector_index)];
+        if (su.historic_lock) canonical.master_key.back() = su.alphabet[0];
+        const std::string sample = inputs.at(config.suite_code).substr(0, 256);
+        Machine direct = core_machine(su, canonical);
+        Machine built = build_machine(canonical);
+        if (direct.encipher(sample) != built.encipher(sample)) {
+            std::cerr << "canonical benchmark cross-check differs for " << config.name << "\n";
+            return 1;
+        }
+    }
+    for (int repetition = 1; repetition <= args.core_repetitions; ++repetition) {
+        for (size_t config_index = 0; config_index < CORE_CONFIG_COUNT; ++config_index) {
+            const CoreConfig& config = CORE_CONFIGS[config_index];
+            const Suite& su = suite(config.suite_code);
+            const MachineConfig& generated = generated_settings[config_index];
+            const std::string& input = inputs.at(config.suite_code);
+            Machine machine = core_machine(su, generated);
+            machine.set_moving_reflector(config.moving_reflector);
+            for (int warmup = 0; warmup < args.core_warmup; ++warmup)
+                machine.encipher(input);
+            machine.rewind();
+
+            std::string output;
+            const auto started = std::chrono::steady_clock::now();
+            for (int iteration = 0; iteration < args.core_iterations; ++iteration)
+                output = machine.encipher(input);
+            const auto stopped = std::chrono::steady_clock::now();
+
+            std::uint64_t witness = static_cast<unsigned char>(output.front());
+            witness += static_cast<unsigned char>(output[output.size() / 2]);
+            witness += static_cast<unsigned char>(output.back());
+            combined_witness += witness;
+            const double elapsed_ms =
+                std::chrono::duration<double, std::milli>(stopped - started).count();
+            const std::uint64_t symbols = static_cast<std::uint64_t>(args.core_input_size) *
+                                          static_cast<std::uint64_t>(args.core_iterations);
+            const double symbols_per_second =
+                static_cast<double>(symbols) / (elapsed_ms / 1000.0);
+            log << "1," << config.name << ',' << su.code << ',' << config.rotor_count << ','
+                << config.notch_count << ',' << config.plug_pairs << ',' << generated.reflector
+                << ',' << (config.moving_reflector ? 1 : 0) << ',' << args.core_input_size << ','
+                << args.core_iterations << ',' << args.core_warmup << ',' << repetition << ','
+                << elapsed_ms << ',' << symbols << ',' << symbols_per_second << ',' << witness
+                << '\n';
+        }
+        std::cout << "  repetition " << repetition << " done\n";
+    }
+    std::cout << "rotor core results: " << args.out << "\n"
+              << "witness: " << combined_witness << "\n";
+    return 0;
 }
 
 // ── message categories ──────────────────────────────────────────────────
@@ -219,21 +451,18 @@ void write_row(std::ofstream& log, const Result& r) {
         << csv_escape(r.detail) << "\n";
 }
 
-Machine machine_from_generated(const GeneratedSettings& g) {
-    std::istringstream iss(settings_to_text(g));
-    Settings s;
-    parse_settings_block(iss, s, nullptr);
-    return build_machine(s);
+Machine machine_from_generated(const MachineConfig& g) {
+    return build_machine(g);
 }
 
-GeneratedSettings benchmark_settings(const Suite& su, const std::string& identity) {
+MachineConfig benchmark_settings(const Suite& su, const std::string& identity) {
     std::vector<std::uint32_t> seed{0xC0FFEEu, 1u};
     for (unsigned char c : identity) seed.push_back(c);
     std::seed_seq sequence(seed.begin(), seed.end());
     std::mt19937 rng(sequence);
     Alphabet alpha(su.alphabet);
 
-    GeneratedSettings g;
+    MachineConfig g;
     g.suite_code = su.code;
     std::vector<std::string> rotors = available_rotors(su);
     std::shuffle(rotors.begin(), rotors.end(), rng);
@@ -256,6 +485,7 @@ GeneratedSettings benchmark_settings(const Suite& su, const std::string& identit
 
     for (int i = 0; i < su.min_rotors + 1; ++i)
         g.master_key.push_back(alpha.at(static_cast<int>(rng() % static_cast<std::uint32_t>(alpha.size()))));
+    if (!su.historic_lock) g.marker = std::string(kSetupMarkerLength, alpha.at(0));
     return g;
 }
 
@@ -280,7 +510,7 @@ MotionRow measure_motion(const Suite& su, int rotor_count, int notch_count, int 
     MotionRow row;
     row.rotor.assign(static_cast<size_t>(rotor_count), 0.0);
     for (int t = 0; t < trials; ++t) {
-        GeneratedSettings g = random_settings(su, rotor_count, 0, notch_count);
+        MachineConfig g = random_settings(su, rotor_count, 0, notch_count);
         Machine m = machine_from_generated(g);
         const size_t width = static_cast<size_t>(m.alphabet().size());
 
@@ -364,6 +594,10 @@ void run_rotor_motion_survey(int len, int trials) {
 int main(int argc, char** argv) {
     Args args = parse_args(argc, argv);
 
+    if (args.developer_presets) return run_developer_presets(args);
+
+    if (args.rotor_core) return run_rotor_core(args);
+
     if (args.rotor_motion) {
         run_rotor_motion_survey(args.motion_length, args.motion_trials);
         return 0;
@@ -408,7 +642,7 @@ int main(int argc, char** argv) {
             for (int ci = 0; ci < args.configs; ++ci) {
                 const std::string settings_id = "v1:" + lang + ":" + cat + ":" +
                                                 std::to_string(ci + 1);
-                GeneratedSettings g = benchmark_settings(su, settings_id);
+                MachineConfig g = benchmark_settings(su, settings_id);
                 Machine machine = machine_from_generated(g);
                 cfg.marker = g.marker;
                 Pipeline pipe(machine, cfg);
@@ -510,7 +744,7 @@ int main(int argc, char** argv) {
         }
         std::string text(std::istreambuf_iterator<char>(f), (std::istreambuf_iterator<char>()));
 
-        GeneratedSettings g = benchmark_settings(su, "v1:hamlet:1");
+        MachineConfig g = benchmark_settings(su, "v1:hamlet:1");
         Machine machine = machine_from_generated(g);
         cfg.marker = g.marker;
         Pipeline pipe(machine, cfg);

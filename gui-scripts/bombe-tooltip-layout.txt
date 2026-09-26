@@ -1,0 +1,31 @@
+resize 1920 1080
+wait 0.6
+move 900 400
+wait 1.3
+shot job-a-menu-bombe-tooltip
+move -5000 -5000
+alt on
+key b
+alt off
+wait 0.5
+shot job-a-bombe-row-wide
+resize 1024 720
+wait 0.4
+shot job-a-bombe-row-narrow
+move 120 568
+wait 1.3
+shot job-a-bombe-load-tooltip
+move 365 568
+wait 1.3
+shot job-a-bombe-run-tooltip
+move -5000 -5000
+key escape
+wait 0.5
+alt on
+key m
+alt off
+wait 0.5
+move 300 288
+wait 1.3
+shot job-a-maintenance-mode-tooltip
+quit

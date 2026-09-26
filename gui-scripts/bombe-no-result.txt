@@ -1,0 +1,23 @@
+resize 1920 1080
+wait 0.6
+alt on
+key b
+alt off
+wait 0.4
+move 600 360
+click
+ctrl on
+key a
+ctrl off
+type BCDABCDABCDA
+move 600 460
+click
+ctrl on
+key a
+ctrl off
+type ABCDABCDABCD
+move 620 570
+click
+wait 40.0
+shot bombe-no-result
+quit

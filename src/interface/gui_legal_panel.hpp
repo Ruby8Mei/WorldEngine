@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "gui_widgets.hpp"
+#include "gui.hpp"
 
 namespace inop {
 namespace gui {
@@ -22,7 +23,9 @@ class LegalPanel {
 public:
     // Reads the licences off disk. Called on the way in, so a font added
     // to the folder while INOP is running gets a tab without a restart.
-    void open();
+    void open(bool policies = false);
+    bool back_clicked() const { return back_clicked_; }
+    static void self_test(const SelfTestCheck& check);
 
     // width/height are the current framebuffer size in pixels.
     void frame(const GuiInput& in, int width, int height);
@@ -43,6 +46,10 @@ private:
     // operator had read up to.
     std::vector<float> scroll_;
     bool wordmark_clicked_ = false;
+    bool back_clicked_ = false;
+    int document_list_ = -1;
+    std::vector<std::string> document_names_;
+    bool policies_ = false;
 };
 
 }  // namespace gui

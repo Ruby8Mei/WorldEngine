@@ -1,4 +1,6 @@
 #include "gui_config_store.hpp"
+#include "pipeline.hpp"
+#include "developer_presets.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -126,6 +128,13 @@ bool validate_state(const PanelState& candidate, bool allow_missing_marker, std:
     }
     if (selected_suite.historic_lock && !candidate.marker_text.empty()) {
         if (error) *error = "Legacy setup must not contain a marker";
+        return false;
+    }
+    MachineConfig config = settings_from_panel(candidate);
+    if (allow_missing_marker && !selected_suite.historic_lock && config.marker.empty())
+        config.marker = std::string(kSetupMarkerLength, selected_suite.alphabet[0]);
+    if (!validate_machine_config(config).valid) {
+        if (error) *error = "setup fails semantic validation";
         return false;
     }
     return true;
@@ -263,7 +272,36 @@ bool atomic_write(const std::filesystem::path& target, const std::string& serial
 }
 
 const std::vector<DeveloperPreset>& developer_presets() {
-    static const std::vector<DeveloperPreset> presets = {};
+    static const std::vector<DeveloperPreset> presets = [] {
+        std::vector<DeveloperPreset> result;
+        for (const auto& preset : developer_setup_presets()) {
+            PanelState state;
+            const MachineConfig& settings = preset.settings;
+            state.public_builtin_preset = true;
+            state.suite_code = settings.suite_code;
+            state.rotor_count = static_cast<int>(settings.rotors.size());
+            for (int i = 0; i < state.rotor_count; ++i) {
+                state.rotor_rows[i].rotor_name = settings.rotors[static_cast<size_t>(i)];
+                state.rotor_rows[i].ring_text = std::to_string(settings.rings[static_cast<size_t>(i)]);
+                const std::string& notches = settings.notches[static_cast<size_t>(i)];
+                for (size_t j = 0; j < notches.size(); ++j)
+                    state.rotor_rows[i].notch_box[j] = std::string(1, notches[j]);
+            }
+            state.reflector_name = settings.reflector;
+            for (size_t i = 0; i < settings.plugs.size(); ++i) {
+                state.plug_left[i] = std::string(1, settings.plugs[i][0]);
+                state.plug_right[i] = std::string(1, settings.plugs[i][1]);
+            }
+            state.master_key_text = settings.master_key;
+            state.master_key_prefilled = true;
+            state.marker_text = settings.marker;
+            state.double_pass = preset.double_pass;
+            state.padding = preset.padding;
+            state.moving_reflector = preset.moving_reflector;
+            result.push_back({preset.name, std::move(state)});
+        }
+        return result;
+    }();
     return presets;
 }
 
@@ -323,6 +361,10 @@ std::string suggest_filename(const PanelState& state) {
 }
 
 bool save_config(const PanelState& state, const std::string& filename, std::string* error) {
+    if (state.public_builtin_preset) {
+        if (error) *error = "public developer setups cannot be saved as normal setups";
+        return false;
+    }
     if (!valid_new_filename(filename)) {
         if (error) *error = "new setup files must use a plain name ending in .inop";
         return false;

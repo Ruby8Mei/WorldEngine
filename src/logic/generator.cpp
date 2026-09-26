@@ -167,7 +167,7 @@ std::vector<std::string> random_variable_notches(const Alphabet& alpha, int roto
 }
 
 // ── settings generation ─────────────────────────────────────────────────
-GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pairs,
+MachineConfig random_settings(const Suite& s, int rotor_count, int plug_pairs,
                                    int notches_per_rotor) {
     if (rotor_count < s.min_rotors || rotor_count > s.max_rotors)
         throw std::invalid_argument("rotor count " + std::to_string(rotor_count) +
@@ -175,7 +175,7 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
                                     std::to_string(s.min_rotors) + "-" +
                                     std::to_string(s.max_rotors));
     Alphabet alpha(s.alphabet);
-    GeneratedSettings g;
+    MachineConfig g;
     g.suite_code = s.code;
 
     // rotors: distinct, in a random order
@@ -237,30 +237,17 @@ GeneratedSettings random_settings(const Suite& s, int rotor_count, int plug_pair
     return g;
 }
 
-GeneratedSettings random_setup_settings(const Suite& s) {
+MachineConfig random_setup_settings(const Suite& s) {
     entropy_self_check();
     const int rotor_count = s.min_rotors + static_cast<int>(secure_below(
                                 static_cast<uint32_t>(s.max_rotors - s.min_rotors + 1)));
     const int plug_pairs = static_cast<int>(secure_below(static_cast<uint32_t>(s.max_plug_pairs + 1)));
-    GeneratedSettings g = random_settings(s, rotor_count, plug_pairs, 1);
+    MachineConfig g = random_settings(s, rotor_count, plug_pairs, 1);
     if (!s.notches_are_fixed)
         g.notches = random_variable_notches(Alphabet(s.alphabet), rotor_count, s.max_notches);
     g.master_key = secure_string(s.alphabet,
                                  static_cast<size_t>(s.historic_lock ? rotor_count : rotor_count + 1));
     return g;
-}
-
-std::string settings_to_text(const GeneratedSettings& g) {
-    std::ostringstream o;
-    o << "suite " << g.suite_code << "\n";
-    o << "rotors";    for (const auto& r : g.rotors)  o << " " << r; o << "\n";
-    o << "reflector " << g.reflector << "\n";
-    o << "rings";     for (int r : g.rings)           o << " " << r; o << "\n";
-    o << "notches";   for (const auto& n : g.notches) o << " " << (n.empty() ? "-" : n); o << "\n";
-    o << "plugs";     for (const auto& p : g.plugs)   o << " " << p; o << "\n";
-    if (!g.marker.empty()) o << "marker " << g.marker << "\n";
-    o << "key " << g.master_key << "\n";
-    return o.str();
 }
 
 // ── menu actions ────────────────────────────────────────────────────────
@@ -504,14 +491,7 @@ bool write_wheel_batch(const std::string& path, const WheelBatch& b, const Suite
 
 namespace {
 
-// The same object shape settings.cpp reads back, so a key sheet entry and
-// a settings file are the same thing and one reader understands both.
-// Deliberately duplicated rather than shared: GeneratedSettings lives here
-// and Settings lives in src/settings, and giving the logic layer a
-// dependency on the settings layer to save eighteen lines would be the
-// wrong trade. If a third writer ever appears, that is the moment to make
-// one of them the definition.
-nlohmann::json generated_settings_to_json(const GeneratedSettings& g) {
+nlohmann::json generated_settings_to_json(const MachineConfig& g) {
     nlohmann::json j;
     j["suite_code"] = g.suite_code;
     j["reflector"] = g.reflector;
@@ -556,7 +536,7 @@ bool write_key_sheet(const std::string& path, const Suite& s, int count, int plu
                         ? s.min_rotors + static_cast<int>(secure_below(
                               static_cast<uint32_t>(s.max_rotors - s.min_rotors + 1)))
                         : fixed_count;
-            GeneratedSettings g = random_settings(s, n, plug_pairs, notches_per_rotor);
+            MachineConfig g = random_settings(s, n, plug_pairs, notches_per_rotor);
             nlohmann::json e = generated_settings_to_json(g);
             if (i == 0) first = e.dump(2);
             entries.push_back(e);

@@ -1,6 +1,7 @@
 #include "gui_legal_panel.hpp"
 
 #include <cstdint>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -116,12 +117,14 @@ std::string tab_name_for(const std::string& font_file) {
 
 }  // namespace
 
-void LegalPanel::open() {
+void LegalPanel::open(bool policies) {
     docs_.clear();
     selected_ = 0;
+    policies_ = policies;
 
     std::string text;
-    if (read_file("LICENSE", &text)) docs_.push_back(Document{"INOP", text});
+    if (!read_file("LICENSE", &text)) text = "The application licence file is unavailable.";
+    docs_.push_back(Document{"INOP", text});
 
     // Only what is actually in the bundled folder. A face installed on the
     // machine rather than shipped with INOP is the machine's business, and
@@ -141,12 +144,21 @@ void LegalPanel::open() {
         }
     }
 
+    if (policies) {
+        docs_.clear();
+        docs_.push_back(Document{"EULA", "EULA unavailable\n\nApproved EULA text has not been supplied for this release."});
+        docs_.push_back(Document{"Privacy Policy", "Privacy Policy unavailable\n\nApproved Privacy Policy text has not been supplied for this release."});
+    }
+    document_list_ = -1;
+    document_names_.clear();
+    for (const auto& doc : docs_) document_names_.push_back(doc.tab);
     scroll_.assign(docs_.size(), 0.0f);
 }
 
 void LegalPanel::frame(const GuiInput& in, int width, int height) {
     begin_widget_frame();
     wordmark_clicked_ = false;
+    back_clicked_ = false;
 
     const float w = static_cast<float>(width), h = static_cast<float>(height);
 
@@ -155,9 +167,11 @@ void LegalPanel::frame(const GuiInput& in, int width, int height) {
     const float word_th = text_line_height(Font::Wordmark);
     Rect wordmark_r{kMargin, 6.0f, word_tw + 24.0f, word_th + 12.0f};
     if (wordmark_button(wordmark_r, in)) wordmark_clicked_ = true;
+    if (button(Rect{w - kMargin - 80.0f, 16.0f, 80.0f, 30.0f}, "Back", in, true))
+        back_clicked_ = true;
 
     float y = wordmark_r.y + wordmark_r.h + 10.0f;
-    label(Rect{kMargin, y, w - 2 * kMargin, 26}, "Licences", false, Font::BodyLarge);
+    label(Rect{kMargin, y, w - 2 * kMargin, 26}, policies_ ? "Legal" : "Licences", false, Font::BodyLarge);
     y += 32.0f;
 
     if (docs_.empty()) {
@@ -172,21 +186,38 @@ void LegalPanel::frame(const GuiInput& in, int width, int height) {
     // Tabs down the left, the text filling everything to the right of
     // them. A tab is a button that stays pressed, which is the accent the
     // rest of the screens use for the choice already made.
-    float ty = y;
-    for (size_t i = 0; i < docs_.size(); ++i) {
-        if (button(Rect{kMargin, ty, kTabW, kTabH}, docs_[i].tab, in, true,
-                   static_cast<int>(i) == selected_))
-            selected_ = static_cast<int>(i);
-        ty += kTabH + kGap;
+    float text_x = kMargin;
+    if (w >= 720.0f && h - y >= static_cast<float>(docs_.size()) * (kTabH + kGap)) {
+        float ty = y;
+        for (size_t i = 0; i < docs_.size(); ++i) {
+            if (button(Rect{kMargin, ty, kTabW, kTabH}, docs_[i].tab, in, true,
+                       static_cast<int>(i) == selected_))
+                selected_ = static_cast<int>(i);
+            ty += kTabH + kGap;
+        }
+        text_x += kTabW + kColGap;
+    } else {
+        dropdown(Rect{kMargin, y, w - 2 * kMargin, kTabH}, document_names_, selected_,
+                 901, document_list_, in, true);
+        y += kTabH + kGap;
     }
 
-    const float text_x = kMargin + kTabW + kColGap;
-    text_block(Rect{text_x, y, w - text_x - kMargin, h - y - kMargin},
+    const float text_h = std::max(30.0f, h - y - kMargin - kTabH - kGap);
+    float& offset = scroll_[static_cast<size_t>(selected_)];
+    const float page = std::max(30.0f, text_h - 30.0f);
+    const float controls_y = y + text_h + kGap;
+    if (button(Rect{text_x, controls_y, 100.0f, kTabH}, "Page up", in, true))
+        offset = std::max(0.0f, offset - page);
+    if (button(Rect{text_x + 108.0f, controls_y, 110.0f, kTabH}, "Page down", in, true))
+        offset += page;
+    text_block(Rect{text_x, y, w - text_x - kMargin, text_h},
                docs_[static_cast<size_t>(selected_)].text, in,
-               scroll_[static_cast<size_t>(selected_)]);
+               offset);
 
+    draw_open_dropdown_popup(in, document_list_);
     end_widget_frame(in);
 }
+
 
 }  // namespace gui
 }  // namespace inop

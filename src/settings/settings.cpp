@@ -40,11 +40,6 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
         else if (key == "marker")    is >> out.marker;
         else if (key == "key") {
             is >> out.master_key;
-            // Fold every alphabet-bound field toward this record's own
-            // suite's case (Legacy uppercase, INOP-38 lowercase) now that
-            // "suite" is guaranteed already read — both save_settings() and
-            // settings_to_text() always write it first, and this "key" line
-            // is always last (parsing stops here either way).
             if (suites().count(out.suite_code)) {
                 Alphabet fold_alpha(suite(out.suite_code).alphabet);
                 out.master_key = fold_alpha.fold_case(out.master_key);
@@ -74,76 +69,101 @@ bool parse_settings_block(std::istream& in, Settings& out, std::string* error) {
     return true;  // EOF reached mid-record — validate_settings will catch anything missing
 }
 
-bool validate_settings(const Settings& s, std::string* error) {
-    auto fail = [&](const std::string& msg) { if (error) *error = msg; return false; };
-
+MachineValidation validate_machine_config(const MachineConfig& s) {
+    MachineValidation result;
+    const size_t no_index = std::string::npos;
+    auto add = [&](MachineField field, size_t index, std::string message) {
+        result.diagnostics.push_back({field, index, std::move(message)});
+    };
     const size_t count = s.rotors.size();
-    if (count == 0) return fail("no rotors listed");
-    if (!suites().count(s.suite_code)) return fail("unknown suite '" + s.suite_code + "'");
+    if (count == 0) add(MachineField::RotorCount, no_index, "no rotors listed");
+    if (!suites().count(s.suite_code)) {
+        add(MachineField::Suite, no_index, "unknown suite '" + s.suite_code + "'");
+        return result;
+    }
     const Suite& su = suite(s.suite_code);
-    if (static_cast<int>(count) < su.min_rotors || static_cast<int>(count) > su.max_rotors)
-        return fail("rotor count " + std::to_string(count) + " is outside " + su.name +
-                    "'s range " + std::to_string(su.min_rotors) + "-" + std::to_string(su.max_rotors));
-    const std::vector<std::string> rotor_pool = available_rotors(su);
+    if (count != 0 && (static_cast<int>(count) < su.min_rotors || static_cast<int>(count) > su.max_rotors))
+        add(MachineField::RotorCount, no_index, "rotor count " + std::to_string(count) +
+            " is outside " + su.name + "'s range " + std::to_string(su.min_rotors) + "-" +
+            std::to_string(su.max_rotors));
+    const std::vector<std::string> rotor_pool = s.public_builtin_preset
+        ? su.rotor_names : available_rotors(su);
     std::set<std::string> rotor_names;
-    for (const std::string& name : s.rotors) {
+    for (size_t i = 0; i < count; ++i) {
+        const std::string& name = s.rotors[i];
         if (std::find(rotor_pool.begin(), rotor_pool.end(), name) == rotor_pool.end()) {
             if (!normal_rotor_name_is_eligible(su, name))
-                return fail("factory demonstration rotor " + name +
-                            " is excluded from normal INOP-38 configurations");
-            return fail("rotor " + name + " is not available for " + su.name);
+                add(MachineField::Rotor, i, "factory demonstration rotor " + name +
+                    " is excluded from normal INOP-38 configurations");
+            else
+                add(MachineField::Rotor, i, "rotor " + name + " is not available for " + su.name);
+        } else if (!rotor_names.insert(name).second) {
+            add(MachineField::Rotor, i, "rotor " + name + " is used more than once");
         }
-        if (!rotor_names.insert(name).second)
-            return fail("rotor " + name + " is used more than once");
     }
-    const std::vector<std::string> reflector_pool = available_reflectors(su);
+    const std::vector<std::string> reflector_pool = s.public_builtin_preset
+        ? su.reflector_names : available_reflectors(su);
     if (std::find(reflector_pool.begin(), reflector_pool.end(), s.reflector) == reflector_pool.end()) {
         if (!normal_reflector_name_is_eligible(su, s.reflector))
-            return fail("factory demonstration reflector " + s.reflector +
-                        " is excluded from normal INOP-38 configurations");
-        return fail("reflector " + s.reflector + " is not available for " + su.name);
+            add(MachineField::Reflector, no_index, "factory demonstration reflector " + s.reflector +
+                " is excluded from normal INOP-38 configurations");
+        else
+            add(MachineField::Reflector, no_index, "reflector " + s.reflector + " is not available for " + su.name);
     }
     if (s.rings.size() != count)
-        return fail("rings count (" + std::to_string(s.rings.size()) +
-                    ") does not match rotor count (" + std::to_string(count) + ")");
+        add(MachineField::Ring, no_index, "rings count (" + std::to_string(s.rings.size()) +
+            ") does not match rotor count (" + std::to_string(count) + ")");
     Alphabet alpha(su.alphabet);
-    for (int ring : s.rings)
-        if (ring < 1 || ring > alpha.size())
-            return fail("ring value " + std::to_string(ring) + " is outside 1-" +
-                        std::to_string(alpha.size()));
-    if (!su.notches_are_fixed && s.notches.size() != count)
-        return fail("notches count (" + std::to_string(s.notches.size()) +
-                    ") does not match rotor count (" + std::to_string(count) + ")");
+    for (size_t i = 0; i < s.rings.size(); ++i)
+        if (s.rings[i] < 1 || s.rings[i] > alpha.size())
+            add(MachineField::Ring, i, "ring value " + std::to_string(s.rings[i]) + " is outside 1-" +
+                std::to_string(alpha.size()));
     if (!su.notches_are_fixed) {
-        for (const std::string& notches : s.notches) {
+        if (s.notches.size() != count)
+            add(MachineField::Notch, no_index, "notches count (" + std::to_string(s.notches.size()) +
+                ") does not match rotor count (" + std::to_string(count) + ")");
+        for (size_t i = 0; i < s.notches.size(); ++i) {
+            const std::string& notches = s.notches[i];
             if (notches.empty() || static_cast<int>(notches.size()) > su.max_notches)
-                return fail("each rotor needs 1-" + std::to_string(su.max_notches) + " notch symbols");
+                add(MachineField::Notch, i, "each rotor needs 1-" + std::to_string(su.max_notches) + " notch symbols");
             for (char symbol : notches)
-                if (!alpha.contains(symbol))
-                    return fail("notch symbol is outside the " + su.name + " alphabet");
+                if (!alpha.contains(symbol)) {
+                    add(MachineField::Notch, i, "notch symbol is outside the " + su.name + " alphabet");
+                    break;
+                }
         }
-        const std::string duplicates = duplicate_notch_symbols(s.notches);
-        if (!duplicates.empty()) return fail("notch symbols are repeated across rotors");
+        if (!duplicate_notch_symbols(s.notches).empty())
+            add(MachineField::Notch, no_index, "notch symbols are repeated across rotors");
     }
     if (static_cast<int>(s.plugs.size()) > su.max_plug_pairs)
-        return fail("plugboard pair count exceeds " + std::to_string(su.max_plug_pairs));
+        add(MachineField::Plugboard, no_index, "plugboard pair count exceeds " + std::to_string(su.max_plug_pairs));
     try {
         Plugboard probe(s.plugs, alpha);
         (void)probe;
     } catch (const std::exception& ex) {
-        return fail(ex.what());
+        add(MachineField::Plugboard, no_index, ex.what());
     }
     const size_t need_key = su.historic_lock ? count : count + 1;
     if (s.master_key.size() != need_key && !(su.historic_lock && s.master_key.size() == need_key + 1))
-        return fail("key length (" + std::to_string(s.master_key.size()) +
-                    ") does not match rotor count (" + std::to_string(count) + ")");
+        add(MachineField::MasterKey, no_index, "key length (" + std::to_string(s.master_key.size()) +
+            ") does not match rotor count (" + std::to_string(count) + ")");
     for (char symbol : s.master_key)
-        if (!alpha.contains(symbol)) return fail("master key symbol is outside the " + su.name + " alphabet");
+        if (!alpha.contains(symbol)) {
+            add(MachineField::MasterKey, no_index, "master key symbol is outside the " + su.name + " alphabet");
+            break;
+        }
     if (!su.historic_lock && !setup_marker_valid(s.marker, alpha))
-        return fail("marker must contain exactly 16 " + su.name + " alphabet symbols");
+        add(MachineField::Marker, no_index, "marker must contain exactly 16 " + su.name + " alphabet symbols");
     if (su.historic_lock && !s.marker.empty())
-        return fail("Legacy settings must not contain a marker");
-    return true;
+        add(MachineField::Marker, no_index, "Legacy settings must not contain a marker");
+    result.valid = result.diagnostics.empty();
+    return result;
+}
+
+bool validate_settings(const Settings& s, std::string* error) {
+    const MachineValidation result = validate_machine_config(s);
+    if (!result.valid && error) *error = result.diagnostics.front().message;
+    return result.valid;
 }
 
 namespace {
@@ -276,6 +296,7 @@ bool load_settings(Settings& s, const std::string& path, std::string* error,
 }
 
 bool save_settings(const Settings& s, const std::string& path) {
+    if (s.public_builtin_preset) return false;
     // Merge into whatever is already there rather than replacing it. A file
     // written by the GUI carries pipeline options this struct has no field
     // for, and rewriting from scratch would silently drop them — which is
@@ -324,7 +345,8 @@ Machine build_machine(const Settings& s, std::string* note) {
     std::vector<Rotor> rotors;
     rotors.reserve(s.rotors.size());
     for (size_t i = 0; i < s.rotors.size(); ++i) {
-        Rotor r = make_rotor(s.rotors[i], alpha);
+        Rotor r = s.public_builtin_preset ? make_builtin_rotor(s.rotors[i], alpha)
+                                         : make_rotor(s.rotors[i], alpha);
         if (!su.notches_are_fixed) {
             std::string n = i < s.notches.size() ? s.notches[i] : std::string();
             r.set_notches(n, alpha);
@@ -348,7 +370,9 @@ Machine build_machine(const Settings& s, std::string* note) {
         key += alpha.at(0);  // reflector fixed at position 0
     }
 
-    return Machine(alpha, std::move(rotors), make_reflector(s.reflector, alpha),
+    Reflector reflector = s.public_builtin_preset
+        ? make_builtin_reflector(s.reflector, alpha) : make_reflector(s.reflector, alpha);
+    return Machine(alpha, std::move(rotors), std::move(reflector),
                    Plugboard(s.plugs, alpha), s.rings, key, su.historic_lock);
 }
 

@@ -1,0 +1,20 @@
+resize 1920 1000
+move -5000 -5000
+wait 0.6
+shot account-placeholder-wide
+move 1697 48
+click
+wait 0.2
+shot account-placeholder-inactive
+move -5000 -5000
+key down
+wait 0.2
+shot account-placeholder-menu-focus
+resize 1024 720
+wait 0.4
+shot account-placeholder-resized
+move 882 48
+click
+wait 0.2
+shot account-placeholder-resized-inactive
+quit

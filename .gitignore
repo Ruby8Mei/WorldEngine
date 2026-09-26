@@ -81,3 +81,15 @@ DESIGN.md
 # wherever the binary was run from. They are evidence for one session, not
 # something the repository should carry.
 gui-shots/
+
+*.md
+!/README.md
+!/audio/README.md
+!/benchmark/corpus/SOURCES.md
+/.agents/
+/.codex/
+/Jobs/
+/measurements/
+/screenshots/
+__pycache__/
+*.pyc

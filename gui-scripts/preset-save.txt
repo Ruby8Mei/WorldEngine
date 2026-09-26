@@ -1,3 +1,4 @@
+resize 1920 1080
 # The preset the setup screen is working on, named under the wordmark, and
 # the two keys that write it: Control and S over the named one, Control and
 # Shift and S to name a new one.

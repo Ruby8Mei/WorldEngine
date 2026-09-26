@@ -1,0 +1,37 @@
+resize 1920 1000
+move -5000 -5000
+wait 0.6
+alt on
+key l
+wait 0.2
+alt off
+wait 0.6
+move 110 168
+click
+wait 0.3
+shot legal-long-start
+move 400 878
+click
+move -5000 -5000
+key enter
+wait 0.3
+shot legal-long-page-down
+key left
+key enter
+wait 0.3
+shot legal-long-page-up
+move 500 400
+scroll -1000
+wait 0.3
+shot legal-long-end
+resize 1024 720
+wait 0.5
+shot legal-long-resized
+move 500 250
+scroll 1000
+wait 0.3
+shot legal-long-resized-start
+key escape
+wait 0.5
+shot legal-long-return
+quit

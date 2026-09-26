@@ -1,4 +1,5 @@
 #include "gui_settings_panel.hpp"
+#include "gui_language.hpp"
 
 #include "gui_form.hpp"
 
@@ -48,7 +49,6 @@ constexpr int kIdFont = 4;
 constexpr int kIdTheme = 5;
 constexpr int kIdLanguage = 6;
 constexpr int kIdZoom = 7;
-constexpr int kIdScript = 8;
 constexpr int kIdAudioVolume = 9;
 constexpr int kIdFrameRate = 10;
 
@@ -162,19 +162,6 @@ int index_of_audio_volume(int percent) {
         if (std::abs(steps[i] - percent) < std::abs(steps[static_cast<std::size_t>(closest)] - percent))
             closest = static_cast<int>(i);
     return closest;
-}
-
-const std::vector<std::string>& language_options() {
-    static const std::vector<std::string> v{"English"};
-    return v;
-}
-
-// The five the roadmap asks for, listed whole rather than trimmed to the
-// one that works, so the row says what is coming as well as what is here.
-// Latin is first and is the default.
-const std::vector<std::string>& script_options() {
-    static const std::vector<std::string> v{"Latin", "Greek", "Cyrillic", "Hebrew", "Hangul"};
-    return v;
 }
 
 // The last entry, which is not a font. Picking it opens the folder and
@@ -353,6 +340,7 @@ void SettingsPanel::open(const GuiPrefs& current) {
     zoom_idx_ = index_of_zoom(pending_.zoom_percent);
     frame_rate_idx_ = index_of_frame_rate(pending_.frame_rate_limit);
     audio_volume_idx_ = index_of_audio_volume(pending_.audio_volume);
+    language_idx_ = interface_languages().index_of(pending_.interface_language);
     open_dropdown_id_ = -1;
     status_.clear();
     status_error_ = false;
@@ -378,6 +366,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     GuiInput in = real_in;
     wordmark_clicked_ = false;
     license_clicked_ = false;
+    legal_clicked_ = false;
     replay_tutorial_clicked_ = false;
 
     // Set before anything lays a row out, because every helper below reads
@@ -396,6 +385,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     pending_.zoom_percent = zoom_at(zoom_idx_);
     pending_.frame_rate_limit = frame_rate_at(frame_rate_idx_);
     pending_.audio_volume = audio_volume_at(audio_volume_idx_);
+    pending_.interface_language = interface_languages().code_at(language_idx_);
     const std::vector<FontChoice>& fonts = available_fonts();
     if (!fonts.empty() && font_idx_ >= 0 && font_idx_ < static_cast<int>(fonts.size()))
         pending_.font_file = fonts[static_cast<size_t>(font_idx_)].file;
@@ -494,6 +484,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
         window_mode_idx_ = index_of_window_mode(pending_.window_mode);
         theme_idx_ = index_of_theme(pending_.theme);
         font_idx_ = index_of_font(pending_.font_file);
+        language_idx_ = interface_languages().index_of(pending_.interface_language);
         zoom_idx_ = index_of_zoom(pending_.zoom_percent);
         frame_rate_idx_ = index_of_frame_rate(pending_.frame_rate_limit);
         status_.clear();
@@ -513,12 +504,6 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
         label(Rect{x, by + kBtnH + 6.0f, g_form.col_w, kRowH}, "Not applied yet.", true);
     }
 
-    // Footer. Drawn as four separate words rather than one string so that
-    // each can carry something of its own. License is the first to: it
-    // opens the licences INOP has to show. Legal is waiting on a privacy
-    // policy and the rest of what an application is expected to state, and
-    // the last two on there being anything to donate to or support, so
-    // those three stay plain text with nothing behind them.
     {
         const char* const items[] = {"License", "Legal", "Donate", "Support"};
         float fy = by + kBtnH + 6.0f + kRowH + 4.0f;
@@ -528,6 +513,8 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
             Rect r{fx, fy, w_item, kRowH};
             if (std::string(item) == "License") {
                 if (text_link(r, item, in, true)) license_clicked_ = true;
+            } else if (std::string(item) == "Legal") {
+                if (text_link(r, item, in, true)) legal_clicked_ = true;
             } else {
                 label(r, item, true);
             }
@@ -547,6 +534,7 @@ void SettingsPanel::frame(const GuiInput& real_in, int width, int height) {
     pending_.zoom_percent = zoom_at(zoom_idx_);
     pending_.frame_rate_limit = frame_rate_at(frame_rate_idx_);
     pending_.audio_volume = audio_volume_at(audio_volume_idx_);
+    pending_.interface_language = interface_languages().code_at(language_idx_);
     if (!fonts.empty() && font_idx_ >= 0 && font_idx_ < static_cast<int>(fonts.size()))
         pending_.font_file = fonts[static_cast<size_t>(font_idx_)].file;
 
@@ -715,26 +703,18 @@ float SettingsPanel::draw_audio(const GuiInput& in, float x, float y) {
 }
 
 float SettingsPanel::draw_interface(const GuiInput& in, float x, float y) {
-    if (!shown("Interface language") && !shown("INOP script")) return y;
-    y = heading(x, y + kSectionGap, "Interface");
+    if (!shown("Interface language")) return y;
+    const InterfaceLanguages& languages = interface_languages();
+    y = heading(x, y + kSectionGap,
+                languages.lookup(pending_.interface_language, "Interface"));
 
     if (shown("Interface language")) {
-        row_label(x, y, "Interface language", true);
-        dropdown(control_rect(x, y), language_options(), language_idx_, kIdLanguage,
-                 open_dropdown_id_, in, false);
-        row_note(x, y, "locked to English until there are translations");
-        y += kRowH + kRowGap;
-    }
-
-    if (shown("INOP script")) {
-        // Locked on the font and not on the cipher. The baked atlas holds
-        // ASCII 32 to 127 and nothing else, so four of these five would
-        // draw as a row of blank holes rather than as letters. The row is
-        // here, and stays inert, until the atlas can carry them.
-        row_label(x, y, "INOP script", true);
-        dropdown(control_rect(x, y), script_options(), script_idx_, kIdScript, open_dropdown_id_,
-                 in, false);
-        row_note(x, y, "the font can only draw latin so far");
+        row_label(x, y, languages.lookup(pending_.interface_language, "Interface language"),
+                  languages.names().size() == 1);
+        dropdown(control_rect(x, y), languages.names(), language_idx_, kIdLanguage,
+                 open_dropdown_id_, in, languages.names().size() > 1);
+        if (languages.names().size() == 1)
+            row_note(x, y, "locked to English until there are translations");
         y += kRowH + kRowGap;
     }
 

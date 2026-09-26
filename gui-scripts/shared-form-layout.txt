@@ -1,32 +1,14 @@
-# Both screens after they were put on one shared row layout.
-#
-# Both screens use the clickable wordmark as their return control and carry
-# no separate Back button. Each title is centred in the shared header.
-#
-# Maintenance should use the same growing column as Settings, where it was
-# stuck at a fixed 840 before.
+resize 1920 1080
 move -5000 -5000
 wait 0.6
-key down
-wait 0.2
-key down
-wait 0.2
-key down
-wait 0.3
-key enter
+alt on
+key m
+alt off
 wait 0.9
 shot form-maintenance
-key escape
-wait 0.9
-key down
-wait 0.2
-key down
-wait 0.2
-key down
-wait 0.2
-key down
-wait 0.3
-key enter
+alt on
+key s
+alt off
 wait 0.9
 shot form-settings
 quit

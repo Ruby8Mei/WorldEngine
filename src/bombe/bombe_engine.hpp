@@ -11,6 +11,8 @@ namespace bombe {
 
 enum class SearchState { Success, NoResult, InvalidInput, Cancelled, Failure };
 
+enum class StopCheckState { Unverified, Checked, Rejected };
+
 struct SearchSpec {
   std::string ciphertext;
   std::string crib;
@@ -34,6 +36,8 @@ struct Stop {
   char test_partner = 'A';
   std::vector<std::string> implied_pairs;
   std::vector<char> implied_self;
+  StopCheckState check_state = StopCheckState::Unverified;
+  std::vector<std::string> completed_pairs;
 };
 
 struct SearchProgress {
@@ -65,6 +69,9 @@ struct SearchResult {
   std::uint64_t total = 0;
   std::uint64_t stop_count = 0;
   bool stops_truncated = false;
+  std::vector<Stop> checked_stops;
+  std::uint64_t checked_stop_count = 0;
+  std::uint64_t rejected_stop_count = 0;
   std::size_t completed_orders = 0;
   std::size_t total_orders = 0;
   std::vector<OrderSummary> order_summaries;
@@ -85,6 +92,12 @@ SearchResult search_batch(const SearchSpec &spec,
                           const BatchLimits &limits = {},
                           const CancelCheck &cancelled = {},
                           const ProgressSink &progress = {});
+SearchResult search_order_batch(
+    const SearchSpec &spec,
+    const std::vector<std::vector<std::string>> &orders,
+    const BatchLimits &limits = {},
+    const CancelCheck &cancelled = {},
+    const ProgressSink &progress = {});
 const std::vector<std::string> &approved_rotor_pool();
 const std::vector<std::vector<std::string>> &approved_rotor_orders();
 std::uint64_t approved_batch_positions();

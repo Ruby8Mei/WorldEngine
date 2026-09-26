@@ -1,3 +1,4 @@
+resize 1920 1080
 # Opens and quits without touching anything.
 #
 # Delete inop.gui.json first. If it comes back, the save on the way out of

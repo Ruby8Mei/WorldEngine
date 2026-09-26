@@ -10,19 +10,11 @@
 #include <vector>
 
 #include "inop.hpp"
+#include "machine_config.hpp"
 
 namespace inop {
 
-struct Settings {
-    std::string suite_code = "38";
-    std::vector<std::string> rotors;
-    std::string reflector;
-    std::vector<int> rings;
-    std::vector<std::string> notches;  // parallel to rotors
-    std::vector<std::string> plugs;
-    std::string master_key;
-    std::string marker;
-};
+using Settings = MachineConfig;
 
 struct KeySheetEntry {
     Settings settings;

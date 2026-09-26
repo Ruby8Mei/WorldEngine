@@ -1,3 +1,4 @@
+resize 1920 1080
 wait 0.5
 alt on
 key s

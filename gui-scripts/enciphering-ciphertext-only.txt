@@ -1,0 +1,28 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1654 56
+click
+wait 0.8
+move 1654 20
+click
+wait 1.2
+move 200 275
+click
+type ciphertext only dispatch
+move 245 165
+click
+wait 0.8
+move 80 202
+click
+move 940 165
+click
+move 1100 165
+click
+wait 0.8
+shot enciphering-ciphertext-only
+quit

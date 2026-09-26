@@ -1,4 +1,5 @@
 #include "gui_prefs.hpp"
+#include "gui_language.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -162,6 +163,10 @@ bool readable(const std::string& path) {
 }
 
 }  // namespace
+
+std::string account_placeholder_path() {
+    return (executable_dir() / "images" / "account-placeholder.png").string();
+}
 
 std::string font_path(const std::string& file) {
     const std::filesystem::path bundled = bundled_fonts_path() / file;
@@ -353,6 +358,7 @@ bool operator==(const GuiPrefs& a, const GuiPrefs& b) {
            a.vsync == b.vsync && a.frame_rate_limit == b.frame_rate_limit &&
            a.zoom_percent == b.zoom_percent && a.reduced_motion == b.reduced_motion &&
            a.audio_muted == b.audio_muted && a.audio_volume == b.audio_volume &&
+           a.interface_language == b.interface_language &&
            a.tutorial_done == b.tutorial_done && a.tutorial_section == b.tutorial_section &&
            a.tutorial_launches == b.tutorial_launches;
 }
@@ -399,6 +405,10 @@ bool load_prefs(GuiPrefs& p, const std::string& path) {
     if (j.contains("reduced_motion") && j["reduced_motion"].is_boolean())
         read.reduced_motion = j["reduced_motion"].get<bool>();
 
+    if (j.contains("interface_language") && j["interface_language"].is_string())
+        read.interface_language = interface_languages().supported_code(
+            j["interface_language"].get<std::string>());
+
     if (j.contains("audio") && j["audio"].is_object()) {
         const nlohmann::json& audio = j["audio"];
         if (audio.contains("muted") && audio["muted"].is_boolean())
@@ -442,6 +452,7 @@ bool save_prefs(const GuiPrefs& p, const std::string& path) {
     j["font"] = p.font_file;
     j["zoom"] = p.zoom_percent;
     j["reduced_motion"] = p.reduced_motion;
+    j["interface_language"] = interface_languages().supported_code(p.interface_language);
     j["audio"] = {{"muted", p.audio_muted}, {"volume", std::clamp(p.audio_volume, 0, 100)}};
     j["tutorial"] = {{"done", p.tutorial_done},
                      {"section", p.tutorial_section},

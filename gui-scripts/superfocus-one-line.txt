@@ -1,3 +1,4 @@
+resize 1920 1080
 # Superfocus in a box of one line. It has no row above or below it, so Up
 # is its start and Down is its end.
 #

@@ -3,8 +3,6 @@
 namespace inop {
 
 const std::vector<LanguageInfo>& supported_languages() {
-    // Alphabetical by display name (Google Translate's own ordering
-    // convention), not by code or family grouping.
     static const std::vector<LanguageInfo> v = {
         {"sqi", "Albanian"},  {"eus", "Basque"},    {"bos", "Bosnian"},
         {"yue", "Cantonese"}, {"cat", "Catalan"},   {"cpf", "Creole"},    {"hrv", "Croatian"},
@@ -37,4 +35,4 @@ bool is_supported_language(const std::string& code) {
     return false;
 }
 
-}  // namespace inop
+}

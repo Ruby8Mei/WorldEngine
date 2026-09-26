@@ -1,3 +1,4 @@
+resize 1920 1080
 # The legal screen: INOP's own licence and the licence of every font it
 # bundles, reached both ways it can be reached.
 #

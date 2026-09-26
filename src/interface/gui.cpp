@@ -441,6 +441,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
     // footer and Alt and L from anywhere — so it remembers where it came
     // from rather than always dropping the operator back into Settings.
     Screen legal_from = Screen::Settings;
+    float legal_entry_direction = -1.0f;
 
     // Draws one screen and nothing else -- no acting on what it reports,
     // because during a slide both screens draw and neither is being
@@ -764,13 +765,11 @@ GuiExit run_gui_settings(const std::string& script_path) {
             // Down to reach the settings, so up to leave them.
             // The wordmark alone now; the Back button that meant the same
             // thing on this one screen is gone.
-            if (settings.license_clicked()) {
-                legal.open();
+            if (settings.license_clicked() || settings.legal_clicked()) {
+                legal.open(settings.legal_clicked());
                 legal_from = Screen::Settings;
-                // In from the left, which is how Maintenance arrives from
-                // the main menu. Legal sits below Maintenance on the same
-                // side of the map, so it travels the same way.
-                go_to(Screen::Legal, -1.0f, 0.0f);
+                legal_entry_direction = settings.legal_clicked() ? 1.0f : -1.0f;
+                go_to(Screen::Legal, legal_entry_direction, 0.0f);
             }
             // Replay always starts at the beginning, whatever was
             // reached before, and leaves the settings the way the
@@ -783,6 +782,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 go_to(Screen::MainMenu, 0.0f, -1.0f);
         } else if (screen == Screen::Legal) {
             legal.frame(screen_input, lw, lh);
+            if (legal.back_clicked()) go_to(legal_from, -legal_entry_direction, 0.0f);
             // The wordmark means the main menu on every screen, and this
             // one is no exception. Escape is what goes back to the settings
             // this was opened from.
@@ -859,6 +859,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
             } else if (k == 'L' && screen != Screen::Legal) {
                 legal.open();
                 legal_from = screen;
+                legal_entry_direction = -1.0f;
                 go_to(Screen::Legal, -1.0f, 0.0f);
             }
         }
@@ -913,7 +914,7 @@ GuiExit run_gui_settings(const std::string& script_path) {
                 else if (screen == Screen::Maintenance) go_to(Screen::MainMenu, 1.0f, 0.0f);
                 // Legal was opened from the settings and goes back to them
                 // rather than all the way out, reversing the way it came.
-                else if (screen == Screen::Legal) go_to(legal_from, 1.0f, 0.0f);
+                else if (screen == Screen::Legal) go_to(legal_from, -legal_entry_direction, 0.0f);
                 else go_to(Screen::MainMenu, -1.0f, 0.0f);
             } else {
                 modal = Modal::ConfirmQuit;

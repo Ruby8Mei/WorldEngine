@@ -49,6 +49,9 @@ public:
     void deliver_paste(const std::string& text);
 
 private:
+    static constexpr size_t kFieldCap = 4096;
+    static bool submit_requested(bool button_requested, const GuiInput& in,
+                                 bool message_focused, bool input_available);
     enum class PasteTarget { None, Message, Ciphertext, CompatibilityMarker };
 
     // Returns the y where the sections below the header begin.
@@ -91,7 +94,8 @@ private:
     float cipher_scroll_ = 0, check_scroll_ = 0, plain_scroll_ = 0;
     float h_cipher_ = 0, h_check_ = 0, h_plain_ = 0;
 
-    void draw_clear_button(const GuiInput& in, float bx, float by);
+    void draw_clear_button(const GuiInput& in, float bx, float by,
+                           std::string& field, std::string& error);
 
     PasteTarget paste_target_ = PasteTarget::None;
     std::string copy_text_;

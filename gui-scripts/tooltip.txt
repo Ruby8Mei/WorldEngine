@@ -1,17 +1,13 @@
-# The tooltip wait and the hover highlight.
-#
-# Rests on the settings Apply button for longer than the one second wait,
-# then moves one control across so the tooltip goes and the highlight
-# stays.
+resize 1920 1080
 wait 0.5
-move 960 595
-wait 0.3
-click
+alt on
+key s
+alt off
 wait 0.6
-move 614 980
+move 372 858
 wait 1.4
 shot tooltip-on-apply
-move 797 980
+move 555 858
 wait 0.4
 shot hover-highlight
 quit

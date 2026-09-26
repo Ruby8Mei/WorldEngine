@@ -1,0 +1,33 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1654 56
+click
+wait 0.8
+ctrl on
+shift on
+key s
+shift off
+ctrl off
+wait 0.4
+ctrl on
+key a
+ctrl off
+type gui-suite-preset
+shot setup-preset-name-modal
+key enter
+wait 0.8
+shot setup-preset-saved
+move 1654 128
+click
+wait 0.8
+shot setup-preset-load-browser
+move 120 750
+click
+wait 0.8
+shot setup-preset-loaded
+quit

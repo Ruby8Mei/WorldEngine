@@ -217,8 +217,10 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
     y += kRowH + kRowGap;
 
     row_label(x, y, "Mode");
-    dropdown(ctrl_rect(x, y), mode_options(), f.mode_idx, rotors ? kIdRotorMode : kIdReflectorMode,
+    const Rect mode_r = ctrl_rect(x, y);
+    dropdown(mode_r, mode_options(), f.mode_idx, rotors ? kIdRotorMode : kIdReflectorMode,
              open_dropdown_id_, in, true);
+    tooltip(mode_r, "Overwrite replaces the file; Append adds new wheels", in);
     y += kRowH + kRowGap;
 
     // A confirmation only stands while it is still about to destroy
@@ -247,6 +249,8 @@ float MaintenancePanel::draw_wheels(const GuiInput& in, float x, float y, bool r
             generate_wheels(rotors);
         }
     }
+    tooltip(generate_r, f.confirm ? "Click again to replace the existing file"
+                                  : "Generate wheels using the selected mode", in);
     draw_status(x + kWideBtnW + kGap, y, f.status, f.status_error);
 
     return y + kRowH;
@@ -262,8 +266,10 @@ float MaintenancePanel::draw_key_sheet(const GuiInput& in, float x, float y) {
     bool changed = false;
 
     row_label(x, y, "Suite");
-    dropdown(ctrl_rect(x, y), suite_options(), f.suite_idx, kIdSheetSuite, open_dropdown_id_, in,
+    const Rect suite_r = ctrl_rect(x, y);
+    dropdown(suite_r, suite_options(), f.suite_idx, kIdSheetSuite, open_dropdown_id_, in,
              true);
+    tooltip(suite_r, "Choose the machine family for generated entries", in);
     y += kRowH + kRowGap;
 
     row_label(x, y, "Entries");
@@ -308,8 +314,10 @@ float MaintenancePanel::draw_key_sheet(const GuiInput& in, float x, float y) {
         text_field(ctrl_rect(x, y), fixed, in, "", 0, false, false);
         row_note(x, y, s.name + " always uses " + std::to_string(s.min_rotors) + " rotors");
     } else {
-        dropdown(ctrl_rect(x, y), count_mode_options(), f.count_mode_idx, kIdSheetCountMode,
+        const Rect count_mode_r = ctrl_rect(x, y);
+        dropdown(count_mode_r, count_mode_options(), f.count_mode_idx, kIdSheetCountMode,
                  open_dropdown_id_, in, true);
+        tooltip(count_mode_r, "Use one rotor count or draw a count for each entry", in);
         if (f.count_mode_idx == 0) {
             // The only control in the panel with no caption of its own, so
             // the caption carries the range rather than a hint being
@@ -341,7 +349,8 @@ float MaintenancePanel::draw_key_sheet(const GuiInput& in, float x, float y) {
 
     bool valid = entries_ok && plugs_ok && notch_ok && rotor_ok && path_ok;
     std::string caption = f.confirm ? "Overwrite " + f.path : "Generate";
-    if (button(Rect{x, y, f.confirm ? kWideBtnW : kBtnW, kBtnH}, caption, in, valid, f.confirm)) {
+    const Rect generate_r{x, y, f.confirm ? kWideBtnW : kBtnW, kBtnH};
+    if (button(generate_r, caption, in, valid, f.confirm)) {
         if (!f.confirm && !in.ctrl_held && file_exists(f.path)) {
             f.confirm = true;
             f.status = f.path + " already exists. Click again to replace it.";
@@ -351,6 +360,8 @@ float MaintenancePanel::draw_key_sheet(const GuiInput& in, float x, float y) {
             generate_key_sheet();
         }
     }
+    tooltip(generate_r, f.confirm ? "Click again to replace the existing file"
+                                  : "Write the selected number of key sheet entries", in);
     draw_status(x + kWideBtnW + kGap, y, f.status, f.status_error);
 
     return y + kRowH;

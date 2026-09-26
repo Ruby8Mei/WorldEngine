@@ -1,0 +1,25 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
+click
+wait 1.0
+shot setup-selector-generated
+move 100 390
+wait 0.3
+click
+wait 0.5
+shot setup-selector-rotor
+key escape
+wait 0.3
+move 100 720
+wait 0.3
+click
+wait 0.5
+shot setup-selector-reflector
+quit

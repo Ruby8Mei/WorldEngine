@@ -54,6 +54,8 @@ std::string notch_text(const RotorRow& row) {
 
 FieldValidity derive_validity(const PanelState& state) {
     FieldValidity v;
+    if (state.rotor_count < 0 || state.rotor_count > kMaxRotors || !suites().contains(state.suite_code))
+        return v;
     const Suite& su = suite(state.suite_code);
     Alphabet alpha(su.alphabet);
     v.marker_ok = su.historic_lock ? state.marker_text.empty()
@@ -61,8 +63,10 @@ FieldValidity derive_validity(const PanelState& state) {
 
     v.rotor_count_ok = state.rotor_count >= su.min_rotors && state.rotor_count <= su.max_rotors;
 
-    std::vector<std::string> avail_rotors = available_rotors(su);
-    std::vector<std::string> avail_reflectors = available_reflectors(su);
+    std::vector<std::string> avail_rotors = state.public_builtin_preset
+        ? su.rotor_names : available_rotors(su);
+    std::vector<std::string> avail_reflectors = state.public_builtin_preset
+        ? su.reflector_names : available_reflectors(su);
 
     for (int i = 0; i < kMaxRotors; ++i) {
         bool active = i < state.rotor_count;
@@ -99,13 +103,9 @@ FieldValidity derive_validity(const PanelState& state) {
         if (su.notches_are_fixed) {
             notch_ok = true;  // historic wheels carry their own notches — nothing to type
         } else {
-            // At least one of the three boxes must be filled — any single
-            // one counts (box 2 alone is just as valid a one-notch rotor
-            // as box 0 alone); the other two are simply optional extra
-            // notch symbols. A gap (box 0 and 2 filled, box 1 empty) is
-            // fine too — notch_text() just concatenates whatever's filled.
-            notch_ok = !row.notch_box[0].empty() || !row.notch_box[1].empty() ||
-                       !row.notch_box[2].empty();
+            notch_ok = false;
+            for (int b = 0; b < kNotchBoxes && b < su.max_notches; ++b)
+                if (!row.notch_box[b].empty()) notch_ok = true;
             if (notch_ok) {
                 for (int b = 0; b < kNotchBoxes && b < su.max_notches; ++b) {
                     if (row.notch_box[b].empty()) continue;
@@ -172,6 +172,20 @@ FieldValidity derive_validity(const PanelState& state) {
 
     v.all_mandatory_ok = v.rotor_count_ok && rotor_rows_ok && v.reflector_ok && v.plugboard_ok;
     v.master_key_needed_len = state.rotor_count + (su.historic_lock ? 0 : 1);
+    const MachineValidation semantic = validate_machine_config(settings_from_panel(state));
+    for (const MachineDiagnostic& diagnostic : semantic.diagnostics) {
+        if (diagnostic.field != MachineField::MasterKey && diagnostic.field != MachineField::Marker)
+            v.all_mandatory_ok = false;
+        if (diagnostic.field == MachineField::Marker) v.marker_ok = false;
+        if (diagnostic.field == MachineField::Reflector) v.reflector_ok = false;
+        if (diagnostic.field == MachineField::Plugboard) v.plugboard_ok = false;
+        if (diagnostic.field == MachineField::RotorCount) v.rotor_count_ok = false;
+        if (diagnostic.index < static_cast<size_t>(kMaxRotors)) {
+            if (diagnostic.field == MachineField::Rotor) v.rotor_pick_ok[diagnostic.index] = false;
+            if (diagnostic.field == MachineField::Ring) v.ring_ok[diagnostic.index] = false;
+            if (diagnostic.field == MachineField::Notch) v.notch_ok[diagnostic.index] = false;
+        }
+    }
     return v;
 }
 
@@ -214,27 +228,36 @@ void on_suite_changed(PanelState& state) {
 }
 
 bool master_key_valid(const PanelState& state, const FieldValidity& validity) {
-    const Suite& su = suite(state.suite_code);
-    Alphabet alpha(su.alphabet);
+    if (!suites().contains(state.suite_code)) return false;
     if (static_cast<int>(state.master_key_text.size()) != validity.master_key_needed_len) return false;
-    for (char c : state.master_key_text)
-        if (!alpha.contains(c)) return false;
+    const MachineValidation semantic = validate_machine_config(settings_from_panel(state));
+    for (const MachineDiagnostic& diagnostic : semantic.diagnostics)
+        if (diagnostic.field == MachineField::MasterKey) return false;
     return true;
 }
 
 Settings settings_from_panel(const PanelState& state) {
     Settings s;
     s.suite_code = state.suite_code;
-    for (int i = 0; i < state.rotor_count; ++i) {
+    s.public_builtin_preset = state.public_builtin_preset;
+    for (int i = 0; i < state.rotor_count && i < kMaxRotors; ++i) {
         const RotorRow& row = state.rotor_rows[i];
         s.rotors.push_back(row.rotor_name);
-        s.rings.push_back(row.ring_text.empty() ? 1 : std::stoi(row.ring_text));
+        int ring = 0;
+        try {
+            size_t consumed = 0;
+            ring = std::stoi(row.ring_text, &consumed);
+            if (consumed != row.ring_text.size()) ring = 0;
+        } catch (const std::exception&) {
+            ring = 0;
+        }
+        s.rings.push_back(ring);
         s.notches.push_back(notch_text(row));
     }
     s.reflector = state.reflector_name;
     for (int i = 0; i < kMaxPlugSlots; ++i) {
         std::string pair = plug_pair(state, i);
-        if (pair.size() == 2) s.plugs.push_back(pair);
+        if (!pair.empty()) s.plugs.push_back(pair);
     }
     s.master_key = state.master_key_text;
     s.marker = state.marker_text;
@@ -264,11 +287,11 @@ void SetupPanel::sync_indices_from_state() {
     language_idx_ = index_of(language_codes_, state_.language_code);
     if (language_idx_ < 0) language_idx_ = 0;
 
-    rotor_options_ = available_rotors(su);
+    rotor_options_ = state_.public_builtin_preset ? su.rotor_names : available_rotors(su);
     for (int i = 0; i < kMaxRotors; ++i)
         rotor_pick_idx_[i] = index_of(rotor_options_, state_.rotor_rows[i].rotor_name);
 
-    reflector_options_ = available_reflectors(su);
+    reflector_options_ = state_.public_builtin_preset ? su.reflector_names : available_reflectors(su);
     reflector_idx_ = index_of(reflector_options_, state_.reflector_name);
 }
 
@@ -440,11 +463,11 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
     // The save note takes the same line for a few seconds afterwards,
     // because a save that works changes nothing else on screen.
     {
-        const std::string line =
-            !ui_.save_note.empty()
-                ? ui_.save_note
-                : (ui_.current_preset.empty() ? std::string("preset: none yet")
-                                              : "preset: " + ui_.current_preset);
+        const std::string line = !ui_.save_note.empty()
+            ? ui_.save_note
+            : (state_.public_builtin_preset ? std::string("PUBLIC BENCHMARK SETUP")
+               : (ui_.current_preset.empty() ? std::string("preset: none yet")
+                                             : "preset: " + ui_.current_preset));
         label(Rect{16, pad + word_th + 6.0f, 400.0f, 18.0f}, line, true);
     }
 
@@ -463,7 +486,8 @@ void SetupPanel::draw_header(const GuiInput& in, float width) {
     if (button(generate_r, "Generate Setup", in, true)) on_generate_clicked();
 
     Rect save_r{width - btn_w - 16, pad + 2 * (btn_h + gap), btn_w, btn_h};
-    if (button(save_r, "Save Setup", in, next_enabled)) on_save_clicked();
+    if (button(save_r, "Save Setup", in, next_enabled && !state_.public_builtin_preset))
+        on_save_clicked();
 
     Rect load_r{width - btn_w - 16, pad + 3 * (btn_h + gap), btn_w, btn_h};
     if (button(load_r, "Load Setup", in, true)) {
@@ -813,6 +837,7 @@ void SetupPanel::draw_file_overlays(const GuiInput& in, float w, float h) {
                                                        state_.suite_code);
         if (r.preset_picked) {
             state_ = *r.preset;
+            ui_.current_preset.clear();
             sync_indices_from_state();  // same-frame resync, established pattern
             ui_.show_load_panel = false;
         } else if (r.delete_requested)
@@ -947,7 +972,9 @@ void SetupPanel::on_generate_clicked() {
         // the operator might have picked by hand, not always the biggest
         // one possible. (Legacy's rotor count is fixed min==max, so this is
         // a no-op there.)
-        GeneratedSettings g = random_setup_settings(su);
+        MachineConfig g = random_setup_settings(su);
+        state_.public_builtin_preset = false;
+        ui_.current_preset.clear();
         int rotor_count = static_cast<int>(g.rotors.size());
         state_.rotor_count = rotor_count;
 
@@ -1088,6 +1115,10 @@ void SetupPanel::on_create_confirmed() {
 }
 
 void SetupPanel::on_save_current() {
+    if (state_.public_builtin_preset) {
+        set_save_note("public benchmark setup cannot be saved as a normal setup");
+        return;
+    }
     if (ui_.current_preset.empty()) {
         // Nothing to write over yet, so this asks for a name rather than
         // being a key that does nothing.

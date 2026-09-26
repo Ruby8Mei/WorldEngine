@@ -1,0 +1,383 @@
+resize 1920 1000
+move -5000 -5000
+wait 0.6
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 697.5 195
+click
+wait 0.2
+key up
+wait 0.1
+key up
+wait 0.1
+key up
+wait 0.1
+key up
+wait 0.1
+key up
+wait 0.1
+key enter
+wait 0.2
+move 357.5 808
+click
+wait 0.5
+move 1432.0 1969
+click
+wait 0.4
+shot legal-zoom-50-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-50-resized
+key escape
+wait 0.4
+key escape
+wait 0.4
+shot account-placeholder-zoom-50
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 1745.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 1405.0 1899
+click
+wait 0.5
+move 883.0 1397
+click
+wait 0.4
+shot legal-zoom-70-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-70-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 1196.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 856.0 1327
+click
+wait 0.5
+move 712.0 1219
+click
+wait 0.4
+shot legal-zoom-80-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-80-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 1025.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 685.0 1149
+click
+wait 0.5
+move 578.5 1080
+click
+wait 0.4
+shot legal-zoom-90-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-90-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 891.5 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 551.5 1010
+click
+wait 0.5
+move 472.0 969
+click
+wait 0.4
+shot legal-zoom-100-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-100-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 785.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 445.0 899
+click
+wait 0.5
+move 384.5 878
+click
+wait 0.4
+shot legal-zoom-110-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-110-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 697.5 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 357.5 808
+click
+wait 0.5
+move 312.0 802
+click
+wait 0.4
+shot legal-zoom-120-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-120-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 625.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 285.0 732
+click
+wait 0.5
+move 223.0 709
+click
+wait 0.4
+shot legal-zoom-135-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-135-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 536.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 196.0 639
+click
+wait 0.5
+move 152.0 635
+click
+wait 0.4
+shot legal-zoom-150-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-150-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 465.0 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 125.0 565
+click
+wait 0.5
+move 103 540
+click
+wait 0.4
+shot legal-zoom-175-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-175-resized
+key escape
+wait 0.4
+resize 1920 1000
+wait 0.4
+alt on
+key s
+wait 0.1
+alt off
+wait 0.4
+ctrl on
+key f
+key a
+ctrl off
+type Zoom
+wait 0.2
+move 416 195
+click
+wait 0.2
+key down
+wait 0.1
+key enter
+wait 0.2
+move 76 470
+click
+wait 0.5
+move 103 469
+click
+wait 0.4
+shot legal-zoom-200-wide
+resize 1024 720
+wait 0.4
+shot legal-zoom-200-resized
+move 150 130
+click
+wait 0.2
+shot legal-narrow-selector
+key escape
+wait 0.2
+shot legal-narrow-selector-closed
+key enter
+wait 0.2
+key down
+key enter
+wait 0.3
+shot legal-narrow-privacy
+key escape
+wait 0.4
+key escape
+wait 0.4
+shot account-placeholder-zoom-200
+resize 1920 1000
+wait 0.4
+quit

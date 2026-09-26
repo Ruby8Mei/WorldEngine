@@ -1,3 +1,4 @@
+resize 1920 1080
 # Superfocus in the two shapes of box.
 #
 # A wrapping box: Up and Down move one row and keep the column, which is

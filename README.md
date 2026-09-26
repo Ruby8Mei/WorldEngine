@@ -10,8 +10,7 @@ the constraints of that era. It is not a modern cipher and doesnt try to be.
 Several things here that look like defects are chosen on purpose. The rules
 that matter are enforced by the build. It refuses a cipher core carrying a
 modern primitive, and `--self-test` fails by name when one of the guards is
-removed. Where a design decision has been measured, the numbers are in
-[measurements/](measurements/).
+removed.
 
 ## What this is
 
@@ -69,11 +68,7 @@ Against
 INOP-38 with the wheels regenerated it recovers nothing at all, because the
 answer is not in the search space. The double pass costs that attacker
 roughly 7x and doesnt stop it. The notch count turns out to make no
-measured difference to search cost. See
-[measurements/3-bombe.md](measurements/3-bombe.md), which says where the
-numbers disagree with the reasoning. Historic rotor-order batch details are
-recorded in
-[measurements/6.1-bombe-rotor-order-batching.md](measurements/6.1-bombe-rotor-order-batching.md).
+measured difference to search cost.
 
 ## How to get started
 
@@ -209,8 +204,7 @@ A few features exist that are worth knowing about before you start:
   Code `0` carries capitalization, so `untransform()` restores case as well as
   marks. The transformer takes no language and lives in
   `src/logic/transform.cpp`; `src/logic/languages.cpp` contains the supported
-  interface language list only. How much the wire grammar costs, measured
-  against real corpus text in 48 languages, is in [measurements/](measurements/).
+  interface language list only.
   Plaintext punctuation remains visible while the operator edits a message and
   is removed when Encipher processes it. Punctuation never enters the machine
   alphabet or wheel definitions.
@@ -314,11 +308,7 @@ Start with `./build/inop --help` and `./build/inop --self-test`. The second
 runs every correctness, entropy, and throughput check the project has, and
 is the fastest way to confirm a build or a change didnt break anything.
 
-For anything the self-test doesnt answer, [measurements/](measurements/) is
-the next place to look. It holds one markdown table per experiment, each
-saying what it settles and in which direction, including the ones that came
-out against the design. If your question isnt answered there either, open
-an issue on this repository.
+For questions beyond the self-test, open an issue on this repository.
 
 ## Who maintains this
 
@@ -367,9 +357,5 @@ src/bombe/            the cryptanalysis harness. An attack tool, filed
 
 cmake/                 the source rules the build enforces
 
-benchmark/             corpus text, the benchmark log, and the analysis
-                       script for the diacritic measurements
-
-measurements/          one markdown table per experiment, and what each
-                       one settles
+benchmark/             corpus text and analysis scripts for text benchmarks
 ```

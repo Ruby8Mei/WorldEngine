@@ -1,0 +1,43 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1654 56
+click
+wait 0.8
+move 700 230
+click
+ctrl on
+key a
+ctrl off
+type aaaaaaaaaaaaaaaa
+wait 0.3
+shot marker-low-variety
+ctrl on
+key a
+ctrl off
+type abcdefghijklmnop
+ctrl on
+shift on
+key s
+shift off
+ctrl off
+wait 0.6
+ctrl on
+key a
+ctrl off
+type gui-suite-marker
+key enter
+wait 0.8
+shot marker-preset-saved
+move 1654 128
+click
+wait 0.8
+move 120 600
+click
+wait 0.8
+shot marker-preset-loaded
+quit

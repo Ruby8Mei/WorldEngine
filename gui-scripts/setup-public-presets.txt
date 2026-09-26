@@ -1,0 +1,17 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+shot public-preset-before-selection
+move 1654 128
+click
+wait 0.6
+shot public-preset-browser
+move 155 225
+click
+wait 0.8
+shot public-preset-selected
+quit

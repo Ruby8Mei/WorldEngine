@@ -28,10 +28,6 @@ constexpr int kNotchBoxes = kMaxNotchesAnySuite;
 struct RotorRow {
     std::string rotor_name;
     std::string ring_text;
-    // Three independent single-character boxes rather than one field — at
-    // least one must be filled (any single one counts, not specifically
-    // box[0]); the rest are optional extra notch symbols. See notch_text()
-    // below for the combined string validation/storage actually deals in.
     std::string notch_box[kNotchBoxes];
 };
 
@@ -41,6 +37,7 @@ struct RotorRow {
 // field copies, not a redesign.
 struct PanelState {
     std::string suite_code = "38";
+    bool public_builtin_preset = false;
     std::string language_code = "eng";
 
     int rotor_count = 5;
@@ -89,11 +86,6 @@ FieldValidity derive_validity(const PanelState& state);
 // one place.
 std::string plug_pair(const PanelState& state, int slot);
 
-// The combined notch string (0-3 alphabet symbols) for one rotor row —
-// concatenation of row.notch_box[0..2] in order, so a gap just gets
-// skipped (typing box 0 and box 2 but leaving box 1 empty yields the same
-// 2-symbol string as filling box 0 and box 1). Used by derive_validity and
-// the gui_config_store JSON schema (still one "notches" string per rotor).
 std::string notch_text(const RotorRow& row);
 
 // Full reset of PanelState (keeping only suite_code/language_code), not a

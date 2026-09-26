@@ -30,6 +30,8 @@ const Suite& suite(const std::string& code);
 // Fresh, independent wheel instances for the given suite.
 Rotor make_rotor(const std::string& name, const Alphabet& alpha);
 Reflector make_reflector(const std::string& name, const Alphabet& alpha);
+Rotor make_builtin_rotor(const std::string& name, const Alphabet& alpha);
+Reflector make_builtin_reflector(const std::string& name, const Alphabet& alpha);
 
 // A wiring that is a pure rotation (Caesar shift) of `alphabet`, ranked by
 // each symbol's position in `alphabet` itself — NOT by std::sort/ASCII

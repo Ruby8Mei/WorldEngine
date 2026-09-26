@@ -1,0 +1,13 @@
+resize 1920 1080
+wait 0.6
+resize 1024 720
+alt on
+key b
+alt off
+wait 0.4
+shot bombe-responsive-top
+move 400 300
+scroll -8
+wait 0.3
+shot bombe-responsive-results
+quit

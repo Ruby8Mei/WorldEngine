@@ -1,47 +1,47 @@
+resize 1920 1080
+move -5000 -5000
 wait 0.5
-alt on
-key q
-alt off
+key down
 wait 0.3
-move 1300 57
+key enter
+wait 1.2
+move 1654 57
+wait 0.3
 click
+wait 0.6
+move 1654 21
 wait 0.3
-move 1300 21
 click
-wait 0.3
+wait 1.4
 move 200 275
 click
 type Ábc 5 dé5 ộ 123
 wait 0.2
-shot job-a-readable
+shot folded-input-readable
 ctrl on
 key a
 key c
 key x
 ctrl off
 wait 0.2
-shot job-a-cut
+shot folded-input-cut
 ctrl on
 key v
 ctrl off
 wait 0.2
-shot job-a-paste
+shot folded-input-paste
 move 245 165
 click
 wait 0.3
-shot job-a-roundtrip
+shot folded-input-roundtrip
 move 80 202
-click
-move 780 165
-click
-move 245 202
 click
 move 940 165
 click
 move 1100 165
 click
 wait 0.3
-shot job-a-deciphered
+shot folded-input-deciphered
 move 200 275
 click
 ctrl on
@@ -51,21 +51,21 @@ type Ábc, 5 dé5! ộ
 move 245 165
 click
 wait 0.3
-shot job-a-punctuation
+shot folded-input-punctuation
 move 200 275
 click
 ctrl on
 key q
 ctrl off
 wait 0.2
-shot job-a-clear-shortcut
+shot folded-input-clear-shortcut
 ctrl on
 key z
 ctrl off
 wait 0.2
-shot job-a-clear-undone
+shot folded-input-clear-undone
 move 400 165
 click
 wait 0.2
-shot job-a-clear-button
+shot folded-input-clear-button
 quit

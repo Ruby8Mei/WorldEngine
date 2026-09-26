@@ -1,0 +1,17 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+key down
+wait 0.3
+key enter
+wait 2.5
+move 1654 128
+click
+wait 0.6
+move 120 600
+click
+wait 0.6
+shot setup-load-format-error
+key escape
+wait 0.3
+quit

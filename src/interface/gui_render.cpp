@@ -1,9 +1,10 @@
 #include "gui_render.hpp"
 
 #include <map>
+#include <cmath>
 
 #include "gui_prefs.hpp"
-#include "gui_text.hpp"
+#include "gui_text_edit.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -34,10 +35,16 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+
 namespace inop {
 namespace gui {
 
 namespace {
+
+GLuint g_account_texture = 0;
 
 struct UnicodeGlyph {
     GLuint texture = 0;
@@ -314,10 +321,25 @@ bool render_init() {
     glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    int width = 0, height = 0, channels = 0;
+    unsigned char* pixels = stbi_load(account_placeholder_path().c_str(), &width, &height,
+                                     &channels, STBI_rgb_alpha);
+    if (pixels) {
+        glGenTextures(1, &g_account_texture);
+        glBindTexture(GL_TEXTURE_2D, g_account_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        stbi_image_free(pixels);
+    }
     return true;
 }
 
 void render_shutdown() {
+    if (g_account_texture) glDeleteTextures(1, &g_account_texture);
+    g_account_texture = 0;
     free_atlases();
     for (std::pair<const std::string, FontAtlas>& e : g_previews)
         if (e.second.texture) glDeleteTextures(1, &e.second.texture);
@@ -420,6 +442,36 @@ void draw_rect(float x, float y, float w, float h, Color c) {
     glVertex2f(x + w, y + h);
     glVertex2f(x, y + h);
     glEnd();
+}
+
+void draw_circle(float x, float y, float radius, Color c) {
+    glDisable(GL_TEXTURE_2D);
+    glColor4f(c.r, c.g, c.b, c.a);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2f(x, y);
+    for (int i = 0; i <= 64; ++i) {
+        const float angle = static_cast<float>(i) * 6.28318530718f / 64.0f;
+        glVertex2f(x + radius * std::cos(angle), y + radius * std::sin(angle));
+    }
+    glEnd();
+}
+
+void draw_account_placeholder(float x, float y, float radius) {
+    if (!g_account_texture) return;
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_account_texture);
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_TRIANGLE_FAN);
+    glTexCoord2f(154.0f / 308.0f, 155.0f / 309.0f);
+    glVertex2f(x, y);
+    for (int i = 0; i <= 64; ++i) {
+        const float angle = static_cast<float>(i) * 6.28318530718f / 64.0f;
+        const float dx = std::cos(angle), dy = std::sin(angle);
+        glTexCoord2f((154.0f + 114.0f * dx) / 308.0f, (155.0f + 114.0f * dy) / 309.0f);
+        glVertex2f(x + radius * dx, y + radius * dy);
+    }
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
 }
 
 void draw_rect_outline(float x, float y, float w, float h, Color c, float thickness) {

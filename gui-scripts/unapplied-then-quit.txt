@@ -1,14 +1,10 @@
-# Opens Settings, flips Reduced motion, does NOT press Apply, and quits.
-#
-# inop.gui.json must be unchanged afterwards. A pending edit never leaves
-# the settings panel, so leaving cannot save it. That is what the quit
-# modal now says out loud.
+resize 1920 1080
 wait 0.5
-move 960 595
-wait 0.3
-click
+alt on
+key s
+alt off
 wait 0.6
-move 824 375
+move 582 498
 wait 0.3
 click
 wait 0.5

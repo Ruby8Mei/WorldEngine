@@ -1,0 +1,38 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+alt on
+key q
+alt off
+wait 1.2
+move 100 203
+click
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key down
+key enter
+wait 0.4
+move 1654 57
+click
+wait 0.8
+move 1654 21
+click
+wait 1.2
+move 300 245
+click
+type 저는 한국어를 공부해요.
+wait 0.4
+move 178 172
+click
+wait 1.0
+shot hangul-roundtrip
+quit

@@ -1,10 +1,4 @@
-# The composite copy button and the Clear button, on a real machine.
-#
-# Generate Setup fills a whole machine in one click, which is the shortest
-# route to a screen where these two buttons can do anything at all.
-#
-# Coordinates are logical, not the pixels in the screenshot. At the 110%
-# zoom in inop.gui.json the window is 1745x982 logical.
+resize 1920 1080
 move -5000 -5000
 wait 0.5
 key down
@@ -20,31 +14,35 @@ wait 0.3
 click
 wait 1.4
 shot c1-enciphering-empty
-
-# Click into the message box and type. Clear is dead until a box has the
-# focus, so this is what wakes it up.
-move 300 166
+move 200 275
+click
+type hello world
+wait 0.2
+shot c2-typed
+move 245 165
+click
 wait 0.3
+shot c3-enciphered
+move 80 202
+click
+move 940 165
 click
 wait 0.2
-type hello world
-wait 0.4
-shot c2-typed
-
-# Encipher, which fills the ciphertext and the marker. Copy both needs
-# them both, so it is dead until this happens.
-move 1653 166
-wait 0.3
+move 1100 165
 click
-wait 0.8
-shot c3-enciphered
-
-# Clear still knows which box the operator was in: clicking a button is a
-# click on a control, and only a click that lands on nothing lets a field
-# go.
-move 1496 131
 wait 0.3
+shot c4-deciphered
+move 1050 275
 click
-wait 0.5
-shot c4-cleared
+move 400 165
+click
+wait 0.2
+shot c5-left-clear
+move 200 275
+click
+type second message
+move 1250 165
+click
+wait 0.2
+shot c6-right-clear
 quit

@@ -274,11 +274,8 @@ bool text_field(const Rect& r, std::string& value, const GuiInput& in, const std
 // one row height on top.
 float text_field_height(int lines, bool with_caption = false);
 
-// Empties whichever writable field the operator is in, as one undo step,
-// and says whether it emptied anything. For a Clear button that sits away
-// from the box it clears and so cannot name it. Nothing happens when no
-// field has the focus, or when the one that has it is already empty.
 bool clear_focused_field();
+bool clear_field(std::string& value);
 void set_text_clipboard(std::function<std::string()> read,
                         std::function<void(const std::string&)> write);
 void text_edit_self_test(const std::function<void(bool, const std::string&)>& check);

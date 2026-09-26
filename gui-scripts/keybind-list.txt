@@ -1,3 +1,4 @@
+resize 1920 1080
 # The Keyboard section at the bottom of the settings screen.
 #
 # Four downs and Enter reach Settings from the main menu. The section is

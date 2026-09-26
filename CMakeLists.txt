@@ -33,6 +33,7 @@ set(INOP_SRC_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/interface
   ${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark-debug
   ${CMAKE_CURRENT_SOURCE_DIR}/src/bombe
+  ${CMAKE_CURRENT_SOURCE_DIR}/tests
 )
 
 # The optional GUI (GLFW + raw OpenGL + stb_truetype) is opt-in. Off by
@@ -53,12 +54,14 @@ option(INOP_WITH_GUI "Build the optional GLFW/OpenGL settings-panel GUI" OFF)
 # message, and that trade is wrong for this project. CI has no such
 # constraint and runs with it on.
 option(INOP_WERROR "Treat compiler warnings as errors" OFF)
+option(INOP_BUILD_GUI_HEADLESS_TESTS "Build the independent GUI headless test target" ON)
 
 # Needed by every target, GUI or not: the data-file format is JSON and the
 # reader is in the logic layer.
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-if(INOP_WITH_GUI)
+if(INOP_WITH_GUI OR INOP_BUILD_GUI_HEADLESS_TESTS)
   find_package(glfw3 CONFIG REQUIRED)
   find_package(OpenGL REQUIRED)
   find_path(STB_INCLUDE_DIR NAMES stb_truetype.h)
@@ -78,37 +81,52 @@ set(INOP_CORE_SOURCES
   src/logic/rng.cpp
   src/logic/generator.cpp
   src/logic/languages.cpp
+  src/logic/utf8.cpp
   src/logic/transform.cpp
+  src/logic/transform_greek.cpp
+  src/logic/transform_hangul.cpp
   src/settings/settings.cpp
   src/interface/batch.cpp
+  src/interface/cli_compat.cpp
+  src/interface/cli_text.cpp
 )
 
 # gui.hpp exposes exactly one declaration (run_gui_settings()) with no
 # GL/GLFW types in it, so main.cpp includes it unconditionally either way —
 # only this source-list choice decides whether the real panel or the
 # CLI-only stub provides that symbol. No #ifdef needed in main.cpp.
+set(INOP_REAL_GUI_SOURCES
+  src/interface/audio_manager.cpp
+  src/interface/gui.cpp
+  src/interface/gui_render.cpp
+  src/interface/gui_widgets.cpp
+  src/interface/gui_text_edit.cpp
+  src/interface/gui_plaintext.cpp
+  src/interface/gui_anim.cpp
+  src/interface/gui_form.cpp
+  src/interface/gui_script.cpp
+  src/interface/gui_config_store.cpp
+  src/interface/gui_file_tile_panel.cpp
+  src/interface/gui_setup_panel.cpp
+  src/interface/gui_main_menu.cpp
+  src/interface/gui_bombe_panel.cpp
+  src/interface/gui_enciphering_panel.cpp
+  src/interface/gui_prefs.cpp
+  src/interface/gui_settings_panel.cpp
+  src/interface/gui_legal_panel.cpp
+  src/interface/gui_maintenance_panel.cpp
+  src/interface/gui_tutorial.cpp
+)
+
+set(INOP_GUI_CHECK_SOURCES
+  tests/gui_aggregate_checks.cpp
+  tests/gui_widget_checks.cpp
+  tests/audio_checks.cpp
+  tests/gui_panel_checks.cpp
+)
+
 if(INOP_WITH_GUI)
-  set(INOP_GUI_SOURCES
-    src/interface/audio_manager.cpp
-    src/interface/gui.cpp
-    src/interface/gui_render.cpp
-    src/interface/gui_widgets.cpp
-    src/interface/gui_anim.cpp
-    src/interface/gui_form.cpp
-    src/interface/gui_script.cpp
-    src/interface/gui_config_store.cpp
-    src/interface/gui_file_tile_panel.cpp
-    src/interface/gui_setup_panel.cpp
-    src/interface/gui_main_menu.cpp
-    src/interface/gui_bombe_panel.cpp
-    src/interface/gui_enciphering_panel.cpp
-    src/interface/gui_prefs.cpp
-    src/interface/gui_settings_panel.cpp
-    src/interface/gui_legal_panel.cpp
-    src/interface/gui_maintenance_panel.cpp
-    src/interface/gui_tutorial.cpp
-    src/interface/gui_self_test.cpp
-  )
+  set(INOP_GUI_SOURCES ${INOP_REAL_GUI_SOURCES} ${INOP_GUI_CHECK_SOURCES})
 else()
   set(INOP_GUI_SOURCES src/interface/gui_stub.cpp)
 endif()
@@ -129,6 +147,7 @@ add_library(inop_bombe_engine OBJECT
 add_executable(inop
   ${INOP_GUI_SOURCES}
   src/interface/main.cpp
+  tests/cli_self_test.cpp
   $<TARGET_OBJECTS:inop_bombe_engine>
 )
 
@@ -148,14 +167,47 @@ add_executable(inop_langprobe
 # writes any, and is never linked into the live message pipeline.
 add_executable(inop_bombe
   src/bombe/bombe_main.cpp
+  tests/bombe_engine_checks.cpp
   $<TARGET_OBJECTS:inop_bombe_engine>
 )
+
+add_executable(inop_bombe_engine_tests
+  tests/bombe_engine_checks_main.cpp
+  tests/bombe_engine_checks.cpp
+  src/logic/inop.cpp
+  src/logic/registry.cpp
+  $<TARGET_OBJECTS:inop_bombe_engine>
+)
+
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  add_executable(inop_gui_headless_tests
+    tests/gui_headless_main.cpp
+    tests/compatibility_fixtures.cpp
+    ${INOP_REAL_GUI_SOURCES}
+    ${INOP_GUI_CHECK_SOURCES}
+    $<TARGET_OBJECTS:inop_bombe_engine>
+  )
+  add_executable(inop_audio_tests
+    tests/audio_checks_main.cpp
+    tests/audio_checks.cpp
+    src/interface/audio_manager.cpp
+  )
+endif()
 
 foreach(tgt inop inop_benchmark inop_langprobe inop_bombe)
   target_link_libraries(${tgt} PRIVATE inop_core)
 endforeach()
 
-foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core inop_bombe_engine)
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  target_link_libraries(inop_gui_headless_tests PRIVATE inop_core)
+endif()
+
+set(INOP_CONFIGURED_TARGETS inop inop_benchmark inop_langprobe inop_bombe inop_bombe_engine_tests inop_core inop_bombe_engine)
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  list(APPEND INOP_CONFIGURED_TARGETS inop_gui_headless_tests)
+endif()
+
+foreach(tgt IN LISTS INOP_CONFIGURED_TARGETS)
   target_include_directories(${tgt} PRIVATE ${INOP_SRC_DIRS})
   target_link_libraries(${tgt} PRIVATE nlohmann_json::nlohmann_json)
 
@@ -202,6 +254,9 @@ if(INOP_WITH_GUI)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/audio
             $<TARGET_FILE_DIR:inop>/audio
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/images
+            $<TARGET_FILE_DIR:inop>/images
     VERBATIM
   )
   if(MINGW)
@@ -211,6 +266,42 @@ if(INOP_WITH_GUI)
     # libstdc++'s) has to travel alongside inop.exe, which defeats the
     # point of a single portable settings-panel-enabled binary.
     target_link_options(inop PRIVATE -static)
+  endif()
+endif()
+
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  target_include_directories(inop_gui_headless_tests PRIVATE ${STB_INCLUDE_DIR} ${MINIAUDIO_INCLUDE_DIR})
+  target_link_libraries(inop_gui_headless_tests PRIVATE glfw OpenGL::GL)
+  add_custom_command(TARGET inop_gui_headless_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/fonts
+            $<TARGET_FILE_DIR:inop_gui_headless_tests>/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/audio
+            $<TARGET_FILE_DIR:inop_gui_headless_tests>/audio
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/images
+            $<TARGET_FILE_DIR:inop_gui_headless_tests>/images
+    VERBATIM
+  )
+  if(MINGW)
+    target_link_options(inop_gui_headless_tests PRIVATE -static)
+  endif()
+
+  target_include_directories(inop_audio_tests PRIVATE ${INOP_SRC_DIRS} ${MINIAUDIO_INCLUDE_DIR})
+  if(MSVC)
+    target_compile_options(inop_audio_tests PRIVATE /W4 /utf-8)
+    if(INOP_WERROR)
+      target_compile_options(inop_audio_tests PRIVATE /WX)
+    endif()
+  else()
+    target_compile_options(inop_audio_tests PRIVATE -Wall -Wextra -Wpedantic)
+    if(INOP_WERROR)
+      target_compile_options(inop_audio_tests PRIVATE -Werror)
+    endif()
+  endif()
+  if(MINGW)
+    target_link_options(inop_audio_tests PRIVATE -static)
   endif()
 endif()
 
@@ -227,17 +318,51 @@ add_custom_target(inop_source_rules ALL
   COMMENT "Checking INOP source rules (core purity, RNG purity)"
   VERBATIM
 )
-foreach(tgt inop inop_benchmark inop_langprobe inop_bombe inop_core inop_bombe_engine)
+foreach(tgt IN LISTS INOP_CONFIGURED_TARGETS)
   add_dependencies(${tgt} inop_source_rules)
 endforeach()
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  add_dependencies(inop_audio_tests inop_source_rules)
+endif()
 
 enable_testing()
 add_test(NAME self_test COMMAND inop --self-test --no-color)
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  add_test(NAME gui_headless_self_test COMMAND inop_gui_headless_tests)
+  add_test(NAME gui_aggregate_checks COMMAND inop_gui_headless_tests --group aggregate)
+  add_test(NAME gui_widget_checks COMMAND inop_gui_headless_tests --group widgets)
+  add_test(NAME gui_panel_checks COMMAND inop_gui_headless_tests --group panels)
+  add_test(NAME audio_fake_backend_checks COMMAND inop_audio_tests)
+  set_tests_properties(self_test gui_headless_self_test gui_aggregate_checks
+                       gui_widget_checks gui_panel_checks audio_fake_backend_checks
+                       PROPERTIES RUN_SERIAL TRUE)
+endif()
+if(WIN32)
+  find_program(INOP_POWERSHELL NAMES pwsh powershell)
+  if(INOP_POWERSHELL)
+    add_test(NAME gui_script_manifest_validation
+      COMMAND ${INOP_POWERSHELL} -NoProfile -File
+              ${CMAKE_CURRENT_SOURCE_DIR}/tools/run-gui-suite.ps1 -ValidateOnly)
+    add_test(NAME gui_script_runner_self_test
+      COMMAND ${INOP_POWERSHELL} -NoProfile -File
+              ${CMAKE_CURRENT_SOURCE_DIR}/tools/run-gui-suite.ps1 -SelfTest)
+  endif()
+endif()
+add_test(
+  NAME generated_transform_table
+  COMMAND ${CMAKE_COMMAND}
+          -DPYTHON_EXECUTABLE=${Python3_EXECUTABLE}
+          -DGENERATOR=${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_transform_table.py
+          -DTRACKED_TABLE=${CMAKE_CURRENT_SOURCE_DIR}/src/logic/transform_table.inc
+          -DCHECK_ROOT=${CMAKE_CURRENT_BINARY_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_transform_table.cmake
+)
 
 install(TARGETS inop RUNTIME DESTINATION . COMPONENT Runtime)
 if(INOP_WITH_GUI)
   install(DIRECTORY fonts DESTINATION . COMPONENT Assets)
   install(DIRECTORY audio DESTINATION . COMPONENT Assets)
+  install(DIRECTORY images DESTINATION . COMPONENT Assets)
 endif()
 install(FILES LICENSE README.md DESTINATION . COMPONENT Documentation)
 
@@ -278,3 +403,18 @@ if(INOP_INNOSETUP_COMPILER)
 endif()
 include(CPack)
 add_test(NAME bombe_self_check COMMAND inop_bombe --self-check)
+add_test(NAME bombe_engine_checks COMMAND inop_bombe_engine_tests)
+
+get_property(INOP_CTEST_INVENTORY DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY TESTS)
+set(INOP_REQUIRED_TESTS self_test generated_transform_table bombe_self_check bombe_engine_checks)
+if(INOP_BUILD_GUI_HEADLESS_TESTS)
+  list(APPEND INOP_REQUIRED_TESTS gui_headless_self_test gui_aggregate_checks
+       gui_widget_checks gui_panel_checks audio_fake_backend_checks)
+endif()
+foreach(required_test IN LISTS INOP_REQUIRED_TESTS)
+  if(NOT required_test IN_LIST INOP_CTEST_INVENTORY)
+    message(FATAL_ERROR "Required CTest group is missing: ${required_test}")
+  endif()
+endforeach()
+list(SORT INOP_CTEST_INVENTORY)
+message(STATUS "INOP CTest inventory: ${INOP_CTEST_INVENTORY}")

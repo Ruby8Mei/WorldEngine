@@ -35,7 +35,6 @@ struct DeveloperPreset {
     PanelState state;
 };
 
-// Currently empty — populate here once specific presets are decided.
 const std::vector<DeveloperPreset>& developer_presets();
 
 // Ceiling on the auto-numbered "INOP-x"/"Enigma-x" suggestions, per suite.

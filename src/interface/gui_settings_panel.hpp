@@ -42,10 +42,8 @@ public:
     // itself knows nothing about what a tutorial is.
     bool replay_tutorial_clicked() const { return replay_tutorial_clicked_; }
 
-    // True the frame the footer word "License" was clicked — caller opens
-    // the legal screen. The other three footer words are still plain text
-    // with nothing behind them.
     bool license_clicked() const { return license_clicked_; }
+    bool legal_clicked() const { return legal_clicked_; }
 
     // True the frame Apply was clicked, handing over the preferences to
     // put in force and store. Consumed by the call, like the clipboard
@@ -112,12 +110,9 @@ private:
     // is rescanned once as it opens and not once per frame while it is up.
     bool font_list_open_ = false;
 
-    // Locked rows still need somewhere for the widget to write, since the
-    // widget set takes a reference. Nothing reads these.
     bool arachnophobia_ = false;
     int font_size_idx_ = 1;  // Normal
     int language_idx_ = 0;
-    int script_idx_ = 0;  // Latin
 
     // How far the content is scrolled, and how tall it measured last frame.
     // The second is what the clamp needs and can only be known after a
@@ -137,6 +132,7 @@ private:
     bool apply_pending_ = false;
     bool wordmark_clicked_ = false;
     bool license_clicked_ = false;
+    bool legal_clicked_ = false;
     bool replay_tutorial_clicked_ = false;
 };
 

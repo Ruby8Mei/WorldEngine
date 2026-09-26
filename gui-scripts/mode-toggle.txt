@@ -1,3 +1,4 @@
+resize 1920 1080
 # Experimental: encipher and decipher as one toggle rather than two
 # sections stacked. Whichever half is on screen has the window to itself.
 #

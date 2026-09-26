@@ -1,3 +1,4 @@
+resize 1920 1080
 # The save/load boxes on the setup screen, driven with no pointer.
 #
 # Before the modal-layer fix the focus ring stayed on the setup screen

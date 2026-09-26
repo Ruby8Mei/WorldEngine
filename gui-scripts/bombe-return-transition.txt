@@ -1,0 +1,11 @@
+resize 1920 1080
+wait 0.6
+alt on
+key b
+alt off
+wait 0.4
+key escape
+wait 0.07
+shot bombe-transition-return
+wait 0.3
+quit

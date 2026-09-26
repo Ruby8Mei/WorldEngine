@@ -602,8 +602,9 @@ int historic_demo() {
               << "  rotor order " << spec.rotor_order[0] << " " << spec.rotor_order[1] << " "
               << spec.rotor_order[2] << ", menu links " << result.menu.size() << "\n"
               << "  tested " << result.tested << "/" << result.total << ", stops "
-              << result.stop_count << ", seconds " << std::fixed << std::setprecision(3)
-              << result.seconds << "\n";
+              << result.stop_count << ", checked " << result.checked_stop_count
+              << ", rejected " << result.rejected_stop_count << ", seconds "
+              << std::fixed << std::setprecision(3) << result.seconds << "\n";
     for (std::size_t i = 0; i < result.stops.size() && i < 8; ++i)
         std::cout << "    " << bombe::format_stop(result.stops[i]) << "\n";
     if (result.stops_truncated) std::cout << "    displayed stops are capped\n";
@@ -625,7 +626,9 @@ int historic_batch() {
                           << progress.total << ", stops " << progress.stops << "\n";
         });
     std::cout << "  retained " << result.stops.size() << " of " << result.stop_count
-              << " counted stops under the batch bounds\n"
+              << " counted raw stops under the batch bounds, checked "
+              << result.checked_stop_count << ", rejected "
+              << result.rejected_stop_count << "\n"
               << "  seconds " << std::fixed << std::setprecision(3) << result.seconds << "\n";
     for (std::size_t i = 0; i < result.stops.size() && i < 8; ++i)
         std::cout << "    " << bombe::format_stop(result.stops[i]) << "\n";

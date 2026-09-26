@@ -62,6 +62,7 @@ std::string font_path(const std::string& file);
 // bundled with the program is in here and nothing else is, which is what
 // makes it the answer to "which font licences do we have to show".
 std::string bundled_fonts_dir();
+std::string account_placeholder_path();
 
 // Every face this build knows how to offer, filtered down to the ones
 // font_path() can actually find — a machine missing Harlow should not be
@@ -90,10 +91,6 @@ std::string licence_filename(const std::string& font_file);
 // the operator can plainly see is there.
 const std::vector<std::string>& unlicensed_font_files();
 
-// The preferences that currently do something. Rows the settings screen
-// draws locked (arachnophobia mode, font size, audio, interface language)
-// are deliberately absent: nothing reads them, so nothing should store
-// them either.
 struct GuiPrefs {
     Theme theme = Theme::System;
     ColourblindMode colourblind = ColourblindMode::Full;
@@ -113,6 +110,7 @@ struct GuiPrefs {
     bool reduced_motion = false;
     bool audio_muted = false;
     int audio_volume = 70;
+    std::string interface_language = "eng";
 
     // -- the first-launch tutorial --------------------------------------
     //

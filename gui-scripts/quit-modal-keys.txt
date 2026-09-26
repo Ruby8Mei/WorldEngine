@@ -1,3 +1,4 @@
+resize 1920 1080
 # The quit box has to survive the very key that raises it.
 #
 # Escape on the main menu used to open the box and cancel it in the same
@@ -17,11 +18,13 @@ wait 0.4
 shot menu-escape-cancelled
 
 # Now the other half. Arrow down to Exit and press Enter on it. INOP is
-# still running at this point only if the first half worked. Five presses:
-# the first lands on Open INOP and the rest walk down to Exit, which is the
-# last button on the menu.
+# still running at this point only if the first half worked. Six presses:
+# the first lands on Open INOP and the rest walk through Bombe, Terminal,
+# Maintenance, Settings, and Exit, which is the last button on the menu.
 key down
 wait 0.3
+key down
+wait 0.2
 key down
 wait 0.2
 key down

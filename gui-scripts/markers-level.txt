@@ -1,3 +1,4 @@
+resize 1920 1080
 # The marker boxes level with each other. On the encipher side the marker
 # now sits above the cipher, out of reading order, so that it lands on the
 # same row as the marker on the decipher side.

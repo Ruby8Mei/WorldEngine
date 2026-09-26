@@ -1,3 +1,4 @@
+resize 1920 1080
 # The wordmark on the left of both form screens, and Maintenance without
 # its Back button. Both screens share one header, so this is one change
 # seen twice.

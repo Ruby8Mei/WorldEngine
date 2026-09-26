@@ -1,0 +1,80 @@
+resize 1920 1080
+move -5000 -5000
+wait 0.5
+alt on
+key q
+alt off
+wait 1.2
+move 100 203
+click
+wait 0.4
+type G
+wait 0.3
+shot language-filter-case
+type r
+wait 0.3
+shot language-filter-narrow
+key backspace
+wait 0.3
+shot language-filter-backspace
+key down
+wait 0.3
+shot language-filter-arrow
+key escape
+wait 0.3
+shot language-filter-escape
+move 100 203
+click
+wait 0.3
+type gre
+wait 0.3
+key enter
+wait 0.3
+shot language-filter-enter
+move 100 203
+click
+wait 0.3
+type zzz
+wait 0.3
+shot language-filter-empty
+key enter
+wait 0.3
+shot language-filter-empty-enter
+key escape
+wait 0.3
+shot language-filter-final
+move 100 203
+click
+wait 0.3
+type spa
+wait 0.3
+key tab
+wait 0.3
+shot language-tab-unique
+key delete
+wait 0.3
+shot language-tab-cleared
+key escape
+wait 0.3
+move 100 203
+click
+wait 0.3
+type e
+wait 0.3
+key down
+key tab
+wait 0.3
+shot language-tab-multiple
+key escape
+wait 0.3
+move 100 203
+click
+wait 0.3
+type zzz
+wait 0.3
+key tab
+wait 0.3
+shot language-tab-zero
+key escape
+wait 0.3
+quit

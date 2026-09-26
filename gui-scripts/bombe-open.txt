@@ -1,0 +1,8 @@
+resize 1920 1080
+wait 0.6
+shot bombe-main-menu
+move 873 410
+click
+wait 0.4
+shot bombe-panel-empty
+quit

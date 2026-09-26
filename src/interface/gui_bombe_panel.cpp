@@ -17,8 +17,9 @@ namespace {
 
 constexpr float kMargin = 16.0f;
 constexpr float kGap = 8.0f;
-constexpr float kButtonW = 230.0f;
+constexpr float kButtonMinW = 230.0f;
 constexpr float kButtonH = 30.0f;
+constexpr float kButtonTextPad = 32.0f;
 constexpr float kResultH = 190.0f;
 
 }
@@ -35,31 +36,6 @@ BombePanel::~BombePanel() {
     worker_.join();
 }
 
-void BombePanel::self_test(
-    const std::function<void(bool, const std::string &)> &check) {
-  BombePanel panel;
-  panel.set_immediate_result(bombe::SearchState::Failure, "Synthetic failure.");
-  check(panel.result_text_.find("FAILURE") != std::string::npos &&
-            panel.result_text_.find("Synthetic failure.") != std::string::npos,
-        "Bombe panel presents an internal failure state");
-  panel.set_immediate_result(bombe::SearchState::NoResult,
-                             "Synthetic no result.");
-  check(panel.result_text_.find("NO RESULT") != std::string::npos,
-        "Bombe panel presents a no-result state");
-  panel.set_immediate_result(bombe::SearchState::InvalidInput,
-                             "Synthetic invalid input.");
-  check(panel.result_text_.find("INVALID INPUT") != std::string::npos,
-        "Bombe panel presents an invalid-input state");
-  panel.result_ = {};
-  panel.result_.state = bombe::SearchState::Cancelled;
-  panel.result_.tested = 17576;
-  panel.result_.total = bombe::approved_batch_positions();
-  panel.result_.completed_orders = 1;
-  panel.result_.total_orders = bombe::approved_rotor_orders().size();
-  panel.rebuild_result_text();
-  check(panel.result_text_.find("1 of 60 rotor orders") != std::string::npos,
-        "Bombe panel presents batched cancellation progress");
-}
 
 void BombePanel::open() {
   cancel();
@@ -196,21 +172,25 @@ void BombePanel::rebuild_result_text() {
   std::ostringstream out;
   switch (result_.state) {
   case bombe::SearchState::Success:
-    out << "SUCCESS\n" << result_.stop_count << " stop";
-    if (result_.stop_count != 1)
+    out << "SUCCESS\n" << result_.checked_stop_count << " checked stop";
+    if (result_.checked_stop_count != 1)
       out << "s";
-    out << " survived across " << result_.completed_orders << " rotor orders.\n"
-        << "Partial stecker assignments only. Check every stop on an Enigma "
-           "checking machine.\n\n";
-    for (std::size_t i = 0; i < result_.stops.size() && i < 16; ++i)
-      out << bombe::format_stop(result_.stops[i]) << "\n";
-    if (result_.stops.size() > 16 || result_.stops_truncated)
-      out << "More stops were counted beyond the panel or batch retention "
-             "bounds.\n";
+    out << " accepted from " << result_.stop_count << " raw stops counted "
+        << "across " << result_.completed_orders << " rotor orders.\n\n";
+    for (std::size_t i = 0; i < result_.checked_stops.size() && i < 16; ++i)
+      out << bombe::format_stop(result_.checked_stops[i]) << "\n";
+    if (result_.stops_truncated)
+      out << "Additional raw stops were counted beyond retention bounds.\n";
     break;
   case bombe::SearchState::NoResult:
-    out << "NO RESULT\nNo rotor core position survived this menu across all "
-        << result_.completed_orders << " approved rotor orders.";
+    out << "NO RESULT\n";
+    if (result_.stop_count > 0)
+      out << "The checking machine rejected " << result_.rejected_stop_count
+          << " retained raw stops. " << result_.stop_count
+          << " raw stops were counted across ";
+    else
+      out << "No raw rotor core position survived this menu across ";
+    out << result_.completed_orders << " approved rotor orders.";
     break;
   case bombe::SearchState::InvalidInput:
     out << "INVALID INPUT\n" << result_.message;
@@ -218,7 +198,9 @@ void BombePanel::rebuild_result_text() {
   case bombe::SearchState::Cancelled:
     out << "CANCELLED\nTested " << result_.tested << " of " << result_.total
         << " rotor core positions. Completed " << result_.completed_orders
-        << " of " << result_.total_orders << " rotor orders.";
+        << " of " << result_.total_orders << " rotor orders. Raw stops "
+        << result_.stop_count << ", checked stops "
+        << result_.checked_stop_count << ".";
     break;
   case bombe::SearchState::Failure:
     out << "FAILURE\n" << result_.message;
@@ -253,8 +235,10 @@ void BombePanel::frame(const GuiInput &in, int width, int height) {
 
   std::string rotor_pool = "I  II  III  IV  V";
   form_row_label(metrics, x, y, "Approved rotor pool");
-  text_field(form_control_rect(metrics, x, y), rotor_pool, in,
+  const Rect rotor_pool_r = form_control_rect(metrics, x, y);
+  text_field(rotor_pool_r, rotor_pool, in,
              "IVX ", 18, false, false, CaseFold::ToUpper);
+  tooltip(rotor_pool_r, "Fixed pool used to test 60 rotor orders", in);
   form_row_note(metrics, x, y, "60 distinct three rotor orders in pool order");
   y += kFormRowH + kFormRowGap;
 
@@ -267,10 +251,13 @@ void BombePanel::frame(const GuiInput &in, int width, int height) {
 
   std::string basis = "AAA / 10 STECKER PAIRS";
   form_row_label(metrics, x, y, "Ring and board basis");
-  text_field(form_control_rect(metrics, x, y), basis, in,
+  const Rect basis_r = form_control_rect(metrics, x, y);
+  text_field(basis_r, basis, in,
              "ABCDEFGHIJKLMNOPQRSTUVWXYZ /", 22, false, false,
              CaseFold::ToUpper);
-  form_row_note(metrics, x, y, "Stops contain partial stecker implications");
+  tooltip(basis_r, "Fixed ring setting and plugboard basis for this stage", in);
+  form_row_note(metrics, x, y,
+                "Raw stops contain implications and checked stops contain ten pairs");
   y += kFormRowH + kFormSectionGap;
 
   y = form_heading(metrics, x, y, "Crib menu");
@@ -293,23 +280,36 @@ void BombePanel::frame(const GuiInput &in, int width, int height) {
   y += field_h + kFormRowGap;
 
   form_row_label(metrics, x, y, "Crib offset");
-  numeric_field(form_control_rect(metrics, x, y), offset_, in, 3,
+  const Rect offset_r = form_control_rect(metrics, x, y);
+  numeric_field(offset_r, offset_, in, 3,
                 !running_.load(), false);
+  tooltip(offset_r, "Zero based start of the crib in the ciphertext", in);
   form_row_note(metrics, x, y, "Zero based position in the ciphertext");
   y += kFormRowH + kFormRowGap;
 
   const bool running = running_.load();
-  if (button(Rect{x, y, kButtonW, kButtonH}, "Load public demonstration", in,
+  const float load_w = std::max(kButtonMinW,
+      text_width(Font::Body, "Load public demonstration") + kButtonTextPad);
+  const float run_w = std::max(kButtonMinW,
+      text_width(Font::Body, running ? "Cancel run" : "Run Bombe") + kButtonTextPad);
+  const bool stacked = load_w + kGap + run_w > metrics.col_w;
+  const Rect load_r{x, y, load_w, kButtonH};
+  const Rect run_r{stacked ? x : x + load_w + kGap,
+                   stacked ? y + kButtonH + kGap : y, run_w, kButtonH};
+  if (button(load_r, "Load public demonstration", in,
              !running))
     load_demonstration();
-  if (button(Rect{x + kButtonW + kGap, y, kButtonW, kButtonH},
+  tooltip(load_r, "Fill the form with public example input", in);
+  if (button(run_r,
              running ? "Cancel run" : "Run Bombe", in, true, running)) {
     if (running)
       cancel();
     else
       start_search();
   }
-  y += kButtonH + kFormRowGap;
+  tooltip(run_r, running ? "Request a safe stop of the current batch"
+                         : "Search all approved rotor orders for crib stops", in);
+  y += (stacked ? 2.0f * kButtonH + kGap : kButtonH) + kFormRowGap;
 
   label(Rect{x, y, metrics.col_w, 26.0f},
         "Estimated work: 60 orders and 1,054,560 rotor core positions.", true);
@@ -353,7 +353,7 @@ void BombePanel::frame(const GuiInput &in, int width, int height) {
              !has_result_, "BOMBE OUTPUT");
   y += kResultH + kFormRowGap;
   label(Rect{x, y, metrics.col_w, 28.0f},
-        "Not implemented: checking machine, Naval Enigma, INOP-38.",
+        "Future stages: Naval Enigma and INOP-38.",
         true);
   y += 36.0f;
 

@@ -18,6 +18,12 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
 
     float w = static_cast<float>(width), h = static_cast<float>(height);
     begin_widget_frame();
+    const float profile_radius = 24.0f;
+    const float profile_x = w - kMargin - profile_radius;
+    const float profile_y = kMargin + profile_radius;
+    draw_circle(profile_x, profile_y, profile_radius, palette::border());
+    draw_circle(profile_x, profile_y, profile_radius - 1.0f, palette::disabled_bg());
+    draw_account_placeholder(profile_x, profile_y, profile_radius - 1.0f);
 
     // Title, top centre, just under the margin — reuses the Wordmark font
     // (44pt), the largest atlas baked; ask if this needs to be bigger than
@@ -42,13 +48,16 @@ void MainMenu::frame(const GuiInput& in, int width, int height) {
 
     Rect bombe_r{x, y + step, kButtonW, kButtonH};
     if (button(bombe_r, "Bombe", in, true)) bombe_requested_ = true;
+    tooltip(bombe_r, "Search a historic rotor batch with a known crib", in);
 
     Rect terminal_r{x, y + 2 * step, kButtonW, kButtonH};
     if (button(terminal_r, "Terminal", in, true)) terminal_requested_ = true;
+    tooltip(terminal_r, "Open the command line interface", in);
 
     Rect maintenance_r{x, y + 3 * step, kButtonW, kButtonH};
     set_landmark("menu.maintenance", maintenance_r);
     if (button(maintenance_r, "Maintenance", in, true)) maintenance_requested_ = true;
+    tooltip(maintenance_r, "Generate rotor, reflector, and key sheet files", in);
 
     Rect settings_r{x, y + 4 * step, kButtonW, kButtonH};
     if (button(settings_r, "Settings", in, true)) settings_requested_ = true;

@@ -162,12 +162,26 @@ Rotor make_rotor(const std::string& name, const Alphabet& alpha) {
     return Rotor(name, it->second.wiring, it->second.notches, alpha);
 }
 
+Rotor make_builtin_rotor(const std::string& name, const Alphabet& alpha) {
+    auto it = rotor_wirings().find(name);
+    if (it == rotor_wirings().end() || static_cast<int>(it->second.wiring.size()) != alpha.size())
+        throw std::invalid_argument("unknown built in rotor: " + name);
+    return Rotor(name, it->second.wiring, it->second.notches, alpha);
+}
+
 Reflector make_reflector(const std::string& name, const Alphabet& alpha) {
     auto lit = loaded_reflectors().find(name);
     if (lit != loaded_reflectors().end() && static_cast<int>(lit->second.size()) == alpha.size())
         return Reflector(name, lit->second, alpha);
     auto it = reflector_wirings().find(name);
     if (it == reflector_wirings().end()) throw std::invalid_argument("unknown reflector: " + name);
+    return Reflector(name, it->second, alpha);
+}
+
+Reflector make_builtin_reflector(const std::string& name, const Alphabet& alpha) {
+    auto it = reflector_wirings().find(name);
+    if (it == reflector_wirings().end() || static_cast<int>(it->second.size()) != alpha.size())
+        throw std::invalid_argument("unknown built in reflector: " + name);
     return Reflector(name, it->second, alpha);
 }
 
